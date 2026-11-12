@@ -163,7 +163,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const fitted = useRef(false);
-  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; moved: boolean; additive?: boolean; pi?: number; ni?: number; startView?: View }>(null);
+  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; moved: boolean; additive?: boolean; pi?: number; ni?: number; startView?: View; lastPaths?: EditPath[]; lastComps?: Comp[] }>(null);
   const pen = useRef<{ path: number | null; pendingOut: Pt | null }>({ path: null, pendingOut: null });
   const chain = useRef(Promise.resolve());
   const latest = useRef({ layer, paths, comps, selection, compSel, view });
@@ -402,6 +402,16 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     }
   }
 
+  /** Rectangle or ellipse from drag start `a` to `b` (Shift makes it square). */
+  const shapeFor = (a: Pt, b0: Pt, square: boolean): EditPath => {
+    let b = b0;
+    if (square) {
+      const side = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+      b = { x: a.x + Math.sign(b.x - a.x || 1) * side, y: a.y + Math.sign(b.y - a.y || 1) * side };
+    }
+    return tool === "ellipse" ? ellipsePath(a.x, a.y, b.x, b.y) : rectPath(a.x, a.y, b.x, b.y);
+  };
+
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
     const sp = local(e);
     const wp = toWorld(sp.x, sp.y);
@@ -416,18 +426,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     } else if (d.mode === "move") {
       let dx = Math.round(wp.x - d.startWorld.x), dy = Math.round(wp.y - d.startWorld.y);
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
-      setPaths(moveSelection(d.base, selection, dx, dy));
-      setComps(d.baseComps.map((c, i) => (compSel.has(i) ? { ...c, dx: c.dx + dx, dy: c.dy + dy } : c)));
+      d.lastPaths = moveSelection(d.base, selection, dx, dy);
+      d.lastComps = d.baseComps.map((c, i) => (compSel.has(i) ? { ...c, dx: c.dx + dx, dy: c.dy + dy } : c));
+      setPaths(d.lastPaths);
+      setComps(d.lastComps);
     } else if (d.mode === "marquee") {
       setMarquee({ x0: d.startScreen.x, y0: d.startScreen.y, x1: sp.x, y1: sp.y });
     } else if (d.mode === "shape") {
-      const a = d.startWorld;
-      let b = round(wp);
-      if (e.shiftKey) {
-        const side = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-        b = { x: a.x + Math.sign(b.x - a.x || 1) * side, y: a.y + Math.sign(b.y - a.y || 1) * side };
-      }
-      setPreview(tool === "ellipse" ? ellipsePath(a.x, a.y, b.x, b.y) : rectPath(a.x, a.y, b.x, b.y));
+      setPreview(shapeFor(d.startWorld, round(wp), e.shiftKey));
     } else if (d.mode === "pen" && d.pi !== undefined && d.ni !== undefined) {
       const o = d.startWorld;
       const v = { x: Math.round(wp.x - o.x), y: Math.round(wp.y - o.y) };
@@ -447,6 +453,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         }
       }
       pen.current.pendingOut = { x: o.x + v.x, y: o.y + v.y };
+      d.lastPaths = next;
       setPaths(next);
     }
   }
@@ -456,8 +463,11 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     drag.current = null;
     if (!d) return;
     const sp = local(e);
-    if (d.mode === "move" && d.moved) commit(latest.current.paths, latest.current.comps);
-    else if (d.mode === "marquee" && marquee) {
+    // Commit what the last pointer move computed (state may not have re-rendered yet).
+    if (d.mode === "move" && d.moved) commit(d.lastPaths ?? latest.current.paths, d.lastComps ?? latest.current.comps);
+    else if (d.mode === "marquee" && d.moved) {
+      // Use the drag's own start point: state may not have re-rendered yet on a fast drag.
+      const marquee = { x0: d.startScreen.x, y0: d.startScreen.y };
       const [x0, x1] = [Math.min(marquee.x0, sp.x), Math.max(marquee.x0, sp.x)];
       const [y0, y1] = [Math.min(marquee.y0, sp.y), Math.max(marquee.y0, sp.y)];
       const sel = new Set(d.additive ? selection : []);
@@ -475,16 +485,17 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       setCompSel(cs);
       setMarquee(null);
     } else if (d.mode === "shape") {
-      if (preview && d.moved) {
-        const next = [...latest.current.paths, preview];
+      const shape = d.moved ? shapeFor(d.startWorld, round(toWorld(sp.x, sp.y)), e.shiftKey) : null;
+      if (shape) {
+        const next = [...latest.current.paths, shape];
         setPaths(next);
         commit(next);
-        setSelection(new Set(preview.nodes.map((_, ni) => nodeKey(next.length - 1, ni))));
+        setSelection(new Set(shape.nodes.map((_, ni) => nodeKey(next.length - 1, ni))));
         setCompSel(new Set());
       }
       setPreview(null);
     } else if (d.mode === "pen") {
-      commit(latest.current.paths);
+      commit(d.lastPaths ?? d.base);
       rerender((n) => n + 1);
     }
     setMarquee(null);

@@ -34,14 +34,14 @@ function NumField({ label, value, title, disabled, onCommit }: { label: string; 
   );
 }
 
-function GroupField({ label, value, onCommit }: { label: string; value: string | null; onCommit: (v: string | null) => void }) {
+function GroupField({ label, value, disabled, onCommit }: { label: string; value: string | null; disabled?: boolean; onCommit: (v: string | null) => void }) {
   const shown = value ?? "";
   const [text, setText] = useState(shown);
   useEffect(() => setText(shown), [shown]);
   return (
     <label className="info-field">
       <span className="k-caption muted">{label}</span>
-      <input className="metric-input group-input" value={text} placeholder="none" onChange={(e) => setText(e.target.value)}
+      <input className="metric-input group-input" value={text} disabled={disabled} placeholder="none" onChange={(e) => setText(e.target.value)}
         onBlur={(e) => { const v = e.currentTarget.value.trim(); if (v !== shown) onCommit(v || null); }}
         onKeyDown={(e) => {
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -258,7 +258,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
         <span className="k-caption muted zoom">{size} px</span>
       </div>
       <div className="text-canvas">
-        <svg ref={svgRef} width={width} height={height} onMouseDown={placeCursor} onDoubleClick={(e) => { const n = glyphAt(e); if (n) onOpenGlyph(n); }}>
+        <svg ref={svgRef} width={width} height={height} style={{ minWidth: "100%" }} onMouseDown={placeCursor} onDoubleClick={(e) => { const n = glyphAt(e); if (n) onOpenGlyph(n); }}>
           {layout?.lines.map((ln, li) => {
             const by = baseline(li);
             const xs = positions[li];
@@ -266,7 +266,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
             return (
               <g key={li}>
                 {showMetrics && metrics && [metrics.ascender, metrics.xHeight, 0, metrics.descender].map((m) => (
-                  <line key={m} x1={0} x2={width} y1={by - m * scale} y2={by - m * scale} className={m === 0 ? "metric-line baseline" : "metric-line"} />
+                  <line key={m} x1={0} x2={Math.max(width, 6000)} y1={by - m * scale} y2={by - m * scale} className={m === 0 ? "metric-line baseline" : "metric-line"} />
                 ))}
                 {ln.map((it, i) => it.type === "glyph" ? (
                   <g key={i}>
@@ -308,16 +308,16 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
             <span className="k-body-strong">{current.name}</span>
             <span className="k-code muted">{current.unicode ? `U+${current.unicode}` : ""}</span>
           </div>
-          <NumField label={prev ? `◂ ${prev.name}` : "◂ kern"} value={prev ? prev.kern : null} disabled={!prev} title={prev ? pairLabel(prev) : undefined}
+          <NumField label={prev ? `◂ ${prev.name}` : "◂ kern"} value={prev ? prev.kern : null} disabled={!prev || previewing} title={prev ? pairLabel(prev) : undefined}
             onCommit={(v) => prev && kern(prev, current, () => v)} />
-          <NumField label="LSB" value={current.lsb} disabled={current.lsb === null} onCommit={(v) => setMetric(current.name, "lsb", v)} />
-          <NumField label="Width" value={current.width} onCommit={(v) => setMetric(current.name, "width", v)} />
-          <NumField label="RSB" value={current.rsb} disabled={current.rsb === null} onCommit={(v) => setMetric(current.name, "rsb", v)} />
-          <NumField label={next ? `${next.name} ▸` : "kern ▸"} value={next ? current.kern : null} disabled={!next} title={next ? pairLabel(current) : undefined}
+          <NumField label="LSB" value={current.lsb} disabled={current.lsb === null || previewing} onCommit={(v) => setMetric(current.name, "lsb", v)} />
+          <NumField label="Width" value={current.width} disabled={previewing} onCommit={(v) => setMetric(current.name, "width", v)} />
+          <NumField label="RSB" value={current.rsb} disabled={current.rsb === null || previewing} onCommit={(v) => setMetric(current.name, "rsb", v)} />
+          <NumField label={next ? `${next.name} ▸` : "kern ▸"} value={next ? current.kern : null} disabled={!next || previewing} title={next ? pairLabel(current) : undefined}
             onCommit={(v) => next && kern(current, next, () => v)} />
           <span className="info-sep" />
-          <GroupField label="Left group" value={current.leftGroup} onCommit={(v) => setGroups(current.name, v, current.rightGroup)} />
-          <GroupField label="Right group" value={current.rightGroup} onCommit={(v) => setGroups(current.name, current.leftGroup, v)} />
+          <GroupField label="Left group" value={current.leftGroup} disabled={previewing} onCommit={(v) => setGroups(current.name, v, current.rightGroup)} />
+          <GroupField label="Right group" value={current.rightGroup} disabled={previewing} onCommit={(v) => setGroups(current.name, current.leftGroup, v)} />
         </div>
       )}
       <div className="text-hint k-caption muted">{previewing ? "Previewing an interpolated location · spacing edits are paused: choose \"Current master\" to edit" : "Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it"}</div>
