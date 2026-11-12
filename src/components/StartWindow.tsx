@@ -64,7 +64,7 @@ export function StartWindow({ recents, onNew, onOpen, onOpenRecent, onForgetRece
       <aside className="start-side">
         <div className="logo">K</div>
         <h2 className="k-title">Kernest</h2>
-        <p className="k-caption muted">Version 0.1.0 · open source · offline</p>
+        <p className="k-caption muted">Version {__APP_VERSION__} · open source · offline</p>
         <div className="divider" />
         <button className="link" onClick={onSample}>Explore the sample font</button>
         <a className="link" href="https://github.com/ShaikMoosa/kernest" target="_blank" rel="noreferrer">
