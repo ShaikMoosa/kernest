@@ -41,8 +41,8 @@ jobs:
       - name: Rust tests
         run: cargo test --workspace
 
-      # Distribution is a setup.exe only (no Store, no GitHub Releases, no winget).
-      # CI builds it so every change is installable; it is kept as a build artifact.
+      # Distribution is a setup.exe published on GitHub Releases (no Store, no winget).
+      # CI builds it for every change; release builds are attached to a GitHub release.
       - name: Build setup installer
         run: npx tauri build --bundles nsis
 

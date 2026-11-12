@@ -6,9 +6,11 @@ An open-source font editor for Windows. Draw glyphs, space and kern, interpolate
 
 ## Install
 
-Kernest ships as a Windows setup program (`Kernest_<version>_x64-setup.exe`). Run it and choose **Install for me only** (no admin rights needed) or **all users**. It is not distributed through the Microsoft Store, winget or GitHub Releases.
+Download the Windows setup program (`Kernest_<version>_x64-setup.exe`) from the [Releases page](https://github.com/ShaikMoosa/kernest/releases). Run it and choose **Install for me only** (no admin rights needed) or **all users**. Kernest is not distributed through the Microsoft Store or winget.
 
-Requirements: Windows 10 22H2 or later (x64 or ARM64). The installer downloads Microsoft Edge WebView2 if it is missing (it is built into Windows 11).
+Requirements: Windows 10 22H2 or later, x64 (ARM64 builds are planned). The installer downloads Microsoft Edge WebView2 if it is missing (it is built into Windows 11).
+
+The installer is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC". Choose **More info › Run anyway**, and check the SHA-256 checksum listed on the release first.
 
 ## Build from source
 
