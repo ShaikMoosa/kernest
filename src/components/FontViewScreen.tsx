@@ -21,6 +21,7 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen }: { glyph: GlyphSu
           </svg>
         )}
       </span>
+      {!glyph.compatible && <span className="glyph-incompatible" title="Masters can't be interpolated (open the glyph to see why)" aria-label="Incompatible masters" />}
       <span className="glyph-label">
         <span className="glyph-name">{glyph.name}</span>
         <span className="glyph-unicode">{glyph.unicode ?? ""}</span>
@@ -35,6 +36,7 @@ export function FontViewScreen({ font, onOpenGlyph }: { font: FontView; onOpenGl
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
 
+  const incompatibleCount = useMemo(() => font.glyphs.filter((g) => !g.compatible).length, [font.glyphs]);
   const counts = useMemo(() => {
     const m = new Map<string, number>();
     for (const g of font.glyphs) m.set(g.category, (m.get(g.category) ?? 0) + 1);
@@ -44,7 +46,8 @@ export function FontViewScreen({ font, onOpenGlyph }: { font: FontView; onOpenGl
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     return font.glyphs.filter((g) => {
-      if (category !== "All" && g.category !== category) return false;
+      if (category === "Incompatible") { if (g.compatible) return false; }
+      else if (category !== "All" && g.category !== category) return false;
       if (!q) return true;
       return g.name.toLowerCase().includes(q) || g.unicode?.toLowerCase() === q.replace(/^u\+/, "") || g.character === query.trim();
     });
@@ -83,7 +86,7 @@ export function FontViewScreen({ font, onOpenGlyph }: { font: FontView; onOpenGl
         </label>
         <p className="k-overline muted sidebar-heading">Categories</p>
         <ul className="list">
-          {[["All", font.glyphs.length] as const, ...counts].map(([c, n]) => (
+          {[["All", font.glyphs.length] as const, ...counts, ...(incompatibleCount ? [["Incompatible", incompatibleCount] as const] : [])].map(([c, n]) => (
             <li key={c}>
               <button className={`list-item${category === c ? " is-selected" : ""}`} onClick={() => setCategory(c)}>
                 <span>{c}</span>

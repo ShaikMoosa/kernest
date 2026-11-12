@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod fontinfo;
 mod spacing;
 
 fn main() {
@@ -27,6 +28,14 @@ fn main() {
             spacing::kerning_list,
             spacing::set_kerning_pair,
             spacing::set_glyph_groups,
+            fontinfo::font_info,
+            fontinfo::set_font_info,
+            fontinfo::set_axes,
+            fontinfo::add_master,
+            fontinfo::update_master,
+            fontinfo::remove_master,
+            fontinfo::set_instances,
+            fontinfo::compatibility,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kernest");

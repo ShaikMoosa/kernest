@@ -8,9 +8,10 @@ function ValueField({ value, onCommit }: { value: number; onCommit: (v: number) 
   useEffect(() => setText(shown), [shown]);
   return (
     <input className="metric-input kern-value" value={text} aria-label="Kerning value" onChange={(e) => setText(e.target.value)}
-      onBlur={() => {
-        const v = Number(text.trim().replace("−", "-") || "0");
-        if (Number.isFinite(v) && text !== shown) onCommit(v);
+      onBlur={(e) => {
+        const raw = e.currentTarget.value;
+        const v = Number(raw.trim().replace("−", "-") || "0");
+        if (Number.isFinite(v) && raw !== shown) onCommit(v);
         else setText(shown);
       }}
       onKeyDown={(e) => {

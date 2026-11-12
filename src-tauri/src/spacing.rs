@@ -1,11 +1,13 @@
 //! Commands for the text (spacing) view and the kerning window.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use kernest_core::designspace::Location;
 use kernest_core::geometry::{sidebearings, svg_path};
+use kernest_core::interpolate::{default_master, Interpolator};
 use kernest_core::kerning::{edit_keys, pair_value, validate_side, with_pair, EditMode, PairKind};
 use kernest_core::text::{parse, Token};
-use kernest_core::{KernPair, Metrics};
+use kernest_core::{Font, KernPair, Metrics, Shape};
 use serde::Serialize;
 use tauri::State;
 
@@ -18,6 +20,8 @@ pub enum TextItem {
     Glyph {
         name: String,
         unicode: Option<String>,
+        /// Drawn from the default master because its masters can't be interpolated.
+        incompatible: bool,
         width: f64,
         lsb: Option<f64>,
         rsb: Option<f64>,
@@ -44,13 +48,138 @@ pub struct TextLayout {
     status: DocStatus,
 }
 
-fn layout(doc: &Document, text: &str, master_id: &str) -> CmdResult<TextLayout> {
+/// Outline, sidebearings and advance width of a glyph as drawn in the text view.
+type DrawnGlyph = (String, Option<(f64, f64)>, f64);
+
+/// A one-master copy of the glyphs needed to draw `names` (plus their components)
+/// at an interpolated location. Glyphs that can't be interpolated keep their
+/// default-master outline and are listed in the returned set.
+fn interpolated_font(
+    font: &Font,
+    interp: &Interpolator,
+    names: &[&str],
+) -> (Font, HashSet<String>) {
+    let def = default_master(font).clone();
+    let mut needed: Vec<String> = Vec::new();
+    let mut stack: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+    while let Some(n) = stack.pop() {
+        if needed.contains(&n) {
+            continue;
+        }
+        if let Some(l) = font.glyph(&n).and_then(|g| g.layer(&def.id)) {
+            for s in &l.shapes {
+                if let Shape::Component { base, .. } = s {
+                    stack.push(base.clone());
+                }
+            }
+            needed.push(n);
+        }
+    }
+    let mut bad = HashSet::new();
+    let glyphs = needed
+        .iter()
+        .filter_map(|n| {
+            let g = font.glyph(n)?;
+            let layer = interp.layer(font, n).unwrap_or_else(|_| {
+                bad.insert(n.clone());
+                g.layer(&def.id).cloned().expect("checked above")
+            });
+            let mut g = g.clone();
+            g.layers = vec![layer];
+            Some(g)
+        })
+        .collect();
+    let scratch = Font {
+        info: font.info.clone(),
+        axes: font.axes.clone(),
+        masters: vec![def],
+        instances: Vec::new(),
+        glyphs,
+        kerning: Default::default(),
+        features: String::new(),
+    };
+    (scratch, bad)
+}
+
+fn layout(
+    doc: &Document,
+    text: &str,
+    master_id: &str,
+    location: Option<&Location>,
+) -> CmdResult<TextLayout> {
     let font = &doc.font;
     let master = font
         .master(master_id)
         .ok_or_else(|| format!("No master with id \"{master_id}\""))?;
-    let mut svgs: HashMap<String, (String, Option<(f64, f64)>)> = HashMap::new();
-    let lines = parse(font, text)
+    let tokens = parse(font, text);
+
+    // Interpolated preview: draw from a one-master scratch font at the location.
+    let interp = location.map(|l| Interpolator::new(font, l)).transpose()?;
+    let all_names: Vec<&str> = tokens
+        .iter()
+        .flatten()
+        .filter_map(|t| match t {
+            Token::Glyph { name } => Some(name.as_str()),
+            Token::Missing { .. } => None,
+        })
+        .collect();
+    let (scratch, incompatible) = match &interp {
+        Some(i) => interpolated_font(font, i, &all_names),
+        None => (Font::new("", []), HashSet::new()),
+    };
+    let draw_font = if interp.is_some() { &scratch } else { font };
+    let draw_master = if interp.is_some() {
+        scratch.masters[0].id.clone()
+    } else {
+        master_id.to_string()
+    };
+    let metrics = match &interp {
+        Some(i) => {
+            let per: Vec<Vec<f64>> = font
+                .masters
+                .iter()
+                .map(|m| {
+                    vec![
+                        m.metrics.ascender,
+                        m.metrics.cap_height,
+                        m.metrics.x_height,
+                        m.metrics.descender,
+                        m.metrics.italic_angle,
+                    ]
+                })
+                .collect();
+            let v = i.values(&per);
+            Metrics {
+                ascender: v[0],
+                cap_height: v[1],
+                x_height: v[2],
+                descender: v[3],
+                italic_angle: v[4],
+            }
+        }
+        None => master.metrics,
+    };
+    let kern_at = |left: &str, right: &str| -> Option<(f64, PairKind, String, String)> {
+        match &interp {
+            None => pair_value(font, master_id, left, right),
+            Some(i) => {
+                let per: Vec<Vec<f64>> = font
+                    .masters
+                    .iter()
+                    .map(|m| vec![pair_value(font, &m.id, left, right).map_or(0.0, |p| p.0)])
+                    .collect();
+                let v = i.values(&per)[0].round();
+                let src = font
+                    .masters
+                    .iter()
+                    .find_map(|m| pair_value(font, &m.id, left, right));
+                src.map(|(_, kind, l, r)| (v, kind, l, r))
+            }
+        }
+    };
+
+    let mut svgs: HashMap<String, DrawnGlyph> = HashMap::new();
+    let lines = tokens
         .into_iter()
         .map(|tokens| {
             let names: Vec<Option<&str>> = tokens
@@ -67,20 +196,26 @@ fn layout(doc: &Document, text: &str, master_id: &str) -> CmdResult<TextLayout> 
                     Token::Missing { text } => TextItem::Missing { text: text.clone() },
                     Token::Glyph { name } => {
                         let g = font.glyph(name).expect("parsed glyphs exist");
-                        let layer = g.layer(master_id);
-                        let (svg, sb) = svgs
+                        let (svg, sb, width) = svgs
                             .entry(name.clone())
-                            .or_insert_with(|| match layer {
-                                Some(l) => (svg_path(font, l), sidebearings(font, l)),
-                                None => (String::new(), None),
+                            .or_insert_with(|| {
+                                match draw_font.glyph(name).and_then(|g| g.layer(&draw_master)) {
+                                    Some(l) => (
+                                        svg_path(draw_font, l),
+                                        sidebearings(draw_font, l),
+                                        l.width,
+                                    ),
+                                    None => (String::new(), None, 0.0),
+                                }
                             })
                             .clone();
                         let next = names.get(i + 1).copied().flatten();
-                        let kern = next.and_then(|n| pair_value(font, master_id, name, n));
+                        let kern = next.and_then(|n| kern_at(name, n));
                         TextItem::Glyph {
                             name: name.clone(),
                             unicode: g.unicodes.first().map(|c| c.to_string()),
-                            width: layer.map_or(0.0, |l| l.width),
+                            incompatible: incompatible.contains(name),
+                            width,
                             lsb: sb.map(|s| s.0),
                             rsb: sb.map(|s| s.1),
                             left_group: g.left_group.clone(),
@@ -98,7 +233,7 @@ fn layout(doc: &Document, text: &str, master_id: &str) -> CmdResult<TextLayout> 
         .collect();
     Ok(TextLayout {
         lines,
-        metrics: master.metrics,
+        metrics,
         status: status(doc),
     })
 }
@@ -108,9 +243,10 @@ pub fn text_layout(
     state: State<AppState>,
     text: String,
     master_id: String,
+    location: Option<Location>,
 ) -> CmdResult<TextLayout> {
     let mut guard = lock(&state)?;
-    layout(doc_mut(&mut guard)?, &text, &master_id)
+    layout(doc_mut(&mut guard)?, &text, &master_id, location.as_ref())
 }
 
 fn mode_of(mode: &str) -> CmdResult<EditMode> {
@@ -266,7 +402,7 @@ mod tests {
     fn layout_includes_kerning() {
         let doc = Document::new(sample_font(), None);
         // The sample font kerns T–o by -60 (glyph pair).
-        let l = layout(&doc, "To\nH/nope", "m01").unwrap();
+        let l = layout(&doc, "To\nH/nope", "m01", None).unwrap();
         assert_eq!(l.lines.len(), 2);
         match &l.lines[0][0] {
             TextItem::Glyph {
@@ -302,5 +438,52 @@ mod tests {
         assert_eq!(pair_value(&doc.font, "m01", "T", "o").unwrap().0, -60.0);
         assert!(mode_of("sideways").is_err());
         assert!(set_raw(&mut doc, "m01", "T", "o", f64::NAN).is_err());
+    }
+}
+
+#[cfg(test)]
+mod interpolation_tests {
+    use super::*;
+    use kernest_core::sample::sample_font;
+    use kernest_core::{structure, Axis};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn layout_at_a_location_interpolates_widths_and_kerning() {
+        let mut doc = Document::new(sample_font(), None);
+        let wght = Axis {
+            name: "Weight".into(),
+            tag: "wght".into(),
+            min: 400.0,
+            default: 400.0,
+            max: 700.0,
+            hidden: false,
+        };
+        let f = structure::set_axes(&doc.font, vec![wght]).unwrap();
+        let (mut f, bold) =
+            structure::add_master(&f, "m01", "Bold", &BTreeMap::from([("wght".into(), 700.0)]))
+                .unwrap();
+        f.glyph_mut("T").unwrap().layer_mut(&bold).unwrap().width += 100.0;
+        for p in f.kerning.get_mut(&bold).unwrap() {
+            if p.left == "T" && p.right == "o" {
+                p.value = -100.0;
+            }
+        }
+        doc.history.apply_font(&mut doc.font, f).unwrap();
+        let mid = BTreeMap::from([("wght".to_string(), 550.0)]);
+        let l = layout(&doc, "To", "m01", Some(&mid)).unwrap();
+        match &l.lines[0][0] {
+            TextItem::Glyph {
+                width,
+                kern,
+                incompatible,
+                ..
+            } => {
+                assert_eq!(*width, 650.0);
+                assert_eq!(*kern, -80.0);
+                assert!(!incompatible);
+            }
+            _ => panic!("expected a glyph"),
+        }
     }
 }

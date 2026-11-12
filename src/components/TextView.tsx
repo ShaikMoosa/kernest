@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { backend, type DocStatus, type KernMode, type MetricName, type TextItem, type TextLayout } from "../lib/backend";
+import { backend, type DocStatus, type FontInfo, type KernMode, type Location, type MetricName, type TextItem, type TextLayout } from "../lib/backend";
 
 const PRESETS = ["HOHOHAVATAR To LT", "nnonnoonon HHOHHOOHOH", "Hamburgefontsiv", "/H/O/H/n/o/n LTLTLT ToTo"];
 const MISSING_WIDTH = 500;
@@ -17,15 +17,15 @@ function NumField({ label, value, title, disabled, onCommit }: { label: string; 
   const shown = value === null ? "" : String(Math.round(value));
   const [text, setText] = useState(shown);
   useEffect(() => setText(shown), [shown]);
-  const commit = () => {
-    const v = Number(text.trim().replace("−", "-") || "0");
-    if (!Number.isFinite(v) || text === shown) return setText(shown);
+  const commit = (raw: string) => {
+    const v = Number(raw.trim().replace("−", "-") || "0");
+    if (!Number.isFinite(v) || raw === shown) return setText(shown);
     onCommit(v);
   };
   return (
     <label className="info-field" title={title}>
       <span className="k-caption muted">{label}</span>
-      <input className="metric-input" value={text} disabled={disabled} placeholder="—" onChange={(e) => setText(e.target.value)} onBlur={commit}
+      <input className="metric-input" value={text} disabled={disabled} placeholder="—" onChange={(e) => setText(e.target.value)} onBlur={(e) => commit(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           if (e.key === "Escape") { setText(shown); (e.target as HTMLInputElement).blur(); }
@@ -42,7 +42,7 @@ function GroupField({ label, value, onCommit }: { label: string; value: string |
     <label className="info-field">
       <span className="k-caption muted">{label}</span>
       <input className="metric-input group-input" value={text} placeholder="none" onChange={(e) => setText(e.target.value)}
-        onBlur={() => { if (text.trim() !== shown) onCommit(text.trim() || null); }}
+        onBlur={(e) => { const v = e.currentTarget.value.trim(); if (v !== shown) onCommit(v || null); }}
         onKeyDown={(e) => {
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           if (e.key === "Escape") { setText(shown); (e.target as HTMLInputElement).blur(); }
@@ -71,10 +71,28 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   const [showMetrics, setShowMetrics] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
   const chain = useRef(Promise.resolve());
-  const latest = useRef({ layout, cursor, mode });
-  latest.current = { layout, cursor, mode };
+  const latest = useRef({ layout, cursor, mode, previewing: false });
+  latest.current = { layout, cursor, mode, previewing: latest.current?.previewing ?? false };
 
-  const reload = useCallback(() => backend.textLayout(text, masterId).then(setLayout, onError), [text, masterId, onError]);
+  const [info, setInfo] = useState<FontInfo | null>(null);
+  // "" = the current master; "i:<name>" = an instance; "custom" = the sliders below.
+  const [preview, setPreview] = useState("");
+  const [custom, setCustom] = useState<Location>({});
+  useEffect(() => { backend.fontInfo().then(setInfo, () => setInfo(null)); }, [version]);
+  const location: Location | undefined = useMemo(() => {
+    if (preview === "custom") return custom;
+    if (preview.startsWith("i:")) return info?.instances.find((i) => i.name === preview.slice(2))?.location;
+    return undefined;
+  }, [preview, custom, info]);
+  // Fall back to the current master if the previewed instance or design space went away (e.g. undo).
+  useEffect(() => {
+    if (!info) return;
+    if (preview === "custom" && (info.axes.length === 0 || info.masters.length < 2)) setPreview("");
+    if (preview.startsWith("i:") && !info.instances.some((i) => i.name === preview.slice(2))) setPreview("");
+  }, [info, preview]);
+  const previewing = location !== undefined;
+  latest.current.previewing = previewing;
+  const reload = useCallback(() => backend.textLayout(text, masterId, location).then(setLayout, onError), [text, masterId, location, onError]);
   useEffect(() => { reload(); }, [reload, version]);
 
   // Keep the cursor inside the text.
@@ -87,6 +105,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   }, [layout]);
 
   const run = useCallback((task: () => Promise<DocStatus>) => {
+    if (latest.current.previewing) return onError("Spacing edits apply to a master. Set the preview back to \"Current master\" to edit.");
     chain.current = chain.current.then(async () => {
       try {
         onChanged(await task());
@@ -214,6 +233,25 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
             <button key={m.id} role="radio" aria-checked={mode === m.id} title={m.title} className={`segment${mode === m.id ? " is-selected" : ""}`} onClick={() => setMode(m.id)}>{m.label}</button>
           ))}
         </div>
+        <span className="toolbar-sep" />
+        <div className="location-picker">
+          <select className="select" aria-label="Preview location" value={preview} onChange={(e) => {
+            const v = e.target.value;
+            if (v === "custom" && info) setCustom(Object.fromEntries(info.axes.map((a) => [a.tag, custom[a.tag] ?? a.default])));
+            setPreview(v);
+          }}>
+            <option value="">Current master</option>
+            {info?.instances.map((i) => <option key={i.name} value={`i:${i.name}`}>Instance: {i.name}</option>)}
+            {info && info.axes.length > 0 && info.masters.length > 1 && <option value="custom">Custom location…</option>}
+          </select>
+          {preview === "custom" && info?.axes.map((a) => (
+            <label key={a.tag} className="axis-slider k-caption" title={a.name}>
+              {a.tag}
+              <input type="range" min={a.min} max={a.max} step={1} value={custom[a.tag] ?? a.default} onChange={(e) => setCustom({ ...custom, [a.tag]: Number(e.target.value) })} />
+              <span className="k-code">{Math.round(custom[a.tag] ?? a.default)}</span>
+            </label>
+          ))}
+        </div>
         <span className="spacer" />
         <label className="check-row k-caption"><input type="checkbox" checked={showMetrics} onChange={(e) => setShowMetrics(e.target.checked)} /> Metrics</label>
         <input type="range" min={24} max={320} value={size} onChange={(e) => setSize(Number(e.target.value))} aria-label="Text size" className="size-slider" />
@@ -234,7 +272,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
                   <g key={i}>
                     {showMetrics && <rect x={xs[i]} y={by - (metrics?.ascender ?? 800) * scale} width={it.width * scale} height={((metrics?.ascender ?? 800) - (metrics?.descender ?? -200)) * scale} className="sb-box" />}
                     {it.svg ? (
-                      <path d={it.svg} transform={`translate(${xs[i]} ${by}) scale(${scale} ${-scale})`} className="text-glyph" />
+                      <path d={it.svg} transform={`translate(${xs[i]} ${by}) scale(${scale} ${-scale})`} className={it.incompatible ? "text-glyph is-incompatible" : "text-glyph"}><title>{it.incompatible ? `${it.name}: masters can't be interpolated (default master shown)` : it.name}</title></path>
                     ) : (
                       <text x={xs[i] + (it.width * scale) / 2} y={by} className="text-placeholder" fontSize={size * 0.7}>{it.unicode ? String.fromCodePoint(parseInt(it.unicode, 16)) : "?"}</text>
                     )}
@@ -282,7 +320,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
           <GroupField label="Right group" value={current.rightGroup} onCommit={(v) => setGroups(current.name, current.leftGroup, v)} />
         </div>
       )}
-      <div className="text-hint k-caption muted">Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it</div>
+      <div className="text-hint k-caption muted">{previewing ? "Previewing an interpolated location · spacing edits are paused: choose \"Current master\" to edit" : "Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it"}</div>
     </div>
   );
 }

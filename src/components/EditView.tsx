@@ -58,9 +58,9 @@ function MetricField({ label, value, disabled, onCommit }: { label: string; valu
   const shown = value === null ? "" : String(Math.round(value));
   const [text, setText] = useState(shown);
   useEffect(() => setText(shown), [shown]);
-  const commit = () => {
-    const v = Number(text.trim().replace("−", "-"));
-    if (text.trim() === "" || !Number.isFinite(v) || text === shown) return setText(shown);
+  const commit = (raw: string) => {
+    const v = Number(raw.trim().replace("−", "-"));
+    if (raw.trim() === "" || !Number.isFinite(v) || raw === shown) return setText(shown);
     onCommit(v);
   };
   return (
@@ -72,7 +72,7 @@ function MetricField({ label, value, disabled, onCommit }: { label: string; valu
         disabled={disabled}
         placeholder="—"
         onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
+        onBlur={(e) => commit(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           if (e.key === "Escape") { setText(shown); (e.target as HTMLInputElement).blur(); }
@@ -727,6 +727,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           {paths.map((p, pi) => p.nodes.map((n, ni) => <NodeMark key={`n${pi}:${ni}`} n={n} at={toScreen(n.x, n.y)} selected={selection.has(nodeKey(pi, ni))} first={ni === 0 && !p.closed} />))}
           {marquee && <rect className="marquee" x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)} />}
         </svg>
+        {layer.issues.length > 0 && (
+          <div className="notice notice-warning issues-banner k-label" role="status">
+            ⚠ This glyph's masters can't be interpolated:
+            <ul>{layer.issues.map((i) => <li key={i}>{i}</li>)}</ul>
+          </div>
+        )}
         {paths.length === 0 && comps.length === 0 && !preview && (
           <div className="canvas-empty">
             <p className="k-subtitle">Empty glyph</p>

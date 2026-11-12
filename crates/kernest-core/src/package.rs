@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, IoContext, Result};
-use crate::model::{Axis, Font, FontInfo, Glyph, KernPair, Master};
+use crate::model::{Axis, Font, FontInfo, Glyph, Instance, KernPair, Master};
 
 /// Format version written by this build.
 pub const FORMAT_VERSION: u32 = 1;
@@ -40,6 +40,8 @@ struct FontFile {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     axes: Vec<Axis>,
     masters: Vec<Master>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    instances: Vec<Instance>,
     glyph_order: Vec<String>,
 }
 
@@ -147,6 +149,7 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
         info: font.info.clone(),
         axes: font.axes.clone(),
         masters: font.masters.clone(),
+        instances: font.instances.clone(),
         glyph_order: font.glyphs.iter().map(|g| g.name.clone()).collect(),
     };
     write_atomic(&font_path, &to_json(&file, &font_path)?)
@@ -217,6 +220,7 @@ pub fn open(dir: &Path) -> Result<Font> {
         info: file.info,
         axes: file.axes,
         masters: file.masters,
+        instances: file.instances,
         glyphs,
         kerning,
         features,

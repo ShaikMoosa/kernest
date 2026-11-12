@@ -11,6 +11,7 @@ import { EditView, sendEditCommand } from "./components/EditView";
 import { AddIcon, CloseIcon } from "./components/Icons";
 import { TextView } from "./components/TextView";
 import { KerningView } from "./components/KerningView";
+import { FontInfoView } from "./components/FontInfoView";
 
 const later = (label: string, shortcut?: string) => ({ label, shortcut, disabled: true });
 const CLEAN: DocStatus = { dirty: false, canUndo: false, canRedo: false };
@@ -168,12 +169,36 @@ export default function App() {
     setDocVersion((v) => v + 1);
   }, []);
 
+  /**
+   * After a structural change (axes, masters, info) everything may differ: refresh the
+   * font (keeping the current master if it still exists) and every open tab.
+   */
+  const refreshAll = useCallback(async (masterId?: string) => {
+    const view = await backend.fontView(masterId).catch(() => backend.fontView());
+    show(view);
+    setDocVersion((v) => v + 1);
+    // Every open glyph tab reloads (its outlines may have changed with the masters).
+    setVersions((v) => {
+      const next = { ...v };
+      for (const id of tabsRef.current) if (id.startsWith("g:")) next[id.slice(2)] = (next[id.slice(2)] ?? 0) + 1;
+      return next;
+    });
+  }, [show]);
+  const tabsRef = useRef<string[]>([]);
+  tabsRef.current = tabs;
+
+  const onStructureChanged = useCallback((s: DocStatus) => {
+    setStatus(s);
+    refreshAll(font?.masterId).catch(fail);
+  }, [refreshAll, font?.masterId, fail]);
+
   const undoRedo = useCallback(async (redo: boolean) => {
     if (!font) return;
     try {
       const r = redo ? await backend.redo() : await backend.undo();
       if (!r) return;
       setStatus(r.status);
+      if (r.kind === "font") return refreshAll(font.masterId);
       setFontStale(true);
       setDocVersion((v) => v + 1);
       const g = r.glyph;
@@ -182,7 +207,9 @@ export default function App() {
     } catch (e) {
       fail(e);
     }
-  }, [font, active, show, fail]);
+  }, [font, active, show, fail, refreshAll]);
+
+  const openInfo = useCallback(() => openTab("info"), [openTab]);
 
   // Windows shortcuts (Ctrl, not Cmd).
   useEffect(() => {
@@ -201,15 +228,16 @@ export default function App() {
       else if (k === "y" && !inField) undoRedo(true);
       else if (k === "t" && !e.shiftKey && font) newTextTab();
       else if (k === "k" && e.shiftKey && font) openKerning();
+      else if (k === "i" && !e.shiftKey && font) openInfo();
       else return;
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showNewFont, open, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, font]);
+  }, [showNewFont, open, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font]);
 
   const inGlyph = font !== null && active !== null && active.startsWith("g:");
-  const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? "Kerning" : `Text ${id.slice(5)}`);
+  const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? "Kerning" : id === "info" ? "Font Info" : `Text ${id.slice(5)}`);
   const glyphList = useMemo(() => (font ? font.glyphs.map((g) => ({ name: g.name, width: g.width })) : []), [font]);
 
   const menus: Menu[] = [
@@ -223,7 +251,7 @@ export default function App() {
         { label: "Save As…", shortcut: "Ctrl+Shift+S", onSelect: font ? saveAs : undefined },
         { label: "Close Font", onSelect: font ? closeFont : undefined },
         { ...later("Export…", "Ctrl+E"), separatorBefore: true },
-        { ...later("Font Info…", "Ctrl+I") },
+        { label: "Font Info…", shortcut: "Ctrl+I", onSelect: font ? openInfo : undefined },
       ],
     },
     {
@@ -287,7 +315,7 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <button className="btn btn-secondary" disabled title="Coming in v1">Font Info</button>
+            <button className="btn btn-secondary" onClick={openInfo} title="Font Info (Ctrl+I)">Font Info</button>
             <button className="btn btn-primary" disabled title="Coming in v1">Export</button>
           </div>
           {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} />}
@@ -295,6 +323,8 @@ export default function App() {
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
                 <EditView glyph={id.slice(2)} masterId={font.masterId} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} />
+              ) : id === "info" ? (
+                <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} />
               ) : id === "kerning" ? (
                 <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={onCommitted} onError={fail} />
               ) : (

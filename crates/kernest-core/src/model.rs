@@ -19,6 +19,9 @@ pub struct Font {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub axes: Vec<Axis>,
     pub masters: Vec<Master>,
+    /// Named locations in the design space that are exported as fonts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instances: Vec<Instance>,
     /// Glyphs in glyph order.
     pub glyphs: Vec<Glyph>,
     /// Kerning per master id.
@@ -416,6 +419,7 @@ impl Font {
             axes: Vec::new(),
             masters: vec![master],
             glyphs,
+            instances: Vec::new(),
             kerning: BTreeMap::new(),
             features: String::new(),
         }
@@ -484,4 +488,16 @@ impl Font {
         }
         Ok(())
     }
+}
+
+/// A named location in the design space, exported as its own font (e.g. "SemiBold").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Instance {
+    pub name: String,
+    /// Design-space location keyed by axis tag.
+    #[serde(default)]
+    pub location: BTreeMap<String, f64>,
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub export: bool,
 }

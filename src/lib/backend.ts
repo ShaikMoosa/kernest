@@ -41,6 +41,8 @@ export interface GlyphSummary {
   rsb: number | null;
   /** SVG path data in font units, y up. Empty when the glyph has no outlines. */
   svg: string;
+  /** False when this glyph's masters can't be interpolated. */
+  compatible: boolean;
 }
 
 export interface FontView {
@@ -78,11 +80,53 @@ export interface LayerView {
   /** All components resolved to outlines, SVG path data in font units. */
   componentSvg: string;
   anchors: { name: string; x: number; y: number }[];
+  /** Why this glyph's masters can't be interpolated (empty when they can). */
+  issues: string[];
+  status: DocStatus;
+}
+
+export type Location = Record<string, number>;
+
+export interface Axis {
+  name: string;
+  tag: string;
+  min: number;
+  default: number;
+  max: number;
+  hidden?: boolean;
+}
+
+export interface MasterView {
+  id: string;
+  name: string;
+  location: Location;
+  metrics: Metrics;
+}
+
+export interface Instance {
+  name: string;
+  location: Location;
+  export?: boolean;
+}
+
+export interface FontInfo {
+  familyName: string;
+  unitsPerEm: number;
+  versionMajor: number;
+  versionMinor: number;
+  axes: Axis[];
+  masters: MasterView[];
+  instances: Instance[];
+  defaultMasterId: string;
+  /** Design-space problems that block interpolation or export. */
+  warnings: string[];
+  /** Number of glyphs whose masters can't be interpolated. */
+  incompatible: number;
   status: DocStatus;
 }
 
 export interface UndoResult {
-  kind: "layer" | "kerning" | "groups";
+  kind: "layer" | "kerning" | "groups" | "font";
   glyph: string | null;
   masterId: string | null;
   status: DocStatus;
@@ -98,6 +142,8 @@ export type TextItem =
       type: "glyph";
       name: string;
       unicode: string | null;
+      /** Drawn from the default master because its masters can't be interpolated. */
+      incompatible: boolean;
       width: number;
       lsb: number | null;
       rsb: number | null;
@@ -146,13 +192,23 @@ export interface Backend {
   setMetric(glyph: string, masterId: string, metric: MetricName, value: number): Promise<LayerView>;
   undo(): Promise<UndoResult | null>;
   redo(): Promise<UndoResult | null>;
-  textLayout(text: string, masterId: string): Promise<TextLayout>;
+  /** Lays out text for a master, or at an interpolated `location` (axis tag → value). */
+  textLayout(text: string, masterId: string, location?: Location): Promise<TextLayout>;
   /** Kerns two glyphs; `mode` decides whether their groups or the glyphs are kerned. 0 removes the pair. */
   setGlyphKerning(masterId: string, left: string, right: string, mode: KernMode, value: number): Promise<{ left: string; right: string; value: number; status: DocStatus }>;
   kerningList(masterId: string): Promise<KerningList>;
   /** Sets a pair by its sides (glyph names or @groups). 0 removes the pair. */
   setKerningPair(masterId: string, left: string, right: string, value: number): Promise<DocStatus>;
   setGlyphGroups(glyph: string, leftGroup: string | null, rightGroup: string | null): Promise<DocStatus>;
+  fontInfo(): Promise<FontInfo>;
+  setFontInfo(familyName: string, unitsPerEm: number, versionMajor: number, versionMinor: number): Promise<FontInfo>;
+  setAxes(axes: Axis[]): Promise<FontInfo>;
+  /** Adds a master copied from `copyFrom` (outlines, metrics, kerning). */
+  addMaster(copyFrom: string, name: string, location: Location): Promise<FontInfo>;
+  updateMaster(id: string, name: string, location: Location, metrics: Metrics): Promise<FontInfo>;
+  removeMaster(id: string): Promise<FontInfo>;
+  setInstances(instances: Instance[]): Promise<FontInfo>;
+  compatibility(): Promise<{ glyph: string; issues: string[] }[]>;
 }
 
 const tauriBackend: Backend = {
@@ -169,11 +225,19 @@ const tauriBackend: Backend = {
   setMetric: (glyph, masterId, metric, value) => invoke("set_metric", { glyph, masterId, metric, value }),
   undo: () => invoke("undo"),
   redo: () => invoke("redo"),
-  textLayout: (text, masterId) => invoke("text_layout", { text, masterId }),
+  textLayout: (text, masterId, location) => invoke("text_layout", { text, masterId, location: location ?? null }),
   setGlyphKerning: (masterId, left, right, mode, value) => invoke("set_glyph_kerning", { masterId, left, right, mode, value }),
   kerningList: (masterId) => invoke("kerning_list", { masterId }),
   setKerningPair: (masterId, left, right, value) => invoke("set_kerning_pair", { masterId, left, right, value }),
   setGlyphGroups: (glyph, leftGroup, rightGroup) => invoke("set_glyph_groups", { glyph, leftGroup, rightGroup }),
+  fontInfo: () => invoke("font_info"),
+  setFontInfo: (familyName, unitsPerEm, versionMajor, versionMinor) => invoke("set_font_info", { familyName, unitsPerEm, versionMajor, versionMinor }),
+  setAxes: (axes) => invoke("set_axes", { axes }),
+  addMaster: (copyFrom, name, location) => invoke("add_master", { copyFrom, name, location }),
+  updateMaster: (id, name, location, metrics) => invoke("update_master", { id, name, location, metrics }),
+  removeMaster: (id) => invoke("remove_master", { id }),
+  setInstances: (instances) => invoke("set_instances", { instances }),
+  compatibility: () => invoke("compatibility"),
 };
 
 // ---------- Browser preview mock ----------
@@ -226,10 +290,21 @@ interface MockGlyph extends Snapshot {
 type MockChange =
   | { kind: "layer"; glyph: string; before: Snapshot; after: Snapshot }
   | { kind: "kerning"; before: KernPair[]; after: KernPair[] }
-  | { kind: "groups"; glyph: string; before: [string | null, string | null]; after: [string | null, string | null] };
+  | { kind: "groups"; glyph: string; before: [string | null, string | null]; after: [string | null, string | null] }
+  | { kind: "font"; before: MockMeta; after: MockMeta };
 
-interface MockDoc {
+/** Font-level data the preview mock can edit. (The mock shares one drawing across masters.) */
+interface MockMeta {
   familyName: string;
+  unitsPerEm: number;
+  versionMajor: number;
+  versionMinor: number;
+  axes: Axis[];
+  masters: MasterView[];
+  instances: Instance[];
+}
+
+interface MockDoc extends MockMeta {
   glyphs: MockGlyph[];
   kerning: KernPair[];
   undo: MockChange[];
@@ -261,7 +336,11 @@ function mockDoc(familyName: string, codepoints: number[], withOutlines: boolean
     };
   });
   const kerning = withOutlines ? [{ left: "T", right: "o", value: -60 }, { left: "L", right: "T", value: -80 }] : [];
-  return { familyName, glyphs, kerning, undo: [], redo: [], revision: 0, savedRevision: 0 };
+  return {
+    familyName, unitsPerEm: 1000, versionMajor: 1, versionMinor: 0, axes: [], instances: [],
+    masters: [{ id: "m01", name: "Regular", location: {}, metrics: { ...METRICS } }],
+    glyphs, kerning, undo: [], redo: [], revision: 0, savedRevision: 0,
+  };
 }
 
 const need = () => {
@@ -287,16 +366,17 @@ const sb = (d: MockDoc, g: MockGlyph) => {
   return b ? { lsb: b.minX, rsb: g.width - b.maxX } : { lsb: null, rsb: null };
 };
 
-function mockFontView(d: MockDoc): FontView {
+function mockFontView(d: MockDoc, masterId?: string): FontView {
+  const master = d.masters.find((m) => m.id === masterId) ?? d.masters[0];
   return {
     familyName: d.familyName,
     path: null,
-    unitsPerEm: 1000,
-    masters: [{ id: "m01", name: "Regular" }],
-    masterId: "m01",
-    metrics: METRICS,
+    unitsPerEm: d.unitsPerEm,
+    masters: d.masters.map((m) => ({ id: m.id, name: m.name })),
+    masterId: master.id,
+    metrics: master.metrics,
     status: status(d),
-    glyphs: d.glyphs.map((g) => ({ name: g.name, unicode: g.unicode, character: g.character, category: g.category, export: true, width: g.width, ...sb(d, g), svg: pathsToSvg(resolved(d, g)) })),
+    glyphs: d.glyphs.map((g) => ({ name: g.name, unicode: g.unicode, character: g.character, category: g.category, export: true, width: g.width, ...sb(d, g), svg: pathsToSvg(resolved(d, g)), compatible: true })),
   };
 }
 
@@ -304,7 +384,7 @@ function mockLayer(d: MockDoc, g: MockGlyph): LayerView {
   const components = g.components.map((c) => ({ base: c.base, transform: [...c.transform], svg: pathsToSvg(resolveComponent(d, c)) }));
   return {
     glyph: g.name, unicode: g.unicode, masterId: "m01", metrics: METRICS, width: g.width, ...sb(d, g),
-    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], status: status(d),
+    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], issues: [], status: status(d),
   };
 }
 
@@ -388,12 +468,50 @@ function parseText(d: MockDoc, text: string): ({ name: string } | { missing: str
 function undoStep(d: MockDoc, c: MockChange, forward: boolean): UndoResult {
   if (c.kind === "layer") Object.assign(findGlyph(d, c.glyph), snap(forward ? c.after : c.before));
   else if (c.kind === "kerning") d.kerning = (forward ? c.after : c.before).map((p) => ({ ...p }));
+  else if (c.kind === "font") Object.assign(d, metaCopy(forward ? c.after : c.before));
   else {
     const g = findGlyph(d, c.glyph);
     [g.leftGroup, g.rightGroup] = forward ? c.after : c.before;
   }
   d.revision++;
-  return { kind: c.kind, glyph: c.kind === "kerning" ? null : c.glyph, masterId: c.kind === "groups" ? null : "m01", status: status(d) };
+  const glyph = c.kind === "layer" || c.kind === "groups" ? c.glyph : null;
+  return { kind: c.kind, glyph, masterId: c.kind === "layer" || c.kind === "kerning" ? "m01" : null, status: status(d) };
+}
+
+const metaCopy = (m: MockMeta): MockMeta => JSON.parse(JSON.stringify({
+  familyName: m.familyName, unitsPerEm: m.unitsPerEm, versionMajor: m.versionMajor, versionMinor: m.versionMinor,
+  axes: m.axes, masters: m.masters, instances: m.instances,
+}));
+
+function mockInfo(d: MockDoc): FontInfo {
+  const def = d.masters.find((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)) ?? d.masters[0];
+  const warnings: string[] = [];
+  if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
+  if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
+    warnings.push("No master sits at the default location of every axis; interpolation needs one.");
+  return { ...metaCopy(d), defaultMasterId: def.id, warnings, incompatible: 0, status: status(d) };
+}
+
+/** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
+function editMeta(d: MockDoc, change: (m: MockMeta) => void): FontInfo {
+  const before = metaCopy(d);
+  const after = metaCopy(d);
+  change(after);
+  if (JSON.stringify(before) !== JSON.stringify(after)) {
+    Object.assign(d, after);
+    record(d, { kind: "font", before, after });
+  }
+  return mockInfo(d);
+}
+
+function checkLocation(d: MockDoc, loc: Location): Location {
+  const out: Location = {};
+  for (const a of d.axes) {
+    const v = loc[a.tag] ?? a.default;
+    if (!Number.isFinite(v) || v < a.min || v > a.max) throw `${a.name} must be between ${a.min} and ${a.max}.`;
+    out[a.tag] = v;
+  }
+  return out;
 }
 
 const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
@@ -425,8 +543,75 @@ const mockBackend: Backend = {
   async closeFont() {
     mock = null;
   },
-  async fontView() {
-    return mockFontView(need());
+  async fontView(masterId) {
+    return mockFontView(need(), masterId);
+  },
+  async fontInfo() {
+    return mockInfo(need());
+  },
+  async setFontInfo(familyName, unitsPerEm, versionMajor, versionMinor) {
+    if (!familyName.trim()) throw "Enter a family name.";
+    if (unitsPerEm < 16 || unitsPerEm > 16384) throw "Units per em must be between 16 and 16384.";
+    return editMeta(need(), (m) => Object.assign(m, { familyName: familyName.trim(), unitsPerEm, versionMajor, versionMinor }));
+  },
+  async setAxes(axes) {
+    const tags = new Set<string>();
+    for (const a of axes) {
+      if (!a.name.trim()) throw "Every axis needs a name.";
+      if (a.tag.length !== 4) throw `Axis tag "${a.tag}" must be 4 ASCII characters, like wght.`;
+      if (tags.has(a.tag)) throw `Axis tag "${a.tag}" is used twice.`;
+      tags.add(a.tag);
+      if (!(a.min <= a.default && a.default <= a.max)) throw `Axis "${a.name}" needs minimum ≤ default ≤ maximum.`;
+    }
+    return editMeta(need(), (m) => {
+      const fix = (loc: Location) => {
+        for (const k of Object.keys(loc)) if (!tags.has(k)) delete loc[k];
+        for (const a of axes) loc[a.tag] ??= a.default;
+      };
+      m.masters.forEach((x) => fix(x.location));
+      m.instances.forEach((x) => fix(x.location));
+      m.axes = axes.map((a) => ({ ...a }));
+    });
+  },
+  async addMaster(copyFrom, name, location) {
+    const d = need();
+    const src = d.masters.find((m) => m.id === copyFrom);
+    if (!src) throw `No master with id "${copyFrom}".`;
+    if (!name.trim()) throw "Enter a master name.";
+    const loc = checkLocation(d, location);
+    let n = 1;
+    while (d.masters.some((m) => m.id === `m${String(n).padStart(2, "0")}`)) n++;
+    return editMeta(d, (m) => m.masters.push({ id: `m${String(n).padStart(2, "0")}`, name: name.trim(), location: loc, metrics: { ...src.metrics } }));
+  },
+  async updateMaster(id, name, location, metrics) {
+    const d = need();
+    if (!name.trim()) throw "Enter a master name.";
+    const loc = checkLocation(d, location);
+    return editMeta(d, (m) => {
+      const x = m.masters.find((k) => k.id === id);
+      if (!x) throw `No master with id "${id}".`;
+      Object.assign(x, { name: name.trim(), location: loc, metrics: { ...metrics } });
+    });
+  },
+  async removeMaster(id) {
+    const d = need();
+    if (d.masters.length === 1) throw "A font needs at least one master.";
+    return editMeta(d, (m) => { m.masters = m.masters.filter((k) => k.id !== id); });
+  },
+  async setInstances(instances) {
+    const d = need();
+    const names = new Set<string>();
+    const clean = instances.map((i) => {
+      const name = i.name.trim();
+      if (!name) throw "Every instance needs a name.";
+      if (names.has(name)) throw `Instance name "${name}" is used twice.`;
+      names.add(name);
+      return { name, location: checkLocation(d, i.location), export: i.export ?? true };
+    });
+    return editMeta(d, (m) => { m.instances = clean; });
+  },
+  async compatibility() {
+    return [];
   },
   async glyphLayer(glyph) {
     const d = need();
@@ -482,7 +667,7 @@ const mockBackend: Backend = {
         const next = line[i + 1];
         const k = next && "name" in next ? pairValue(d, t.name, next.name) : null;
         return {
-          type: "glyph", name: g.name, unicode: g.unicode, width: g.width, ...sb(d, g), leftGroup: g.leftGroup, rightGroup: g.rightGroup,
+          type: "glyph", name: g.name, unicode: g.unicode, incompatible: false, width: g.width, ...sb(d, g), leftGroup: g.leftGroup, rightGroup: g.rightGroup,
           kern: k?.value ?? 0, kernKind: k?.kind ?? null, kernLeft: k?.left ?? null, kernRight: k?.right ?? null, svg: pathsToSvg(resolved(d, g)),
         };
       }),

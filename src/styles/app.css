@@ -307,3 +307,28 @@ button.doc-tab { padding-right: var(--k-space-12); }
 .kerningview .statusbar { grid-column: auto; }
 .segment, .toolbar .zoom { white-space: nowrap; }
 .textview .toolbar .zoom { width: 52px; }
+
+/* ---------- Masters & Font Info ---------- */
+.glyph-cell { position: relative; }
+.glyph-incompatible { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--k-status-danger); box-shadow: 0 0 0 2px var(--k-bg-surface); }
+.notice-warning { background: var(--k-status-warning-subtle); color: var(--k-text-warning); }
+.fontinfo { flex: 1; display: flex; min-height: 0; background: var(--k-bg-app); }
+.fontinfo-scroll { flex: 1; overflow: auto; padding: var(--k-space-24) var(--k-space-32); display: flex; flex-direction: column; gap: var(--k-space-20); }
+.fi-warnings { display: flex; flex-direction: column; gap: var(--k-space-8); }
+.fi-section { background: var(--k-bg-surface); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-xl); padding: var(--k-space-16) var(--k-space-20); display: flex; flex-direction: column; gap: var(--k-space-12); }
+.fi-head { display: flex; align-items: center; gap: var(--k-space-8); }
+.fi-row { display: flex; align-items: flex-end; gap: var(--k-space-8); flex-wrap: wrap; }
+.fi-master, .fi-instance { padding: var(--k-space-12); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-lg); background: var(--k-bg-app); }
+.fi-adding { border-style: dashed; border-color: var(--k-border-focus); }
+.fi-actions { display: flex; align-items: center; gap: var(--k-space-8); padding-top: var(--k-space-4); border-top: 1px solid var(--k-border-default); }
+.fi-table { border-collapse: collapse; width: 100%; }
+.fi-table th { text-align: left; font: 600 10px/12px var(--k-font-ui); letter-spacing: 0.06em; text-transform: uppercase; color: var(--k-text-muted); padding: var(--k-space-4) var(--k-space-8); }
+.fi-table td { padding: var(--k-space-4) var(--k-space-8); }
+.fi-table .num { text-align: right; }
+.text-field { text-align: left; padding: 0 var(--k-space-8); font: 400 13px var(--k-font-ui); }
+.issues-banner { position: absolute; top: var(--k-space-12); left: 50%; transform: translateX(-50%); max-width: 70%; z-index: 2; box-shadow: var(--k-shadow-m); }
+.issues-banner ul { margin: var(--k-space-4) 0 0; padding-left: var(--k-space-16); }
+.text-glyph.is-incompatible { fill: var(--k-status-danger); opacity: 0.7; }
+.location-picker { display: flex; align-items: center; gap: var(--k-space-6); }
+.axis-slider { display: flex; align-items: center; gap: var(--k-space-4); }
+.axis-slider input[type="range"] { width: 90px; accent-color: var(--k-accent-default); }

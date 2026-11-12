@@ -136,14 +136,25 @@ pub enum Change {
         before: Groups,
         after: Groups,
     },
+    /// A structural edit (axes, masters, instances, info): whole-font snapshots.
+    Font { before: Box<Font>, after: Box<Font> },
 }
 
 /// What an undo or redo touched, so the UI knows what to refresh.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Affected {
-    Layer { glyph: String, master_id: String },
-    Kerning { master_id: String },
-    Groups { glyph: String },
+    Layer {
+        glyph: String,
+        master_id: String,
+    },
+    Kerning {
+        master_id: String,
+    },
+    Groups {
+        glyph: String,
+    },
+    /// Anything may have changed: reload everything.
+    Font,
 }
 
 /// Undo/redo stacks for a document.
@@ -306,7 +317,26 @@ impl History {
                     glyph: glyph.clone(),
                 })
             }
+            Change::Font { before, after } => {
+                *font = (**if forward { after } else { before }).clone();
+                Some(Affected::Font)
+            }
         }
+    }
+
+    /// Replaces the whole font (structural edits: axes, masters, instances, info)
+    /// and records the change.
+    pub fn apply_font(&mut self, font: &mut Font, after: Font) -> Result<bool> {
+        after.validate()?;
+        if *font == after {
+            return Ok(false);
+        }
+        let before = std::mem::replace(font, after.clone());
+        self.record(Change::Font {
+            before: Box::new(before),
+            after: Box::new(after),
+        });
+        Ok(true)
     }
 
     /// Undoes the last change; returns what it touched.
@@ -473,5 +503,26 @@ mod history_tests {
             Some(-5.0)
         );
         assert!(h.apply_kerning(&mut f, "nope", vec![]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod font_history_tests {
+    use super::*;
+    use crate::sample::sample_font;
+
+    #[test]
+    fn structural_edits_undo() {
+        let mut f = sample_font();
+        let original = f.clone();
+        let mut h = History::default();
+        let next = crate::structure::set_info(&f, "Renamed", 1000, 2, 0).unwrap();
+        assert!(h.apply_font(&mut f, next).unwrap());
+        assert_eq!(f.info.family_name, "Renamed");
+        assert_eq!(h.undo(&mut f), Some(Affected::Font));
+        assert_eq!(f, original);
+        let mut broken = f.clone();
+        broken.masters.clear();
+        assert!(h.apply_font(&mut f, broken).is_err());
     }
 }

@@ -10,6 +10,7 @@ use std::sync::{Mutex, MutexGuard};
 use kernest_core::edit::{component_creates_cycle, with_metric, Affected, History, MetricEdit};
 use kernest_core::geometry::{sidebearings, svg_path};
 use kernest_core::glyphdata::{codepoints_for, GLYPH_SETS};
+use kernest_core::interpolate::check_glyph;
 use kernest_core::{
     package, sample, Anchor, Font, Layer, Metrics, Node, NodeKind, Path as KPath, Shape,
 };
@@ -88,6 +89,8 @@ pub struct GlyphSummary {
     rsb: Option<f64>,
     /// Outline as SVG path data in font units (y up), empty when not drawn yet.
     svg: String,
+    /// False when this glyph's masters can't be interpolated.
+    compatible: bool,
 }
 
 #[derive(Serialize)]
@@ -201,6 +204,8 @@ pub struct LayerView {
     /// All components resolved to outlines, as SVG path data in font units (y up).
     component_svg: String,
     anchors: Vec<Anchor>,
+    /// Why this glyph's masters can't be interpolated (empty when they can).
+    issues: Vec<String>,
     status: DocStatus,
 }
 
@@ -229,6 +234,7 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
                 lsb: sb.map(|s| s.0),
                 rsb: sb.map(|s| s.1),
                 svg: layer.map(|l| svg_path(font, l)).unwrap_or_default(),
+                compatible: check_glyph(font, &g.name).is_empty(),
             }
         })
         .collect();
@@ -305,6 +311,7 @@ fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<Laye
         components,
         component_svg: svg_path(font, &comp_only),
         anchors: layer.anchors.clone(),
+        issues: check_glyph(font, glyph),
         status: status(doc),
     })
 }
@@ -595,6 +602,7 @@ fn step(state: &AppState, redo: bool) -> CmdResult<Option<UndoResult>> {
             Affected::Layer { glyph, master_id } => ("layer", Some(glyph), Some(master_id)),
             Affected::Kerning { master_id } => ("kerning", None, Some(master_id)),
             Affected::Groups { glyph } => ("groups", Some(glyph), None),
+            Affected::Font => ("font", None, None),
         };
         UndoResult {
             kind,
