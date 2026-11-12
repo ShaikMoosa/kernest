@@ -11,9 +11,11 @@ pub mod edit;
 pub mod error;
 pub mod geometry;
 pub mod glyphdata;
+pub mod kerning;
 pub mod model;
 pub mod package;
 pub mod sample;
+pub mod text;
 
 pub use error::{Error, Result};
 pub use geometry::Rect;

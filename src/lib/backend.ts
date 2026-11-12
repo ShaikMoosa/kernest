@@ -82,12 +82,53 @@ export interface LayerView {
 }
 
 export interface UndoResult {
-  glyph: string;
-  masterId: string;
+  kind: "layer" | "kerning" | "groups";
+  glyph: string | null;
+  masterId: string | null;
   status: DocStatus;
 }
 
 export type MetricName = "lsb" | "rsb" | "width";
+
+/** Which sides of a pair are kerned as groups ("group") or as the glyph itself. */
+export type KernMode = "group" | "leftException" | "rightException" | "exception";
+
+export type TextItem =
+  | {
+      type: "glyph";
+      name: string;
+      unicode: string | null;
+      width: number;
+      lsb: number | null;
+      rsb: number | null;
+      leftGroup: string | null;
+      rightGroup: string | null;
+      /** Kerning with the next glyph on the line. */
+      kern: number;
+      kernKind: "group" | "exception" | null;
+      kernLeft: string | null;
+      kernRight: string | null;
+      svg: string;
+    }
+  | { type: "missing"; text: string };
+
+export interface TextLayout {
+  lines: TextItem[][];
+  metrics: Metrics;
+  status: DocStatus;
+}
+
+export interface KernPair {
+  left: string;
+  right: string;
+  value: number;
+}
+
+export interface KerningList {
+  pairs: KernPair[];
+  groups: string[];
+  status: DocStatus;
+}
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -105,6 +146,13 @@ export interface Backend {
   setMetric(glyph: string, masterId: string, metric: MetricName, value: number): Promise<LayerView>;
   undo(): Promise<UndoResult | null>;
   redo(): Promise<UndoResult | null>;
+  textLayout(text: string, masterId: string): Promise<TextLayout>;
+  /** Kerns two glyphs; `mode` decides whether their groups or the glyphs are kerned. 0 removes the pair. */
+  setGlyphKerning(masterId: string, left: string, right: string, mode: KernMode, value: number): Promise<{ left: string; right: string; value: number; status: DocStatus }>;
+  kerningList(masterId: string): Promise<KerningList>;
+  /** Sets a pair by its sides (glyph names or @groups). 0 removes the pair. */
+  setKerningPair(masterId: string, left: string, right: string, value: number): Promise<DocStatus>;
+  setGlyphGroups(glyph: string, leftGroup: string | null, rightGroup: string | null): Promise<DocStatus>;
 }
 
 const tauriBackend: Backend = {
@@ -121,6 +169,11 @@ const tauriBackend: Backend = {
   setMetric: (glyph, masterId, metric, value) => invoke("set_metric", { glyph, masterId, metric, value }),
   undo: () => invoke("undo"),
   redo: () => invoke("redo"),
+  textLayout: (text, masterId) => invoke("text_layout", { text, masterId }),
+  setGlyphKerning: (masterId, left, right, mode, value) => invoke("set_glyph_kerning", { masterId, left, right, mode, value }),
+  kerningList: (masterId) => invoke("kerning_list", { masterId }),
+  setKerningPair: (masterId, left, right, value) => invoke("set_kerning_pair", { masterId, left, right, value }),
+  setGlyphGroups: (glyph, leftGroup, rightGroup) => invoke("set_glyph_groups", { glyph, leftGroup, rightGroup }),
 };
 
 // ---------- Browser preview mock ----------
@@ -151,6 +204,7 @@ const MOCK_OUTLINES: Record<string, [number, EditPath[]]> = {
   L: [540, [rectPath(80, 0, 170, 700), rectPath(80, 0, 500, 80)]],
   T: [600, [rectPath(255, 0, 345, 620), rectPath(40, 620, 560, 700)]],
   n: [600, [rectPath(75, 0, 160, 500), rectPath(440, 0, 525, 380), rectPath(75, 380, 525, 500)]],
+  o: [580, [rectPath(50, 0, 530, 500)]],
   l: [240, [rectPath(75, 0, 160, 760)]],
 };
 
@@ -165,13 +219,21 @@ interface MockGlyph extends Snapshot {
   unicode: string;
   character: string;
   category: string;
+  leftGroup: string | null;
+  rightGroup: string | null;
 }
+
+type MockChange =
+  | { kind: "layer"; glyph: string; before: Snapshot; after: Snapshot }
+  | { kind: "kerning"; before: KernPair[]; after: KernPair[] }
+  | { kind: "groups"; glyph: string; before: [string | null, string | null]; after: [string | null, string | null] };
 
 interface MockDoc {
   familyName: string;
   glyphs: MockGlyph[];
-  undo: { glyph: string; before: Snapshot; after: Snapshot }[];
-  redo: MockDoc["undo"];
+  kerning: KernPair[];
+  undo: MockChange[];
+  redo: MockChange[];
   revision: number;
   savedRevision: number;
 }
@@ -194,9 +256,12 @@ function mockDoc(familyName: string, codepoints: number[], withOutlines: boolean
       width: drawn?.[0] ?? (cp === 0x20 ? 250 : 600),
       paths: drawn ? clonePaths(drawn[1]) : [],
       components: [],
+      leftGroup: null,
+      rightGroup: null,
     };
   });
-  return { familyName, glyphs, undo: [], redo: [], revision: 0, savedRevision: 0 };
+  const kerning = withOutlines ? [{ left: "T", right: "o", value: -60 }, { left: "L", right: "T", value: -80 }] : [];
+  return { familyName, glyphs, kerning, undo: [], redo: [], revision: 0, savedRevision: 0 };
 }
 
 const need = () => {
@@ -256,13 +321,79 @@ function wouldCycle(d: MockDoc, glyph: string, base: string): boolean {
   return false;
 }
 
+function record(d: MockDoc, c: MockChange) {
+  d.undo.push(c);
+  d.redo = [];
+  d.revision++;
+}
+
 function mockApply(d: MockDoc, g: MockGlyph, next: Snapshot) {
   const before = snap(g);
   if (JSON.stringify(before) === JSON.stringify(snap(next))) return;
   Object.assign(g, snap(next));
-  d.undo.push({ glyph: g.name, before, after: snap(next) });
-  d.redo = [];
+  record(d, { kind: "layer", glyph: g.name, before, after: snap(next) });
+}
+
+// Kerning lookup mirrors kernest_core::kerning.
+const leftKey = (d: MockDoc, name: string, group: boolean) => {
+  const g = d.glyphs.find((x) => x.name === name)?.rightGroup;
+  return group && g ? `@${g}` : name;
+};
+const rightKey = (d: MockDoc, name: string, group: boolean) => {
+  const g = d.glyphs.find((x) => x.name === name)?.leftGroup;
+  return group && g ? `@${g}` : name;
+};
+function pairValue(d: MockDoc, l: string, r: string) {
+  const lg = leftKey(d, l, true), rg = rightKey(d, r, true);
+  for (const [a, b] of [[l, r], [l, rg], [lg, r], [lg, rg]]) {
+    const p = d.kerning.find((k) => k.left === a && k.right === b);
+    if (p) return { value: p.value, kind: (a.startsWith("@") && b.startsWith("@") ? "group" : "exception") as "group" | "exception", left: a, right: b };
+  }
+  return null;
+}
+function setPair(d: MockDoc, left: string, right: string, value: number) {
+  const before = d.kerning.map((p) => ({ ...p }));
+  const v = Math.round(value);
+  const i = d.kerning.findIndex((p) => p.left === left && p.right === right);
+  const after = before.map((p) => ({ ...p }));
+  if (i >= 0 && v === 0) after.splice(i, 1);
+  else if (i >= 0) after[i].value = v;
+  else if (v !== 0) after.push({ left, right, value: v });
+  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  d.kerning = after;
+  record(d, { kind: "kerning", before, after });
+}
+
+function parseText(d: MockDoc, text: string): ({ name: string } | { missing: string })[][] {
+  const byChar = new Map(d.glyphs.map((g) => [g.character, g.name]));
+  return text.split("\n").map((line) => {
+    const out: ({ name: string } | { missing: string })[] = [];
+    const chars = [...line.replace(/\r$/, "")];
+    for (let i = 0; i < chars.length; i++) {
+      if (chars[i] === "/" && /[\p{L}\p{N}._-]/u.test(chars[i + 1] ?? "")) {
+        let j = i + 1;
+        while (j < chars.length && /[\p{L}\p{N}._-]/u.test(chars[j])) j++;
+        const name = chars.slice(i + 1, j).join("");
+        out.push(d.glyphs.some((g) => g.name === name) ? { name } : { missing: `/${name}` });
+        i = chars[j] === " " ? j : j - 1;
+        continue;
+      }
+      const name = byChar.get(chars[i]);
+      out.push(name ? { name } : { missing: chars[i] });
+    }
+    return out;
+  });
+}
+
+function undoStep(d: MockDoc, c: MockChange, forward: boolean): UndoResult {
+  if (c.kind === "layer") Object.assign(findGlyph(d, c.glyph), snap(forward ? c.after : c.before));
+  else if (c.kind === "kerning") d.kerning = (forward ? c.after : c.before).map((p) => ({ ...p }));
+  else {
+    const g = findGlyph(d, c.glyph);
+    [g.leftGroup, g.rightGroup] = forward ? c.after : c.before;
+  }
   d.revision++;
+  return { kind: c.kind, glyph: c.kind === "kerning" ? null : c.glyph, masterId: c.kind === "groups" ? null : "m01", status: status(d) };
 }
 
 const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
@@ -332,19 +463,67 @@ const mockBackend: Backend = {
     const d = need();
     const c = d.undo.pop();
     if (!c) return null;
-    Object.assign(findGlyph(d, c.glyph), snap(c.before));
     d.redo.push(c);
-    d.revision++;
-    return { glyph: c.glyph, masterId: "m01", status: status(d) };
+    return undoStep(d, c, false);
   },
   async redo() {
     const d = need();
     const c = d.redo.pop();
     if (!c) return null;
-    Object.assign(findGlyph(d, c.glyph), snap(c.after));
     d.undo.push(c);
-    d.revision++;
-    return { glyph: c.glyph, masterId: "m01", status: status(d) };
+    return undoStep(d, c, true);
+  },
+  async textLayout(text) {
+    const d = need();
+    const lines = parseText(d, text).map((line) =>
+      line.map((t, i): TextItem => {
+        if ("missing" in t) return { type: "missing", text: t.missing };
+        const g = findGlyph(d, t.name);
+        const next = line[i + 1];
+        const k = next && "name" in next ? pairValue(d, t.name, next.name) : null;
+        return {
+          type: "glyph", name: g.name, unicode: g.unicode, width: g.width, ...sb(d, g), leftGroup: g.leftGroup, rightGroup: g.rightGroup,
+          kern: k?.value ?? 0, kernKind: k?.kind ?? null, kernLeft: k?.left ?? null, kernRight: k?.right ?? null, svg: pathsToSvg(resolved(d, g)),
+        };
+      }),
+    );
+    return { lines, metrics: METRICS, status: status(d) };
+  },
+  async setGlyphKerning(_m, left, right, mode, value) {
+    const d = need();
+    findGlyph(d, left);
+    findGlyph(d, right);
+    const l = leftKey(d, left, mode === "group" || mode === "rightException");
+    const r = rightKey(d, right, mode === "group" || mode === "leftException");
+    setPair(d, l, r, value);
+    return { left: l, right: r, value: Math.round(value), status: status(d) };
+  },
+  async kerningList() {
+    const d = need();
+    const groups = [...new Set(d.glyphs.flatMap((g) => [g.leftGroup, g.rightGroup]).filter((g): g is string => !!g))].sort();
+    return { pairs: d.kerning.map((p) => ({ ...p })), groups, status: status(d) };
+  },
+  async setKerningPair(_m, left, right, value) {
+    const d = need();
+    for (const s of [left.trim(), right.trim()]) {
+      if (!s) throw "A kerning pair needs a glyph or @group on both sides.";
+      if (s.startsWith("@") ? s.length < 2 : !d.glyphs.some((g) => g.name === s)) throw `There is no glyph named "${s}".`;
+    }
+    setPair(d, left.trim(), right.trim(), value);
+    return status(d);
+  },
+  async setGlyphGroups(glyph, leftGroup, rightGroup) {
+    const d = need();
+    const g = findGlyph(d, glyph);
+    const clean = (s: string | null) => (s ? s.trim().replace(/^@/, "") || null : null);
+    const after: [string | null, string | null] = [clean(leftGroup), clean(rightGroup)];
+    if (after.some((s) => s && /\s/.test(s))) throw "Group names cannot contain spaces";
+    const before: [string | null, string | null] = [g.leftGroup, g.rightGroup];
+    if (before[0] !== after[0] || before[1] !== after[1]) {
+      [g.leftGroup, g.rightGroup] = after;
+      record(d, { kind: "groups", glyph, before, after });
+    }
+    return status(d);
   },
 };
 

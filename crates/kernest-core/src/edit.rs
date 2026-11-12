@@ -5,7 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::geometry::bounds;
-use crate::model::{Font, Layer, Shape};
+use crate::model::{Font, KernPair, Layer, Shape};
 
 /// Moves everything in a layer horizontally (outlines, components, anchors).
 pub fn translate_x(layer: &mut Layer, dx: f64) {
@@ -114,13 +114,36 @@ pub fn component_creates_cycle(font: &Font, glyph: &str, base: &str) -> bool {
     false
 }
 
-/// One recorded edit: the layer before and after.
+/// Kerning groups of a glyph: (left group, right group).
+pub type Groups = (Option<String>, Option<String>);
+
+/// One recorded edit, with the state before and after.
 #[derive(Debug, Clone)]
-pub struct Change {
-    pub glyph: String,
-    pub master_id: String,
-    pub before: Layer,
-    pub after: Layer,
+pub enum Change {
+    Layer {
+        glyph: String,
+        master_id: String,
+        before: Box<Layer>,
+        after: Box<Layer>,
+    },
+    Kerning {
+        master_id: String,
+        before: Vec<KernPair>,
+        after: Vec<KernPair>,
+    },
+    Groups {
+        glyph: String,
+        before: Groups,
+        after: Groups,
+    },
+}
+
+/// What an undo or redo touched, so the UI knows what to refresh.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Affected {
+    Layer { glyph: String, master_id: String },
+    Kerning { master_id: String },
+    Groups { glyph: String },
 }
 
 /// Undo/redo stacks for a document.
@@ -166,37 +189,138 @@ impl History {
             return Ok(false);
         }
         let before = std::mem::replace(slot, after.clone());
-        self.undo.push(Change {
+        self.record(Change::Layer {
             glyph: glyph.into(),
+            master_id: master_id.into(),
+            before: Box::new(before),
+            after: Box::new(after),
+        });
+        Ok(true)
+    }
+
+    /// Replaces the kerning of a master and records the change.
+    pub fn apply_kerning(
+        &mut self,
+        font: &mut Font,
+        master_id: &str,
+        after: Vec<KernPair>,
+    ) -> Result<bool> {
+        if font.master(master_id).is_none() {
+            return Err(Error::Invalid(format!("no master with id \"{master_id}\"")));
+        }
+        let slot = font.kerning.entry(master_id.to_string()).or_default();
+        if *slot == after {
+            return Ok(false);
+        }
+        let before = std::mem::replace(slot, after.clone());
+        if font.kerning.get(master_id).is_some_and(Vec::is_empty) {
+            font.kerning.remove(master_id);
+        }
+        self.record(Change::Kerning {
             master_id: master_id.into(),
             before,
             after,
         });
+        Ok(true)
+    }
+
+    /// Sets a glyph's kerning groups and records the change. Empty names clear a group.
+    pub fn apply_groups(&mut self, font: &mut Font, glyph: &str, after: Groups) -> Result<bool> {
+        let clean = |g: Option<String>| {
+            g.map(|s| s.trim().trim_start_matches('@').to_string())
+                .filter(|s| !s.is_empty())
+        };
+        let after = (clean(after.0), clean(after.1));
+        for name in [&after.0, &after.1].into_iter().flatten() {
+            if name.chars().any(char::is_whitespace) {
+                return Err(Error::Invalid(format!(
+                    "group name \"{name}\" cannot contain spaces"
+                )));
+            }
+        }
+        let g = font
+            .glyph_mut(glyph)
+            .ok_or_else(|| Error::Invalid(format!("no glyph named \"{glyph}\"")))?;
+        let before = (g.left_group.clone(), g.right_group.clone());
+        if before == after {
+            return Ok(false);
+        }
+        g.left_group = after.0.clone();
+        g.right_group = after.1.clone();
+        self.record(Change::Groups {
+            glyph: glyph.into(),
+            before,
+            after,
+        });
+        Ok(true)
+    }
+
+    fn record(&mut self, c: Change) {
+        self.undo.push(c);
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
         }
         self.redo.clear();
-        Ok(true)
     }
 
-    fn swap(font: &mut Font, c: &Change, to: &Layer) -> Option<(String, String)> {
-        let slot = font.glyph_mut(&c.glyph)?.layer_mut(&c.master_id)?;
-        *slot = to.clone();
-        Some((c.glyph.clone(), c.master_id.clone()))
+    fn restore(font: &mut Font, c: &Change, forward: bool) -> Option<Affected> {
+        match c {
+            Change::Layer {
+                glyph,
+                master_id,
+                before,
+                after,
+            } => {
+                let slot = font.glyph_mut(glyph)?.layer_mut(master_id)?;
+                *slot = (**if forward { after } else { before }).clone();
+                Some(Affected::Layer {
+                    glyph: glyph.clone(),
+                    master_id: master_id.clone(),
+                })
+            }
+            Change::Kerning {
+                master_id,
+                before,
+                after,
+            } => {
+                let to = if forward { after } else { before };
+                if to.is_empty() {
+                    font.kerning.remove(master_id);
+                } else {
+                    font.kerning.insert(master_id.clone(), to.clone());
+                }
+                Some(Affected::Kerning {
+                    master_id: master_id.clone(),
+                })
+            }
+            Change::Groups {
+                glyph,
+                before,
+                after,
+            } => {
+                let g = font.glyph_mut(glyph)?;
+                let to = if forward { after } else { before };
+                g.left_group = to.0.clone();
+                g.right_group = to.1.clone();
+                Some(Affected::Groups {
+                    glyph: glyph.clone(),
+                })
+            }
+        }
     }
 
-    /// Undoes the last change; returns the affected (glyph, master id).
-    pub fn undo(&mut self, font: &mut Font) -> Option<(String, String)> {
+    /// Undoes the last change; returns what it touched.
+    pub fn undo(&mut self, font: &mut Font) -> Option<Affected> {
         let c = self.undo.pop()?;
-        let hit = Self::swap(font, &c, &c.before);
+        let hit = Self::restore(font, &c, false);
         self.redo.push(c);
         hit
     }
 
-    /// Redoes the last undone change; returns the affected (glyph, master id).
-    pub fn redo(&mut self, font: &mut Font) -> Option<(String, String)> {
+    /// Redoes the last undone change; returns what it touched.
+    pub fn redo(&mut self, font: &mut Font) -> Option<Affected> {
         let c = self.redo.pop()?;
-        let hit = Self::swap(font, &c, &c.after);
+        let hit = Self::restore(font, &c, true);
         self.undo.push(c);
         hit
     }
@@ -245,7 +369,13 @@ mod tests {
         let l = with_metric(&f, "H", "m01", MetricEdit::Lsb(100.0)).unwrap();
         h.apply(&mut f, "H", "m01", l).unwrap();
         let edited = f.clone();
-        assert_eq!(h.undo(&mut f), Some(("H".into(), "m01".into())));
+        assert_eq!(
+            h.undo(&mut f),
+            Some(Affected::Layer {
+                glyph: "H".into(),
+                master_id: "m01".into()
+            })
+        );
         assert_eq!(f, original);
         assert!(h.can_redo());
         h.redo(&mut f);
@@ -255,7 +385,13 @@ mod tests {
         let l = with_metric(&f, "I", "m01", MetricEdit::Width(300.0)).unwrap();
         h.apply(&mut f, "I", "m01", l).unwrap();
         assert!(!h.can_redo());
-        assert_eq!(h.undo(&mut f), Some(("I".into(), "m01".into())));
+        assert_eq!(
+            h.undo(&mut f),
+            Some(Affected::Layer {
+                glyph: "I".into(),
+                master_id: "m01".into()
+            })
+        );
         assert_eq!(f, original);
         assert_eq!(h.undo(&mut f), None);
     }
@@ -298,5 +434,44 @@ mod tests {
         translate_x(&mut l, 10.0);
         assert!(matches!(&l.shapes[0], Shape::Component { transform, .. } if transform[4] == 10.0));
         assert_eq!(l.anchors[0].x, 260.0);
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    use crate::sample::sample_font;
+
+    #[test]
+    fn kerning_and_groups_undo() {
+        let mut f = sample_font();
+        let original = f.clone();
+        let mut h = History::default();
+        let pairs = crate::kerning::with_pair(&f.kerning["m01"], "H", "H", -5.0);
+        assert!(h.apply_kerning(&mut f, "m01", pairs).unwrap());
+        assert!(h
+            .apply_groups(&mut f, "T", (Some(" @T ".into()), Some("T".into())))
+            .unwrap());
+        assert_eq!(f.glyph("T").unwrap().left_group.as_deref(), Some("T"));
+        assert!(!h
+            .apply_groups(&mut f, "T", (Some("T".into()), Some("T".into())))
+            .unwrap());
+        assert!(h
+            .apply_groups(&mut f, "T", (Some("bad name".into()), None))
+            .is_err());
+        assert_eq!(h.undo(&mut f), Some(Affected::Groups { glyph: "T".into() }));
+        assert_eq!(
+            h.undo(&mut f),
+            Some(Affected::Kerning {
+                master_id: "m01".into()
+            })
+        );
+        assert_eq!(f, original);
+        h.redo(&mut f);
+        assert_eq!(
+            crate::kerning::pair_value(&f, "m01", "H", "H").map(|v| v.0),
+            Some(-5.0)
+        );
+        assert!(h.apply_kerning(&mut f, "nope", vec![]).is_err());
     }
 }

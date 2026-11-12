@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod spacing;
 
 fn main() {
     tauri::Builder::default()
@@ -21,6 +22,11 @@ fn main() {
             commands::set_metric,
             commands::undo,
             commands::redo,
+            spacing::text_layout,
+            spacing::set_glyph_kerning,
+            spacing::kerning_list,
+            spacing::set_kerning_pair,
+            spacing::set_glyph_groups,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kernest");

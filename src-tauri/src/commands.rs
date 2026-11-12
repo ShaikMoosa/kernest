@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use kernest_core::edit::{component_creates_cycle, with_metric, History, MetricEdit};
+use kernest_core::edit::{component_creates_cycle, with_metric, Affected, History, MetricEdit};
 use kernest_core::geometry::{sidebearings, svg_path};
 use kernest_core::glyphdata::{codepoints_for, GLYPH_SETS};
 use kernest_core::{
@@ -21,12 +21,12 @@ pub struct Document {
     pub path: Option<PathBuf>,
     pub history: History,
     /// Incremented on every change; compared with `saved_revision` for the unsaved-changes state.
-    revision: u64,
+    pub(crate) revision: u64,
     saved_revision: u64,
 }
 
 impl Document {
-    fn new(font: Font, path: Option<PathBuf>) -> Self {
+    pub(crate) fn new(font: Font, path: Option<PathBuf>) -> Self {
         Self {
             font,
             path,
@@ -43,16 +43,18 @@ impl Document {
 #[derive(Default)]
 pub struct AppState(Mutex<Option<Document>>);
 
-type CmdResult<T> = Result<T, String>;
+pub(crate) type CmdResult<T> = Result<T, String>;
 
-fn lock(state: &AppState) -> CmdResult<MutexGuard<'_, Option<Document>>> {
+pub(crate) fn lock(state: &AppState) -> CmdResult<MutexGuard<'_, Option<Document>>> {
     state
         .0
         .lock()
         .map_err(|_| "Internal error: state lock poisoned".to_string())
 }
 
-fn doc_mut<'a>(guard: &'a mut MutexGuard<'_, Option<Document>>) -> CmdResult<&'a mut Document> {
+pub(crate) fn doc_mut<'a>(
+    guard: &'a mut MutexGuard<'_, Option<Document>>,
+) -> CmdResult<&'a mut Document> {
     guard.as_mut().ok_or_else(|| "No font is open.".to_string())
 }
 
@@ -96,7 +98,7 @@ pub struct DocStatus {
     can_redo: bool,
 }
 
-fn status(doc: &Document) -> DocStatus {
+pub(crate) fn status(doc: &Document) -> DocStatus {
     DocStatus {
         dirty: doc.dirty(),
         can_undo: doc.history.can_undo(),
@@ -572,8 +574,10 @@ pub fn set_metric(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UndoResult {
-    glyph: String,
-    master_id: String,
+    /// "layer" | "kerning" | "groups"
+    kind: &'static str,
+    glyph: Option<String>,
+    master_id: Option<String>,
     status: DocStatus,
 }
 
@@ -585,9 +589,15 @@ fn step(state: &AppState, redo: bool) -> CmdResult<Option<UndoResult>> {
     } else {
         doc.history.undo(&mut doc.font)
     };
-    Ok(hit.map(|(glyph, master_id)| {
+    Ok(hit.map(|a| {
         doc.revision += 1;
+        let (kind, glyph, master_id) = match a {
+            Affected::Layer { glyph, master_id } => ("layer", Some(glyph), Some(master_id)),
+            Affected::Kerning { master_id } => ("kerning", None, Some(master_id)),
+            Affected::Groups { glyph } => ("groups", Some(glyph), None),
+        };
         UndoResult {
+            kind,
             glyph,
             master_id,
             status: status(doc),

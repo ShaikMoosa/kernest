@@ -8,7 +8,9 @@ import { StartWindow } from "./components/StartWindow";
 import { NewFontDialog } from "./components/NewFontDialog";
 import { FontViewScreen } from "./components/FontViewScreen";
 import { EditView, sendEditCommand } from "./components/EditView";
-import { CloseIcon } from "./components/Icons";
+import { AddIcon, CloseIcon } from "./components/Icons";
+import { TextView } from "./components/TextView";
+import { KerningView } from "./components/KerningView";
 
 const later = (label: string, shortcut?: string) => ({ label, shortcut, disabled: true });
 const CLEAN: DocStatus = { dirty: false, canUndo: false, canRedo: false };
@@ -131,12 +133,17 @@ export default function App() {
     setActive(null);
   }, [confirmDiscard]);
 
-  // ---------- Glyph tabs ----------
+  // ---------- Tabs ----------
+  // Tab ids: "g:<glyph>" for Edit View, "text:<n>" for text views, "kerning" for the kerning window.
 
-  const openGlyph = useCallback((name: string) => {
-    setTabs((t) => (t.includes(name) ? t : [...t, name]));
-    setActive(name);
+  const openTab = useCallback((id: string) => {
+    setTabs((t) => (t.includes(id) ? t : [...t, id]));
+    setActive(id);
   }, []);
+  const openGlyph = useCallback((name: string) => openTab(`g:${name}`), [openTab]);
+  const textCounter = useRef(0);
+  const newTextTab = useCallback(() => openTab(`text:${++textCounter.current}`), [openTab]);
+  const openKerning = useCallback(() => openTab("kerning"), [openTab]);
 
   const closeTab = useCallback((name: string) => {
     setTabs((t) => {
@@ -152,9 +159,13 @@ export default function App() {
     if (font && active === null && fontStale) backend.fontView(font.masterId).then(show, fail);
   }, [active, fontStale, font, show, fail]);
 
+  // Bumped on every change, so text and kerning tabs refresh.
+  const [docVersion, setDocVersion] = useState(0);
+
   const onCommitted = useCallback((s: DocStatus) => {
     setStatus(s);
     setFontStale(true);
+    setDocVersion((v) => v + 1);
   }, []);
 
   const undoRedo = useCallback(async (redo: boolean) => {
@@ -164,7 +175,9 @@ export default function App() {
       if (!r) return;
       setStatus(r.status);
       setFontStale(true);
-      setVersions((v) => ({ ...v, [r.glyph]: (v[r.glyph] ?? 0) + 1 }));
+      setDocVersion((v) => v + 1);
+      const g = r.glyph;
+      if (r.kind === "layer" && g) setVersions((v) => ({ ...v, [g]: (v[g] ?? 0) + 1 }));
       if (active === null) backend.fontView(font.masterId).then(show, fail);
     } catch (e) {
       fail(e);
@@ -186,14 +199,17 @@ export default function App() {
         else closeFont();
       } else if (k === "z" && !inField) undoRedo(e.shiftKey);
       else if (k === "y" && !inField) undoRedo(true);
+      else if (k === "t" && !e.shiftKey && font) newTextTab();
+      else if (k === "k" && e.shiftKey && font) openKerning();
       else return;
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showNewFont, open, save, saveAs, closeFont, closeTab, active, undoRedo]);
+  }, [showNewFont, open, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, font]);
 
-  const inGlyph = font !== null && active !== null;
+  const inGlyph = font !== null && active !== null && active.startsWith("g:");
+  const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? "Kerning" : `Text ${id.slice(5)}`);
   const glyphList = useMemo(() => (font ? font.glyphs.map((g) => ({ name: g.name, width: g.width })) : []), [font]);
 
   const menus: Menu[] = [
@@ -230,7 +246,13 @@ export default function App() {
     },
     { label: "Path", items: [later("Correct Path Direction", "Ctrl+Shift+R"), later("Add Extremes")] },
     { label: "View", items: [later("Show Metrics", "Ctrl+Shift+M")] },
-    { label: "Window", items: [later("Kerning", "Ctrl+Shift+K")] },
+    {
+      label: "Window",
+      items: [
+        { label: "New Text Tab", shortcut: "Ctrl+T", onSelect: font ? newTextTab : undefined },
+        { label: "Kerning", shortcut: "Ctrl+Shift+K", onSelect: font ? openKerning : undefined },
+      ],
+    },
     { label: "Help", items: [later("Kernest Handbook", "F1"), later("About Kernest")] },
   ];
 
@@ -246,14 +268,15 @@ export default function App() {
               <button role="tab" aria-selected={active === null} className={`doc-tab${active === null ? " is-selected" : ""}`} onClick={() => setActive(null)}>
                 <span className="k-label">Font</span>
               </button>
-              {tabs.map((g) => (
-                <div key={g} role="tab" aria-selected={active === g} className={`doc-tab${active === g ? " is-selected" : ""}`} onClick={() => setActive(g)}>
-                  <span className="k-label">{g}</span>
-                  <button className="tab-close" aria-label={`Close ${g}`} onClick={(e) => { e.stopPropagation(); closeTab(g); }}>
+              {tabs.map((id) => (
+                <div key={id} role="tab" aria-selected={active === id} className={`doc-tab${active === id ? " is-selected" : ""}${id.startsWith("g:") ? "" : " is-tool"}`} onClick={() => setActive(id)}>
+                  <span className="k-label">{tabLabel(id)}</span>
+                  <button className="tab-close" aria-label={`Close ${tabLabel(id)}`} onClick={(e) => { e.stopPropagation(); closeTab(id); }}>
                     <CloseIcon size={12} />
                   </button>
                 </div>
               ))}
+              <button className="icon-btn" title="New Text Tab (Ctrl+T)" aria-label="New Text Tab" onClick={newTextTab}><AddIcon size={14} /></button>
             </div>
             <span className="spacer" />
             <div className="segmented" role="radiogroup" aria-label="Master">
@@ -268,9 +291,15 @@ export default function App() {
             <button className="btn btn-primary" disabled title="Coming in v1">Export</button>
           </div>
           {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} />}
-          {tabs.map((g) => (
-            <div key={g} className="tab-panel" hidden={active !== g}>
-              <EditView glyph={g} masterId={font.masterId} version={versions[g] ?? 0} active={active === g} glyphs={glyphList} onCommitted={onCommitted} onError={fail} />
+          {tabs.map((id) => (
+            <div key={id} className="tab-panel" hidden={active !== id}>
+              {id.startsWith("g:") ? (
+                <EditView glyph={id.slice(2)} masterId={font.masterId} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} />
+              ) : id === "kerning" ? (
+                <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={onCommitted} onError={fail} />
+              ) : (
+                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} />
+              )}
             </div>
           ))}
         </>
