@@ -183,6 +183,14 @@ export function ellipsePath(x0: number, y0: number, x1: number, y1: number): Edi
   };
 }
 
+/** Applies an affine transform [xx, xy, yx, yy, dx, dy] to every point. */
+export function transformPaths(paths: EditPath[], t: number[]): EditPath[] {
+  return paths.map((p) => ({
+    closed: p.closed,
+    nodes: p.nodes.map((n) => ({ ...n, x: t[0] * n.x + t[2] * n.y + t[4], y: t[1] * n.x + t[3] * n.y + t[5] })),
+  }));
+}
+
 /** Bounds of the points (on- and off-curve). A quick estimate used by the preview mock. */
 export function pointBounds(paths: EditPath[]): { minX: number; maxX: number } | null {
   let minX = Infinity, maxX = -Infinity;

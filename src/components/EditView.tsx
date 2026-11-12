@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { backend, type DocStatus, type LayerView, type MetricName } from "../lib/backend";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { backend, type ComponentEdit, type ComponentView, type DocStatus, type LayerView, type MetricName } from "../lib/backend";
 import {
   clonePaths, deleteSelection, ellipsePath, handleOwner, isOn, moveSelection, nodeKey, parseKey, pathsToSvg, rectPath,
   type EditNode, type EditPath,
 } from "../lib/outline";
+import { CloseIcon, SearchIcon } from "./Icons";
 
 type Tool = "select" | "pen" | "rect" | "ellipse" | "hand";
 interface Pt { x: number; y: number }
 interface View { s: number; ox: number; oy: number }
+/** A component as drawn: the server's outline plus a live offset while dragging. */
+interface Comp extends ComponentView { dx: number; dy: number }
 
 const TOOLS: { id: Tool; key: string; label: string; icon: React.ReactNode }[] = [
   { id: "select", key: "v", label: "Select (V)", icon: <path d="M6 3l12 9-6 1-3 6z" /> },
@@ -18,6 +21,38 @@ const TOOLS: { id: Tool; key: string; label: string; icon: React.ReactNode }[] =
 ];
 
 const HIT = 7; // px
+
+/** Commands sent from the app menus to the active Edit View. */
+export type EditCommand = "add-component" | "cut" | "copy" | "paste";
+export const sendEditCommand = (name: EditCommand) => window.dispatchEvent(new CustomEvent("kernest:edit", { detail: name }));
+
+// Clipboard shared by all Edit View tabs; also mirrored to the system clipboard as JSON.
+const CLIP_MARK = "kernest-clipboard/1";
+let clipboard: { paths: EditPath[]; components: ComponentEdit[] } | null = null;
+
+async function readClipboard(): Promise<typeof clipboard> {
+  try {
+    const text = await navigator.clipboard.readText();
+    const data = JSON.parse(text);
+    if (data?.format === CLIP_MARK && Array.isArray(data.paths) && Array.isArray(data.components)) return data;
+  } catch {
+    // Not our data, or the clipboard is unavailable: fall back to the in-app copy.
+  }
+  return clipboard;
+}
+
+function writeClipboard(data: NonNullable<typeof clipboard>) {
+  clipboard = data;
+  navigator.clipboard?.writeText(JSON.stringify({ format: CLIP_MARK, ...data })).catch(() => {});
+}
+
+const toEdit = (c: Comp): ComponentEdit => {
+  const t = [...c.transform];
+  t[4] += c.dx;
+  t[5] += c.dy;
+  return { base: c.base, transform: t };
+};
+const fromView = (cs: ComponentView[]): Comp[] => cs.map((c) => ({ ...c, dx: 0, dy: 0 }));
 
 function MetricField({ label, value, disabled, onCommit }: { label: string; value: number | null; disabled?: boolean; onCommit: (v: number) => void }) {
   const shown = value === null ? "" : String(Math.round(value));
@@ -47,21 +82,74 @@ function MetricField({ label, value, disabled, onCommit }: { label: string; valu
   );
 }
 
+/** Picker for Glyph › Add Component. */
+function ComponentPicker({ names, exclude, onPick, onCancel }: { names: string[]; exclude: string; onPick: (name: string) => void; onCancel: () => void }) {
+  const [q, setQ] = useState("");
+  const [index, setIndex] = useState(0);
+  const shown = useMemo(() => {
+    const raw = q.trim();
+    const s = raw.toLowerCase();
+    // Exact name first (case-sensitive, then not), then prefix matches, then other matches; stable within groups.
+    const rank = (n: string) => (n === raw ? 0 : n.toLowerCase() === s ? 1 : n.toLowerCase().startsWith(s) ? 2 : 3);
+    return names
+      .filter((n) => n !== exclude && (!s || n.toLowerCase().includes(s)))
+      .map((n, i) => [n, rank(n), i] as const)
+      .sort((a, b) => a[1] - b[1] || a[2] - b[2])
+      .map(([n]) => n)
+      .slice(0, 200);
+  }, [names, exclude, q]);
+  useEffect(() => setIndex(0), [q]);
+  return (
+    <div className="scrim" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+      <div className="dialog dialog-sm" role="dialog" aria-modal="true" aria-labelledby="add-comp-title">
+        <header className="dialog-header">
+          <h2 id="add-comp-title" className="k-subtitle">Add Component</h2>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={onCancel}><CloseIcon /></button>
+        </header>
+        <div className="dialog-body">
+          <label className="search">
+            <SearchIcon />
+            <input autoFocus placeholder="Glyph name" value={q} onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") { setIndex((i) => Math.min(i + 1, shown.length - 1)); e.preventDefault(); }
+                else if (e.key === "ArrowUp") { setIndex((i) => Math.max(i - 1, 0)); e.preventDefault(); }
+                else if (e.key === "Enter" && shown[index]) onPick(shown[index]);
+                else if (e.key === "Escape") onCancel();
+              }} />
+          </label>
+          <ul className="picker-list" role="listbox" aria-label="Glyphs">
+            {shown.map((n, i) => (
+              <li key={n} role="option" aria-selected={i === index}>
+                <button className={`list-item${i === index ? " is-selected" : ""}`} onClick={() => onPick(n)} onMouseEnter={() => setIndex(i)}>{n}</button>
+              </li>
+            ))}
+            {shown.length === 0 && <li className="k-caption muted">No glyph matches “{q}”.</li>}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   glyph: string;
   masterId: string;
   /** Bumped by the app when the layer changed elsewhere (undo/redo). */
   version: number;
   active: boolean;
+  /** All glyph names and widths in the font, for Add Component. */
+  glyphs: { name: string; width: number }[];
   onCommitted: (status: DocStatus) => void;
   onError: (e: unknown) => void;
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, onCommitted, onError }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError }: Props) {
   const [layer, setLayer] = useState<LayerView | null>(null);
   const [paths, setPaths] = useState<EditPath[]>([]);
+  const [comps, setComps] = useState<Comp[]>([]);
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [compSel, setCompSel] = useState<Set<number>>(new Set());
   const [tool, setTool] = useState<Tool>("select");
   const [view, setView] = useState<View>({ s: 0.5, ox: 0, oy: 0 });
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -69,16 +157,17 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [preview, setPreview] = useState<EditPath | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [, rerender] = useState(0);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const fitted = useRef(false);
-  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; moved: boolean; additive?: boolean; pi?: number; ni?: number; startView?: View }>(null);
+  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; moved: boolean; additive?: boolean; pi?: number; ni?: number; startView?: View }>(null);
   const pen = useRef<{ path: number | null; pendingOut: Pt | null }>({ path: null, pendingOut: null });
   const chain = useRef(Promise.resolve());
-  const latest = useRef({ layer, paths, selection, view });
-  latest.current = { layer, paths, selection, view };
+  const latest = useRef({ layer, paths, comps, selection, compSel, view });
+  latest.current = { layer, paths, comps, selection, compSel, view };
 
   // ---------- Loading & committing ----------
 
@@ -88,7 +177,9 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
       if (cancelled) return;
       setLayer(l);
       setPaths(l.paths);
+      setComps(fromView(l.components));
       setSelection((sel) => new Set([...sel].filter((k) => { const [pi, ni] = parseKey(k); return !!l.paths[pi]?.nodes[ni]; })));
+      setCompSel((sel) => new Set([...sel].filter((i) => i < l.components.length)));
     }, onError);
     return () => { cancelled = true; };
   }, [glyph, masterId, version, onError]);
@@ -96,17 +187,21 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
   const accept = useCallback((l: LayerView) => {
     setLayer(l);
     setPaths(l.paths);
+    setComps(fromView(l.components));
     onCommitted(l.status);
   }, [onCommitted]);
 
-  const commit = useCallback((next: EditPath[], width?: number) => {
+  /** Sends the edited outlines (and components) to the backend as one undoable step. */
+  const commit = useCallback((next: EditPath[], nextComps?: Comp[], width?: number) => {
     chain.current = chain.current.then(async () => {
       const l = latest.current.layer;
       if (!l) return;
+      const cs = (nextComps ?? latest.current.comps).map(toEdit);
       try {
-        accept(await backend.updateLayer(glyph, masterId, width ?? l.width, next));
+        accept(await backend.updateLayer(glyph, masterId, width ?? l.width, next, cs));
       } catch (e) {
         setPaths(l.paths);
+        setComps(fromView(l.components));
         onError(e);
       }
     });
@@ -180,6 +275,7 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
   }, []);
 
   useEffect(() => {
+    // Attached once the canvas exists (after the layer loads).
     const el = svgRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
@@ -191,7 +287,7 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomAt]);
+  }, [zoomAt, loaded]);
 
   // ---------- Hit testing ----------
 
@@ -206,6 +302,17 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
     return best;
   }
 
+  /** Topmost component whose filled outline contains the point. */
+  function hitComponent(wp: Pt): number | null {
+    const els = svgRef.current?.querySelectorAll<SVGPathElement>("path[data-comp]") ?? [];
+    for (let i = els.length - 1; i >= 0; i--) {
+      const idx = Number(els[i].dataset.comp);
+      const c = comps[idx];
+      if (c && els[i].isPointInFill(new DOMPoint(wp.x - c.dx, wp.y - c.dy))) return idx;
+    }
+    return null;
+  }
+
   // ---------- Pointer interaction ----------
 
   const activeTool: Tool = spaceDown ? "hand" : tool;
@@ -216,31 +323,47 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
     const sp = local(e);
     const wp = toWorld(sp.x, sp.y);
     const base = clonePaths(paths);
+    const baseComps = comps.map((c) => ({ ...c }));
     if (e.button === 1 || activeTool === "hand") {
-      drag.current = { mode: "pan", startScreen: sp, startWorld: wp, base, moved: false, startView: view };
+      drag.current = { mode: "pan", startScreen: sp, startWorld: wp, base, baseComps, moved: false, startView: view };
       return;
     }
     if (e.button !== 0) return;
 
     if (activeTool === "select") {
       const hit = hitNode(sp);
+      const comp = hit ? null : hitComponent(wp);
       if (hit) {
         let sel = selection;
         if (e.shiftKey) {
           sel = new Set(selection);
           if (sel.has(hit)) sel.delete(hit); else sel.add(hit);
-        } else if (!selection.has(hit)) sel = new Set([hit]);
+        } else if (!selection.has(hit)) {
+          sel = new Set([hit]);
+          setCompSel(new Set());
+        }
         setSelection(sel);
-        drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, moved: false };
+        drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, baseComps, moved: false };
+      } else if (comp !== null) {
+        let sel = compSel;
+        if (e.shiftKey) {
+          sel = new Set(compSel);
+          if (sel.has(comp)) sel.delete(comp); else sel.add(comp);
+        } else if (!compSel.has(comp)) {
+          sel = new Set([comp]);
+          setSelection(new Set());
+        }
+        setCompSel(sel);
+        drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, baseComps, moved: false };
       } else {
-        if (!e.shiftKey) setSelection(new Set());
-        drag.current = { mode: "marquee", startScreen: sp, startWorld: wp, base, moved: false, additive: e.shiftKey };
+        if (!e.shiftKey) { setSelection(new Set()); setCompSel(new Set()); }
+        drag.current = { mode: "marquee", startScreen: sp, startWorld: wp, base, baseComps, moved: false, additive: e.shiftKey };
       }
       return;
     }
 
     if (activeTool === "rect" || activeTool === "ellipse") {
-      drag.current = { mode: "shape", startScreen: sp, startWorld: round(wp), base, moved: false };
+      drag.current = { mode: "shape", startScreen: sp, startWorld: round(wp), base, baseComps, moved: false };
       return;
     }
 
@@ -267,14 +390,15 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
         if (pn.pendingOut) open.nodes.push(off(pn.pendingOut), off(p), { ...p, kind: "curve", smooth: false });
         else open.nodes.push({ ...p, kind: "line", smooth: false });
         pn.pendingOut = null;
-        drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), moved: false, pi: pn.path!, ni: open.nodes.length - 1 };
+        drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), baseComps, moved: false, pi: pn.path!, ni: open.nodes.length - 1 };
       } else {
         base.push({ closed: false, nodes: [{ ...p, kind: "line", smooth: false }] });
         pen.current = { path: base.length - 1, pendingOut: null };
-        drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), moved: false, pi: base.length - 1, ni: 0 };
+        drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), baseComps, moved: false, pi: base.length - 1, ni: 0 };
       }
       setPaths(base);
       setSelection(new Set());
+      setCompSel(new Set());
     }
   }
 
@@ -293,6 +417,7 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
       let dx = Math.round(wp.x - d.startWorld.x), dy = Math.round(wp.y - d.startWorld.y);
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
       setPaths(moveSelection(d.base, selection, dx, dy));
+      setComps(d.baseComps.map((c, i) => (compSel.has(i) ? { ...c, dx: c.dx + dx, dy: c.dy + dy } : c)));
     } else if (d.mode === "marquee") {
       setMarquee({ x0: d.startScreen.x, y0: d.startScreen.y, x1: sp.x, y1: sp.y });
     } else if (d.mode === "shape") {
@@ -331,7 +456,7 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
     drag.current = null;
     if (!d) return;
     const sp = local(e);
-    if (d.mode === "move" && d.moved) commit(latest.current.paths);
+    if (d.mode === "move" && d.moved) commit(latest.current.paths, latest.current.comps);
     else if (d.mode === "marquee" && marquee) {
       const [x0, x1] = [Math.min(marquee.x0, sp.x), Math.max(marquee.x0, sp.x)];
       const [y0, y1] = [Math.min(marquee.y0, sp.y), Math.max(marquee.y0, sp.y)];
@@ -341,6 +466,13 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
         if (q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1) sel.add(nodeKey(pi, ni));
       }));
       setSelection(sel);
+      // Components are selected when their whole outline is inside the box.
+      const cs = new Set(d.additive ? compSel : []);
+      svgRef.current?.querySelectorAll<SVGPathElement>("path[data-comp]").forEach((el) => {
+        const r = el.getBoundingClientRect(), s = svgRef.current!.getBoundingClientRect();
+        if (r.width && r.left - s.left >= x0 && r.right - s.left <= x1 && r.top - s.top >= y0 && r.bottom - s.top <= y1) cs.add(Number(el.dataset.comp));
+      });
+      setCompSel(cs);
       setMarquee(null);
     } else if (d.mode === "shape") {
       if (preview && d.moved) {
@@ -348,6 +480,7 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
         setPaths(next);
         commit(next);
         setSelection(new Set(preview.nodes.map((_, ni) => nodeKey(next.length - 1, ni))));
+        setCompSel(new Set());
       }
       setPreview(null);
     } else if (d.mode === "pen") {
@@ -357,40 +490,116 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
     setMarquee(null);
   }
 
-  // ---------- Keyboard ----------
+  // ---------- Components & clipboard ----------
+
+  const addComponent = useCallback((base: string) => {
+    setPicking(false);
+    const { paths, comps, layer } = latest.current;
+    if (!layer) return;
+    const next = [...comps, { base, transform: [1, 0, 0, 1, 0, 0], svg: "", dx: 0, dy: 0 }];
+    // An empty glyph takes the width of its first component (e.g. building Á from A).
+    const empty = paths.length === 0 && comps.length === 0;
+    const baseWidth = glyphs.find((g) => g.name === base)?.width;
+    commit(paths, next, empty && baseWidth !== undefined ? baseWidth : undefined);
+    setSelection(new Set());
+    setCompSel(new Set([next.length - 1]));
+  }, [commit, glyphs]);
+
+  /** Whole paths that contain a selected point, plus selected components. */
+  const selectedContent = useCallback(() => {
+    const { paths, comps, selection, compSel } = latest.current;
+    const pathIdx = new Set([...selection].map((k) => parseKey(k)[0]));
+    return {
+      pathIdx,
+      data: { paths: clonePaths(paths.filter((_, i) => pathIdx.has(i))), components: comps.filter((_, i) => compSel.has(i)).map(toEdit) },
+    };
+  }, []);
+
+  const runCommand = useCallback(async (name: EditCommand) => {
+    if (name === "add-component") return setPicking(true);
+    const { pathIdx, data } = selectedContent();
+    if (name === "copy" || name === "cut") {
+      if (!data.paths.length && !data.components.length) return;
+      writeClipboard(data);
+      if (name === "cut") {
+        const { paths, comps, compSel } = latest.current;
+        const nextPaths = paths.filter((_, i) => !pathIdx.has(i));
+        const nextComps = comps.filter((_, i) => !compSel.has(i));
+        setPaths(nextPaths);
+        setComps(nextComps);
+        setSelection(new Set());
+        setCompSel(new Set());
+        pen.current = { path: null, pendingOut: null };
+        commit(nextPaths, nextComps);
+      }
+      return;
+    }
+    if (name === "paste") {
+      const clip = await readClipboard();
+      if (!clip) return;
+      const { paths, comps } = latest.current;
+      const nextPaths = [...paths, ...clonePaths(clip.paths)];
+      const nextComps = [...comps, ...clip.components.map((c) => ({ ...c, transform: [...c.transform], svg: "", dx: 0, dy: 0 }))];
+      setPaths(nextPaths);
+      setSelection(new Set(clip.paths.flatMap((p, i) => p.nodes.map((_, ni) => nodeKey(paths.length + i, ni)))));
+      setCompSel(new Set(clip.components.map((_, i) => comps.length + i)));
+      commit(nextPaths, nextComps);
+    }
+  }, [commit, selectedContent]);
 
   useEffect(() => {
     if (!active) return;
+    const onCmd = (e: Event) => runCommand((e as CustomEvent<EditCommand>).detail);
+    window.addEventListener("kernest:edit", onCmd);
+    return () => window.removeEventListener("kernest:edit", onCmd);
+  }, [active, runCommand]);
+
+  // ---------- Keyboard ----------
+
+  useEffect(() => {
+    if (!active || picking) return;
     const typing = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
     const onDown = (e: KeyboardEvent) => {
       if (typing(e.target)) return;
-      const { paths, selection } = latest.current;
+      const { paths, comps, selection, compSel } = latest.current;
       if (e.key === " ") { setSpaceDown(true); e.preventDefault(); return; }
       if (e.ctrlKey && !e.altKey) {
         const k = e.key.toLowerCase();
-        if (k === "a") setSelection(new Set(paths.flatMap((p, pi) => p.nodes.map((_, ni) => nodeKey(pi, ni)))));
-        else if (k === "0") fit();
+        if (k === "a") {
+          setSelection(new Set(paths.flatMap((p, pi) => p.nodes.map((_, ni) => nodeKey(pi, ni)))));
+          setCompSel(new Set(comps.map((_, i) => i)));
+        } else if (k === "0") fit();
         else if (k === "=" || k === "+") zoomAt(1.25, size.w / 2, size.h / 2);
         else if (k === "-") zoomAt(0.8, size.w / 2, size.h / 2);
+        else if (k === "c" && !e.shiftKey) runCommand("copy");
+        else if (k === "x" && !e.shiftKey) runCommand("cut");
+        else if (k === "v" && !e.shiftKey) runCommand("paste");
+        else if (k === "c" && e.shiftKey) runCommand("add-component");
         else return;
         e.preventDefault();
         return;
       }
       if (e.altKey) return;
       const nudge: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
-      if (nudge[e.key] && selection.size) {
+      if (nudge[e.key] && (selection.size || compSel.size)) {
         const m = e.shiftKey ? 10 : 1;
-        const next = moveSelection(paths, selection, nudge[e.key][0] * m, nudge[e.key][1] * m);
+        const [dx, dy] = [nudge[e.key][0] * m, nudge[e.key][1] * m];
+        const next = moveSelection(paths, selection, dx, dy);
+        const nextComps = comps.map((c, i) => (compSel.has(i) ? { ...c, dx: c.dx + dx, dy: c.dy + dy } : c));
         setPaths(next);
-        commit(next);
+        setComps(nextComps);
+        commit(next, nextComps);
         e.preventDefault();
         return;
       }
-      if ((e.key === "Delete" || e.key === "Backspace") && selection.size) {
+      if ((e.key === "Delete" || e.key === "Backspace") && (selection.size || compSel.size)) {
         const next = deleteSelection(paths, selection);
+        const nextComps = comps.filter((_, i) => !compSel.has(i));
         setSelection(new Set());
+        setCompSel(new Set());
         setPaths(next);
-        commit(next);
+        setComps(nextComps);
+        commit(next, nextComps);
         pen.current = { path: null, pendingOut: null };
         e.preventDefault();
         return;
@@ -410,7 +619,7 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
       }
       if (e.key === "Escape") {
         if (pen.current.path !== null) pen.current = { path: null, pendingOut: null };
-        else setSelection(new Set());
+        else { setSelection(new Set()); setCompSel(new Set()); }
         rerender((n) => n + 1);
         return;
       }
@@ -427,7 +636,7 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
       window.removeEventListener("keydown", onDown);
       window.removeEventListener("keyup", onUp);
     };
-  }, [active, commit, fit, zoomAt, size]);
+  }, [active, picking, commit, fit, zoomAt, size, runCommand]);
 
   // ---------- Rendering ----------
 
@@ -437,12 +646,18 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
   const lines: [string, number][] = [["Ascender", ascender], ["Cap height", capHeight], ["x-height", xHeight], ["Baseline", 0], ["Descender", descender]];
   const x0 = toScreen(0, 0).x, x1 = toScreen(layer.width, 0).x;
   const outline = pathsToSvg(paths);
-  const one = selection.size === 1 ? parseKey([...selection][0]) : null;
+  const one = selection.size === 1 && compSel.size === 0 ? parseKey([...selection][0]) : null;
   const oneNode = one ? paths[one[0]]?.nodes[one[1]] : undefined;
+  const oneComp = compSel.size === 1 && selection.size === 0 ? comps[[...compSel][0]] : undefined;
   const pendingOut = pen.current.path !== null ? pen.current.pendingOut : null;
   const penPath = pen.current.path !== null ? paths[pen.current.path] : undefined;
   const lastPen = penPath && !penPath.closed ? penPath.nodes[penPath.nodes.length - 1] : undefined;
   const cursorStyle = activeTool === "hand" ? (drag.current?.mode === "pan" ? "grabbing" : "grab") : activeTool === "select" ? "default" : "crosshair";
+  const moveComp = (i: number, dx: number, dy: number) => {
+    const next = comps.map((c, j) => (j === i ? { ...c, dx: c.dx + dx, dy: c.dy + dy } : c));
+    setComps(next);
+    commit(paths, next);
+  };
 
   return (
     <div className="editor">
@@ -453,6 +668,8 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">{t.icon}</svg>
           </button>
         ))}
+        <span className="toolbar-sep" />
+        <button className="btn btn-secondary btn-sm" onClick={() => setPicking(true)} title="Add Component (Ctrl+Shift+C)">Add Component</button>
         <span className="toolbar-hint k-caption muted">{hint(activeTool)}</span>
         <span className="spacer" />
         <span className="k-caption muted">{cursor ? `${cursor.x}, ${cursor.y}` : ""}</span>
@@ -482,10 +699,19 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
           <rect x={x0} y={toScreen(0, ascender).y} width={Math.max(0, x1 - x0)} height={(ascender - descender) * view.s} className="advance-box" />
           {/* Glyph */}
           <g transform={`translate(${view.ox} ${view.oy}) scale(${view.s} ${-view.s})`}>
-            {layer.componentSvg && <path d={layer.componentSvg} className="component-fill" />}
+            {comps.map((c, i) => (
+              <g key={`c${i}`} transform={`translate(${c.dx} ${c.dy})`}>
+                <path d={c.svg} data-comp={i} className={`component-fill${compSel.has(i) ? " is-selected" : ""}`} />
+              </g>
+            ))}
             <path d={outline} className="glyph-fill" fillRule="nonzero" />
             {preview && <path d={pathsToSvg([preview])} className="preview-outline" />}
           </g>
+          {/* Component labels */}
+          {comps.map((c, i) => {
+            const at = toScreen(c.transform[4] + c.dx, c.transform[5] + c.dy);
+            return compSel.has(i) ? <text key={`cl${i}`} x={at.x + 4} y={at.y + 14} className="component-label">{c.base}</text> : null;
+          })}
           {/* Handles and nodes */}
           {paths.map((p, pi) => p.nodes.map((n, ni) => {
             if (isOn(n)) return null;
@@ -501,10 +727,10 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
           {paths.map((p, pi) => p.nodes.map((n, ni) => <NodeMark key={`n${pi}:${ni}`} n={n} at={toScreen(n.x, n.y)} selected={selection.has(nodeKey(pi, ni))} first={ni === 0 && !p.closed} />))}
           {marquee && <rect className="marquee" x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)} />}
         </svg>
-        {paths.length === 0 && !layer.componentSvg && !preview && (
+        {paths.length === 0 && comps.length === 0 && !preview && (
           <div className="canvas-empty">
             <p className="k-subtitle">Empty glyph</p>
-            <p className="k-caption muted">Press P to draw with the pen, or F for a rectangle.</p>
+            <p className="k-caption muted">Press P to draw with the pen, F for a rectangle, or Ctrl+Shift+C to add a component.</p>
           </div>
         )}
         <div className="info-box" role="group" aria-label="Glyph info">
@@ -521,16 +747,28 @@ export function EditView({ glyph, masterId, version, active, onCommitted, onErro
               <MetricField label="X" value={oneNode.x} onCommit={(v) => { const next = moveSelection(paths, selection, v - oneNode.x, 0); setPaths(next); commit(next); }} />
               <MetricField label="Y" value={oneNode.y} onCommit={(v) => { const next = moveSelection(paths, selection, 0, v - oneNode.y); setPaths(next); commit(next); }} />
             </>
+          ) : oneComp ? (
+            <>
+              <span className="info-comp k-label" title="Selected component">◇ {oneComp.base}</span>
+              <MetricField label="X" value={oneComp.transform[4] + oneComp.dx} onCommit={(v) => moveComp([...compSel][0], v - (oneComp.transform[4] + oneComp.dx), 0)} />
+              <MetricField label="Y" value={oneComp.transform[5] + oneComp.dy} onCommit={(v) => moveComp([...compSel][0], 0, v - (oneComp.transform[5] + oneComp.dy))} />
+            </>
           ) : (
-            <span className="k-caption muted info-count">{selection.size ? `${selection.size} points selected` : "No selection"}</span>
+            <span className="k-caption muted info-count">{selectionLabel(selection.size, compSel.size)}</span>
           )}
         </div>
       </div>
+      {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}
     </div>
   );
 }
 
 const off = (p: Pt): EditNode => ({ x: p.x, y: p.y, kind: "offcurve", smooth: false });
+
+function selectionLabel(points: number, components: number): string {
+  const parts = [points && `${points} point${points === 1 ? "" : "s"}`, components && `${components} component${components === 1 ? "" : "s"}`].filter(Boolean);
+  return parts.length ? `${parts.join(", ")} selected` : "No selection";
+}
 
 function hint(tool: Tool): string {
   switch (tool) {

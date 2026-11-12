@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use kernest_core::edit::{with_metric, History, MetricEdit};
+use kernest_core::edit::{component_creates_cycle, with_metric, History, MetricEdit};
 use kernest_core::geometry::{sidebearings, svg_path};
 use kernest_core::glyphdata::{codepoints_for, GLYPH_SETS};
 use kernest_core::{
@@ -172,6 +172,16 @@ pub struct PathDto {
 pub struct ComponentDto {
     base: String,
     transform: [f64; 6],
+    /// This component's resolved outline, SVG path data in font units (y up).
+    svg: String,
+}
+
+/// A component as sent back by the editor (move, add or remove).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentInput {
+    base: String,
+    transform: [f64; 6],
 }
 
 #[derive(Serialize)]
@@ -269,9 +279,12 @@ fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<Laye
                     .collect(),
             }),
             Shape::Component { base, transform } => {
+                let mut single = Layer::new(master_id, layer.width);
+                single.shapes.push(s.clone());
                 components.push(ComponentDto {
                     base: base.clone(),
                     transform: *transform,
+                    svg: svg_path(font, &single),
                 });
                 comp_only.shapes.push(s.clone());
             }
@@ -340,6 +353,29 @@ fn to_path(p: &PathDto) -> CmdResult<KPath> {
                 smooth: d.smooth && d.kind != NodeKindDto::Offcurve,
             })
             .collect(),
+    })
+}
+
+/// Validates a component from the UI: the base must exist and must not lead back to `glyph`.
+fn to_component(font: &Font, glyph: &str, c: ComponentInput) -> CmdResult<Shape> {
+    if font.glyph(&c.base).is_none() {
+        return Err(format!(
+            "There is no glyph named \"{}\" to use as a component.",
+            c.base
+        ));
+    }
+    if component_creates_cycle(font, glyph, &c.base) {
+        return Err(format!(
+            "\"{}\" can't be a component of \"{glyph}\": it would contain itself.",
+            c.base
+        ));
+    }
+    if c.transform.iter().any(|v| !v.is_finite()) {
+        return Err("A component has an invalid position.".into());
+    }
+    Ok(Shape::Component {
+        base: c.base,
+        transform: c.transform,
     })
 }
 
@@ -463,6 +499,7 @@ pub fn update_layer(
     master_id: String,
     width: f64,
     paths: Vec<PathDto>,
+    components: Option<Vec<ComponentInput>>,
 ) -> CmdResult<LayerView> {
     let mut guard = lock(&state)?;
     let doc = doc_mut(&mut guard)?;
@@ -476,12 +513,19 @@ pub fn update_layer(
         .ok_or_else(|| format!("No layer for \"{glyph}\""))?;
     let mut next = current.clone();
     next.width = width;
-    let components: Vec<Shape> = current
-        .shapes
-        .iter()
-        .filter(|s| matches!(s, Shape::Component { .. }))
-        .cloned()
-        .collect();
+    let components: Vec<Shape> = match components {
+        // Components not sent: keep the current ones.
+        None => current
+            .shapes
+            .iter()
+            .filter(|s| matches!(s, Shape::Component { .. }))
+            .cloned()
+            .collect(),
+        Some(list) => list
+            .into_iter()
+            .map(|c| to_component(&doc.font, &glyph, c))
+            .collect::<CmdResult<Vec<_>>>()?,
+    };
     next.shapes = paths
         .iter()
         .map(|p| to_path(p).map(Shape::Path))
@@ -638,5 +682,50 @@ mod tests {
         assert_eq!(v.paths.len(), 3);
         doc.saved_revision = doc.revision;
         assert!(!doc.dirty());
+    }
+}
+
+#[cfg(test)]
+mod component_tests {
+    use super::*;
+
+    #[test]
+    fn component_validation() {
+        let font = sample::sample_font();
+        let ok = ComponentInput {
+            base: "H".into(),
+            transform: kernest_core::IDENTITY,
+        };
+        assert!(to_component(&font, "A", ok).is_ok());
+        let missing = ComponentInput {
+            base: "nope".into(),
+            transform: kernest_core::IDENTITY,
+        };
+        assert!(to_component(&font, "A", missing).is_err());
+        let selfref = ComponentInput {
+            base: "A".into(),
+            transform: kernest_core::IDENTITY,
+        };
+        assert!(to_component(&font, "A", selfref).is_err());
+        let bad = ComponentInput {
+            base: "H".into(),
+            transform: [1.0, 0.0, 0.0, 1.0, f64::INFINITY, 0.0],
+        };
+        assert!(to_component(&font, "A", bad).is_err());
+    }
+
+    #[test]
+    fn layer_view_lists_components_with_outlines() {
+        let mut doc = Document::new(sample::sample_font(), None);
+        let mut next = doc.font.glyph("A").unwrap().layer("m01").unwrap().clone();
+        next.shapes.push(Shape::Component {
+            base: "H".into(),
+            transform: kernest_core::IDENTITY,
+        });
+        doc.history.apply(&mut doc.font, "A", "m01", next).unwrap();
+        let v = layer_view_of(&doc, "A", "m01").unwrap();
+        assert_eq!(v.components.len(), 1);
+        assert!(v.components[0].svg.starts_with('M'));
+        assert_eq!(v.lsb, Some(80.0));
     }
 }

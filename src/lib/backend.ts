@@ -3,7 +3,7 @@
 // mock stands in, so screens can be previewed and tested without the desktop shell.
 
 import { invoke } from "@tauri-apps/api/core";
-import { clonePaths, pathsToSvg, pointBounds, rectPath, type EditPath } from "./outline";
+import { clonePaths, pathsToSvg, pointBounds, rectPath, transformPaths, type EditPath } from "./outline";
 
 export interface GlyphSetInfo {
   id: string;
@@ -54,6 +54,17 @@ export interface FontView {
   status: DocStatus;
 }
 
+/** A component reference: base glyph name and affine transform [xx, xy, yx, yy, dx, dy]. */
+export interface ComponentEdit {
+  base: string;
+  transform: number[];
+}
+
+export interface ComponentView extends ComponentEdit {
+  /** This component's resolved outline, SVG path data in font units. */
+  svg: string;
+}
+
 export interface LayerView {
   glyph: string;
   unicode: string | null;
@@ -63,8 +74,8 @@ export interface LayerView {
   lsb: number | null;
   rsb: number | null;
   paths: EditPath[];
-  components: { base: string; transform: number[] }[];
-  /** Components resolved to outlines, SVG path data in font units. */
+  components: ComponentView[];
+  /** All components resolved to outlines, SVG path data in font units. */
   componentSvg: string;
   anchors: { name: string; x: number; y: number }[];
   status: DocStatus;
@@ -89,7 +100,8 @@ export interface Backend {
   closeFont(): Promise<void>;
   fontView(masterId?: string): Promise<FontView>;
   glyphLayer(glyph: string, masterId: string): Promise<LayerView>;
-  updateLayer(glyph: string, masterId: string, width: number, paths: EditPath[]): Promise<LayerView>;
+  /** Replaces outlines and width; components are replaced too when given. */
+  updateLayer(glyph: string, masterId: string, width: number, paths: EditPath[], components?: ComponentEdit[]): Promise<LayerView>;
   setMetric(glyph: string, masterId: string, metric: MetricName, value: number): Promise<LayerView>;
   undo(): Promise<UndoResult | null>;
   redo(): Promise<UndoResult | null>;
@@ -104,7 +116,8 @@ const tauriBackend: Backend = {
   closeFont: () => invoke("close_font"),
   fontView: (masterId) => invoke("font_view", { masterId: masterId ?? null }),
   glyphLayer: (glyph, masterId) => invoke("glyph_layer", { glyph, masterId }),
-  updateLayer: (glyph, masterId, width, paths) => invoke("update_layer", { glyph, masterId, width, paths }),
+  updateLayer: (glyph, masterId, width, paths, components) =>
+    invoke("update_layer", { glyph, masterId, width, paths, components: components ?? null }),
   setMetric: (glyph, masterId, metric, value) => invoke("set_metric", { glyph, masterId, metric, value }),
   undo: () => invoke("undo"),
   redo: () => invoke("redo"),
@@ -141,19 +154,23 @@ const MOCK_OUTLINES: Record<string, [number, EditPath[]]> = {
   l: [240, [rectPath(75, 0, 160, 760)]],
 };
 
-interface MockGlyph {
+interface Snapshot {
+  width: number;
+  paths: EditPath[];
+  components: ComponentEdit[];
+}
+
+interface MockGlyph extends Snapshot {
   name: string;
   unicode: string;
   character: string;
   category: string;
-  width: number;
-  paths: EditPath[];
 }
 
 interface MockDoc {
   familyName: string;
   glyphs: MockGlyph[];
-  undo: { glyph: string; before: [number, EditPath[]]; after: [number, EditPath[]] }[];
+  undo: { glyph: string; before: Snapshot; after: Snapshot }[];
   redo: MockDoc["undo"];
   revision: number;
   savedRevision: number;
@@ -161,6 +178,8 @@ interface MockDoc {
 
 const METRICS: Metrics = { ascender: 800, capHeight: 700, xHeight: 500, descender: -200, italicAngle: 0 };
 let mock: MockDoc | null = null;
+
+const snap = (s: Snapshot): Snapshot => ({ width: s.width, paths: clonePaths(s.paths), components: s.components.map((c) => ({ base: c.base, transform: [...c.transform] })) });
 
 function mockDoc(familyName: string, codepoints: number[], withOutlines: boolean): MockDoc {
   const glyphs = codepoints.map((cp): MockGlyph => {
@@ -174,6 +193,7 @@ function mockDoc(familyName: string, codepoints: number[], withOutlines: boolean
       category: category(ch),
       width: drawn?.[0] ?? (cp === 0x20 ? 250 : 600),
       paths: drawn ? clonePaths(drawn[1]) : [],
+      components: [],
     };
   });
   return { familyName, glyphs, undo: [], redo: [], revision: 0, savedRevision: 0 };
@@ -184,14 +204,22 @@ const need = () => {
   return mock;
 };
 const status = (d: MockDoc): DocStatus => ({ dirty: d.revision !== d.savedRevision, canUndo: d.undo.length > 0, canRedo: d.redo.length > 0 });
-const sb = (g: MockGlyph) => {
-  const b = pointBounds(g.paths);
-  return b ? { lsb: b.minX, rsb: g.width - b.maxX } : { lsb: null, rsb: null };
-};
 const findGlyph = (d: MockDoc, name: string) => {
   const g = d.glyphs.find((x) => x.name === name);
   if (!g) throw `No glyph named "${name}"`;
   return g;
+};
+
+/** Outlines of a component, resolved recursively (depth-limited like the Rust core). */
+function resolveComponent(d: MockDoc, c: ComponentEdit, depth = 0): EditPath[] {
+  const base = d.glyphs.find((g) => g.name === c.base);
+  if (!base || depth > 16) return [];
+  return transformPaths([...base.paths, ...base.components.flatMap((k) => resolveComponent(d, k, depth + 1))], c.transform);
+}
+const resolved = (d: MockDoc, g: MockGlyph) => [...g.paths, ...g.components.flatMap((c) => resolveComponent(d, c))];
+const sb = (d: MockDoc, g: MockGlyph) => {
+  const b = pointBounds(resolved(d, g));
+  return b ? { lsb: b.minX, rsb: g.width - b.maxX } : { lsb: null, rsb: null };
 };
 
 function mockFontView(d: MockDoc): FontView {
@@ -203,20 +231,36 @@ function mockFontView(d: MockDoc): FontView {
     masterId: "m01",
     metrics: METRICS,
     status: status(d),
-    glyphs: d.glyphs.map((g) => ({ name: g.name, unicode: g.unicode, character: g.character, category: g.category, export: true, width: g.width, ...sb(g), svg: pathsToSvg(g.paths) })),
+    glyphs: d.glyphs.map((g) => ({ name: g.name, unicode: g.unicode, character: g.character, category: g.category, export: true, width: g.width, ...sb(d, g), svg: pathsToSvg(resolved(d, g)) })),
   };
 }
 
 function mockLayer(d: MockDoc, g: MockGlyph): LayerView {
-  return { glyph: g.name, unicode: g.unicode, masterId: "m01", metrics: METRICS, width: g.width, ...sb(g), paths: clonePaths(g.paths), components: [], componentSvg: "", anchors: [], status: status(d) };
+  const components = g.components.map((c) => ({ base: c.base, transform: [...c.transform], svg: pathsToSvg(resolveComponent(d, c)) }));
+  return {
+    glyph: g.name, unicode: g.unicode, masterId: "m01", metrics: METRICS, width: g.width, ...sb(d, g),
+    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], status: status(d),
+  };
 }
 
-function mockApply(d: MockDoc, g: MockGlyph, width: number, paths: EditPath[]) {
-  const before: [number, EditPath[]] = [g.width, clonePaths(g.paths)];
-  if (JSON.stringify(before) === JSON.stringify([width, paths])) return;
-  g.width = width;
-  g.paths = clonePaths(paths);
-  d.undo.push({ glyph: g.name, before, after: [width, clonePaths(paths)] });
+function wouldCycle(d: MockDoc, glyph: string, base: string): boolean {
+  const stack = [base];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const n = stack.pop()!;
+    if (n === glyph) return true;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    d.glyphs.find((g) => g.name === n)?.components.forEach((c) => stack.push(c.base));
+  }
+  return false;
+}
+
+function mockApply(d: MockDoc, g: MockGlyph, next: Snapshot) {
+  const before = snap(g);
+  if (JSON.stringify(before) === JSON.stringify(snap(next))) return;
+  Object.assign(g, snap(next));
+  d.undo.push({ glyph: g.name, before, after: snap(next) });
   d.redo = [];
   d.revision++;
 }
@@ -257,22 +301,30 @@ const mockBackend: Backend = {
     const d = need();
     return mockLayer(d, findGlyph(d, glyph));
   },
-  async updateLayer(glyph, _m, width, paths) {
+  async updateLayer(glyph, _m, width, paths, components) {
     const d = need();
     const g = findGlyph(d, glyph);
-    mockApply(d, g, width, paths);
+    for (const c of components ?? []) {
+      if (!d.glyphs.some((x) => x.name === c.base)) throw `There is no glyph named "${c.base}" to use as a component.`;
+      if (wouldCycle(d, glyph, c.base)) throw `"${c.base}" can't be a component of "${glyph}": it would contain itself.`;
+    }
+    mockApply(d, g, { width, paths, components: components ?? g.components });
     return mockLayer(d, g);
   },
   async setMetric(glyph, _m, metric, value) {
     const d = need();
     const g = findGlyph(d, glyph);
-    const b = pointBounds(g.paths);
-    if (metric === "width") mockApply(d, g, value, g.paths);
+    const b = pointBounds(resolved(d, g));
+    if (metric === "width") mockApply(d, g, { ...g, width: value });
     else if (!b) throw `"${glyph}" has no outlines to set a sidebearing on`;
-    else if (metric === "rsb") mockApply(d, g, b.maxX + value, g.paths);
+    else if (metric === "rsb") mockApply(d, g, { ...g, width: b.maxX + value });
     else {
       const dx = value - b.minX;
-      mockApply(d, g, g.width + dx, g.paths.map((p) => ({ ...p, nodes: p.nodes.map((n) => ({ ...n, x: n.x + dx })) })));
+      mockApply(d, g, {
+        width: g.width + dx,
+        paths: transformPaths(g.paths, [1, 0, 0, 1, dx, 0]),
+        components: g.components.map((c) => ({ base: c.base, transform: [c.transform[0], c.transform[1], c.transform[2], c.transform[3], c.transform[4] + dx, c.transform[5]] })),
+      });
     }
     return mockLayer(d, g);
   },
@@ -280,8 +332,7 @@ const mockBackend: Backend = {
     const d = need();
     const c = d.undo.pop();
     if (!c) return null;
-    const g = findGlyph(d, c.glyph);
-    [g.width, g.paths] = [c.before[0], clonePaths(c.before[1])];
+    Object.assign(findGlyph(d, c.glyph), snap(c.before));
     d.redo.push(c);
     d.revision++;
     return { glyph: c.glyph, masterId: "m01", status: status(d) };
@@ -290,8 +341,7 @@ const mockBackend: Backend = {
     const d = need();
     const c = d.redo.pop();
     if (!c) return null;
-    const g = findGlyph(d, c.glyph);
-    [g.width, g.paths] = [c.after[0], clonePaths(c.after[1])];
+    Object.assign(findGlyph(d, c.glyph), snap(c.after));
     d.undo.push(c);
     d.revision++;
     return { glyph: c.glyph, masterId: "m01", status: status(d) };

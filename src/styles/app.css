@@ -253,3 +253,13 @@ button.doc-tab { padding-right: var(--k-space-12); }
 .metric-input:disabled { background: var(--k-bg-app); color: var(--k-text-muted); }
 .info-sep { width: 1px; align-self: stretch; background: var(--k-border-default); margin: 0 var(--k-space-4); }
 .info-count { min-width: 136px; padding-bottom: 7px; }
+
+/* ---------- Components & picker ---------- */
+.component-fill { cursor: pointer; }
+.component-fill.is-selected { fill: var(--k-accent-subtle); opacity: 1; stroke: var(--k-editor-selection); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.component-label { font: 500 11px var(--k-font-ui); fill: var(--k-text-accent); pointer-events: none; }
+.toolbar-sep { width: 1px; height: 20px; background: var(--k-border-default); margin: 0 var(--k-space-6); }
+.info-comp { align-self: center; color: var(--k-text-accent); white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.dialog-sm { width: 380px; }
+.picker-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; }
+.picker-list .list-item { font-family: var(--k-font-code); font-size: 12px; }

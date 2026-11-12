@@ -89,6 +89,31 @@ pub fn with_metric(font: &Font, glyph: &str, master_id: &str, edit: MetricEdit) 
     Ok(out)
 }
 
+/// True if using `base` as a component inside `glyph` would make a glyph contain
+/// itself (directly or through nested components, in any master).
+pub fn component_creates_cycle(font: &Font, glyph: &str, base: &str) -> bool {
+    let mut stack = vec![base.to_string()];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(name) = stack.pop() {
+        if name == glyph {
+            return true;
+        }
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        if let Some(g) = font.glyph(&name) {
+            for l in &g.layers {
+                for s in &l.shapes {
+                    if let Shape::Component { base, .. } = s {
+                        stack.push(base.clone());
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// One recorded edit: the layer before and after.
 #[derive(Debug, Clone)]
 pub struct Change {
@@ -242,6 +267,20 @@ mod tests {
         let same = f.glyph("H").unwrap().layer("m01").unwrap().clone();
         assert!(!h.apply(&mut f, "H", "m01", same).unwrap());
         assert!(!h.can_undo());
+    }
+
+    #[test]
+    fn component_cycles_are_detected() {
+        let mut f = sample_font();
+        assert!(component_creates_cycle(&f, "A", "A"));
+        assert!(!component_creates_cycle(&f, "A", "H"));
+        // bar uses l; adding bar to l would loop l -> bar -> l.
+        f.glyph_mut("bar").unwrap().layers[0].shapes = vec![Shape::Component {
+            base: "l".into(),
+            transform: crate::model::IDENTITY,
+        }];
+        assert!(component_creates_cycle(&f, "l", "bar"));
+        assert!(!component_creates_cycle(&f, "bar", "l"));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 An open-source font editor for Windows. Draw glyphs, space and kern, interpolate masters and export OTF, TTF and variable fonts — offline, no account.
 
-> **Status: early development (0.1.0).** You can create a font from glyph sets, open the sample font, browse glyphs in Font View and save/open `.kernest` fonts. Drawing, spacing, kerning and export are next.
+> **Status: early development.** You can create a font from glyph sets, browse glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings, undo/redo) and save/open `.kernest` fonts. Spacing, kerning and export are next.
 
 ## Install
 
@@ -55,8 +55,8 @@ Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens liv
 
 ## Roadmap (v1)
 
-1. Font View and `.kernest` files ✅ (in progress)
-2. Edit View: pen tool, nodes, components
+1. Font View and `.kernest` files ✅
+2. Edit View: pen tool, nodes, components ✅
 3. Spacing and kerning (text mode, kerning window)
 4. Masters, axes and interpolation
 5. Export OTF, TTF and variable fonts (via [fontc](https://github.com/googlefonts/fontc))

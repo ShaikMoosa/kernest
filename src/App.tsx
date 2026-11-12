@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { backend, errorMessage, isTauri, type DocStatus, type FontView, type GlyphSetInfo } from "./lib/backend";
@@ -7,7 +7,7 @@ import { TitleBar, type Menu } from "./components/TitleBar";
 import { StartWindow } from "./components/StartWindow";
 import { NewFontDialog } from "./components/NewFontDialog";
 import { FontViewScreen } from "./components/FontViewScreen";
-import { EditView } from "./components/EditView";
+import { EditView, sendEditCommand } from "./components/EditView";
 import { CloseIcon } from "./components/Icons";
 
 const later = (label: string, shortcut?: string) => ({ label, shortcut, disabled: true });
@@ -193,6 +193,9 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [showNewFont, open, save, saveAs, closeFont, closeTab, active, undoRedo]);
 
+  const inGlyph = font !== null && active !== null;
+  const glyphList = useMemo(() => (font ? font.glyphs.map((g) => ({ name: g.name, width: g.width })) : []), [font]);
+
   const menus: Menu[] = [
     {
       label: "File",
@@ -212,12 +215,19 @@ export default function App() {
       items: [
         { label: "Undo", shortcut: "Ctrl+Z", onSelect: status.canUndo ? () => undoRedo(false) : undefined },
         { label: "Redo", shortcut: "Ctrl+Y", onSelect: status.canRedo ? () => undoRedo(true) : undefined },
-        { ...later("Cut", "Ctrl+X"), separatorBefore: true },
-        later("Copy", "Ctrl+C"),
-        later("Paste", "Ctrl+V"),
+        { label: "Cut", shortcut: "Ctrl+X", onSelect: inGlyph ? () => sendEditCommand("cut") : undefined, separatorBefore: true },
+        { label: "Copy", shortcut: "Ctrl+C", onSelect: inGlyph ? () => sendEditCommand("copy") : undefined },
+        { label: "Paste", shortcut: "Ctrl+V", onSelect: inGlyph ? () => sendEditCommand("paste") : undefined },
       ],
     },
-    { label: "Glyph", items: [later("Add Glyphs…", "Ctrl+Shift+G"), later("Remove Glyph", "Ctrl+Del")] },
+    {
+      label: "Glyph",
+      items: [
+        later("Add Glyphs…", "Ctrl+Shift+G"),
+        later("Remove Glyph", "Ctrl+Del"),
+        { label: "Add Component…", shortcut: "Ctrl+Shift+C", onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
+      ],
+    },
     { label: "Path", items: [later("Correct Path Direction", "Ctrl+Shift+R"), later("Add Extremes")] },
     { label: "View", items: [later("Show Metrics", "Ctrl+Shift+M")] },
     { label: "Window", items: [later("Kerning", "Ctrl+Shift+K")] },
@@ -260,7 +270,7 @@ export default function App() {
           {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} />}
           {tabs.map((g) => (
             <div key={g} className="tab-panel" hidden={active !== g}>
-              <EditView glyph={g} masterId={font.masterId} version={versions[g] ?? 0} active={active === g} onCommitted={onCommitted} onError={fail} />
+              <EditView glyph={g} masterId={font.masterId} version={versions[g] ?? 0} active={active === g} glyphs={glyphList} onCommitted={onCommitted} onError={fail} />
             </div>
           ))}
         </>
