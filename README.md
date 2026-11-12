@@ -12,7 +12,7 @@ Requirements: Windows 10 22H2 or later (x64 or ARM64). The installer downloads M
 
 ## Build from source
 
-Prerequisites: [Rust](https://rustup.rs) (stable, MSVC toolchain), [Node.js](https://nodejs.org) 22 or later, and Visual Studio Build Tools with the "Desktop development with C++" workload.
+Prerequisites: [Rust](https://rustup.rs) via rustup (MSVC toolchain; the version pinned in `rust-toolchain.toml` is installed automatically), [Node.js](https://nodejs.org) 24 or later, and Visual Studio Build Tools with the "Desktop development with C++" workload.
 
 ```bash
 npm install
