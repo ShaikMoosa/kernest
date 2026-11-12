@@ -4,14 +4,14 @@ import { SearchIcon } from "./Icons";
 
 const CATEGORY_ORDER = ["Uppercase", "Lowercase", "Letter", "Number", "Punctuation", "Symbol", "Separator", "Mark", "Other"];
 
-function GlyphCell({ glyph, font, selected, onSelect }: { glyph: GlyphSummary; font: FontView; selected: boolean; onSelect: (e: React.MouseEvent) => void }) {
+function GlyphCell({ glyph, font, selected, onSelect, onOpen }: { glyph: GlyphSummary; font: FontView; selected: boolean; onSelect: (e: React.MouseEvent) => void; onOpen: () => void }) {
   const { ascender, descender } = font.metrics;
   const h = ascender - descender;
   // Square view box centred on the advance width, so every glyph uses the same scale.
   const x0 = glyph.width / 2 - h / 2;
   const empty = !glyph.svg;
   return (
-    <button className={`glyph-cell${selected ? " is-selected" : ""}${empty ? " is-empty" : ""}`} onClick={onSelect} title={glyph.name}>
+    <button className={`glyph-cell${selected ? " is-selected" : ""}${empty ? " is-empty" : ""}`} onClick={onSelect} onDoubleClick={onOpen} title={`${glyph.name} — double-click to edit`}>
       <span className="glyph-art">
         {empty ? (
           <span className="glyph-placeholder">{glyph.character?.trim() ? glyph.character : ""}</span>
@@ -30,7 +30,7 @@ function GlyphCell({ glyph, font, selected, onSelect }: { glyph: GlyphSummary; f
 }
 
 /** S03 · Font View — grid of glyphs with category sidebar and glyph info. */
-export function FontViewScreen({ font }: { font: FontView }) {
+export function FontViewScreen({ font, onOpenGlyph }: { font: FontView; onOpenGlyph: (name: string) => void }) {
   const [category, setCategory] = useState<string>("All");
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -119,9 +119,15 @@ export function FontViewScreen({ font }: { font: FontView }) {
           <span className="k-caption muted">{shown.length} glyphs</span>
         </div>
         {shown.length ? (
-          <div className="glyph-grid" role="list">
+          <div className="glyph-grid" role="list" onKeyDown={(e) => {
+            // Enter opens the selected glyphs in Edit View tabs.
+            if (e.key === "Enter" && selection.size) {
+              e.preventDefault();
+              for (const g of font.glyphs) if (selection.has(g.name)) onOpenGlyph(g.name);
+            }
+          }}>
             {shown.map((g) => (
-              <GlyphCell key={g.name} glyph={g} font={font} selected={selection.has(g.name)} onSelect={(e) => select(g, e)} />
+              <GlyphCell key={g.name} glyph={g} font={font} selected={selection.has(g.name)} onSelect={(e) => select(g, e)} onOpen={() => onOpenGlyph(g.name)} />
             ))}
           </div>
         ) : (
