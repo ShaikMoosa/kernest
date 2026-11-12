@@ -1,0 +1,15 @@
+[package]
+name = "kernest-core"
+description = "Font data model and .kernest package format for the Kernest font editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

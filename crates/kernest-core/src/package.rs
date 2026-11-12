@@ -1,0 +1,300 @@
+//! The `.kernest` package format.
+//!
+//! A font is a folder:
+//!
+//! ```text
+//! MyFont.kernest/
+//!   font.json        format version, info, axes, masters, glyph order
+//!   kerning.json     kerning per master (omitted when empty)
+//!   features.fea     OpenType feature code (omitted when empty)
+//!   glyphs/
+//!     A_.json        one file per glyph
+//!     a.json
+//! ```
+//!
+//! One file per glyph keeps Git diffs small. Glyph file names are derived from
+//! glyph names so they are unique on case-insensitive file systems (Windows):
+//! every uppercase letter is followed by `_`, characters that Windows forbids
+//! become `_`, and reserved device names (`con`, `nul`, …) are prefixed with `_`.
+
+use std::collections::{BTreeMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::{Error, IoContext, Result};
+use crate::model::{Axis, Font, FontInfo, Glyph, KernPair, Master};
+
+/// Format version written by this build.
+pub const FORMAT_VERSION: u32 = 1;
+
+pub const EXTENSION: &str = "kernest";
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FontFile {
+    format_version: u32,
+    generator: String,
+    info: FontInfo,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    axes: Vec<Axis>,
+    masters: Vec<Master>,
+    glyph_order: Vec<String>,
+}
+
+const RESERVED: &[&str] = &[
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// File name (without folder) used for a glyph inside `glyphs/`.
+pub fn glyph_file_name(glyph_name: &str) -> String {
+    let mut out = String::with_capacity(glyph_name.len() + 8);
+    for (i, c) in glyph_name.chars().enumerate() {
+        match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => out.push('_'),
+            c if (c as u32) < 0x20 || c as u32 == 0x7F => out.push('_'),
+            '.' if i == 0 => out.push('_'),
+            c if c.is_uppercase() => {
+                out.push(c);
+                out.push('_');
+            }
+            c => out.push(c),
+        }
+    }
+    let stem = out.split('.').next().unwrap_or("").to_ascii_lowercase();
+    if RESERVED.contains(&stem.as_str()) {
+        out.insert(0, '_');
+    }
+    out.push_str(".json");
+    out
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    // Skip unchanged files so saving a large font only touches what was edited.
+    if fs::read(path).map(|old| old == bytes).unwrap_or(false) {
+        return Ok(());
+    }
+    let tmp = path.with_extension("tmp~");
+    fs::write(&tmp, bytes).at(&tmp)?;
+    fs::rename(&tmp, path).at(path)
+}
+
+fn to_json<T: Serialize>(value: &T, path: &Path) -> Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(|source| Error::Json {
+        path: path.into(),
+        source,
+    })?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
+    let bytes = fs::read(path).at(path)?;
+    serde_json::from_slice(&bytes).map_err(|source| Error::Json {
+        path: path.into(),
+        source,
+    })
+}
+
+/// Writes `font` to the package folder at `dir`, creating it if needed.
+/// Glyph files for glyphs that no longer exist are removed.
+pub fn save(font: &Font, dir: &Path) -> Result<()> {
+    font.validate()?;
+    let glyph_dir = dir.join("glyphs");
+    fs::create_dir_all(&glyph_dir).at(&glyph_dir)?;
+
+    let mut written = HashSet::new();
+    for g in &font.glyphs {
+        let name = glyph_file_name(&g.name);
+        if !written.insert(name.to_ascii_lowercase()) {
+            return Err(Error::Invalid(format!(
+                "glyph \"{}\" maps to a file name that is already used",
+                g.name
+            )));
+        }
+        let path = glyph_dir.join(&name);
+        write_atomic(&path, &to_json(g, &path)?)?;
+    }
+    for entry in fs::read_dir(&glyph_dir).at(&glyph_dir)? {
+        let entry = entry.at(&glyph_dir)?;
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if fname.ends_with(".json") && !written.contains(&fname.to_ascii_lowercase()) {
+            fs::remove_file(entry.path()).at(&entry.path())?;
+        }
+    }
+
+    let kerning_path = dir.join("kerning.json");
+    if font.kerning.values().all(Vec::is_empty) {
+        let _ = fs::remove_file(&kerning_path);
+    } else {
+        write_atomic(&kerning_path, &to_json(&font.kerning, &kerning_path)?)?;
+    }
+
+    let fea_path = dir.join("features.fea");
+    if font.features.is_empty() {
+        let _ = fs::remove_file(&fea_path);
+    } else {
+        write_atomic(&fea_path, font.features.as_bytes())?;
+    }
+
+    // font.json last: a package with a font.json is a complete package.
+    let font_path = dir.join("font.json");
+    let file = FontFile {
+        format_version: FORMAT_VERSION,
+        generator: format!("Kernest {}", env!("CARGO_PKG_VERSION")),
+        info: font.info.clone(),
+        axes: font.axes.clone(),
+        masters: font.masters.clone(),
+        glyph_order: font.glyphs.iter().map(|g| g.name.clone()).collect(),
+    };
+    write_atomic(&font_path, &to_json(&file, &font_path)?)
+}
+
+/// Reads a package folder. Glyph files not listed in the glyph order are appended at the end.
+pub fn open(dir: &Path) -> Result<Font> {
+    let font_path = dir.join("font.json");
+    let file: FontFile = read_json(&font_path)?;
+    if file.format_version > FORMAT_VERSION {
+        return Err(Error::NewerFormat(
+            dir.to_path_buf(),
+            file.format_version,
+            FORMAT_VERSION,
+        ));
+    }
+
+    let glyph_dir = dir.join("glyphs");
+    let mut glyphs = Vec::with_capacity(file.glyph_order.len());
+    let mut seen = HashSet::new();
+    for name in &file.glyph_order {
+        let path = glyph_dir.join(glyph_file_name(name));
+        let g: Glyph = read_json(&path)?;
+        if &g.name != name {
+            return Err(Error::Invalid(format!(
+                "{} contains glyph \"{}\", expected \"{name}\"",
+                path.display(),
+                g.name
+            )));
+        }
+        seen.insert(glyph_file_name(name).to_ascii_lowercase());
+        glyphs.push(g);
+    }
+    // Glyph files added outside Kernest (e.g. by a merge) are kept rather than lost.
+    if let Ok(entries) = fs::read_dir(&glyph_dir) {
+        let mut extra: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .filter(|p| {
+                !seen.contains(
+                    &p.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_ascii_lowercase(),
+                )
+            })
+            .collect();
+        extra.sort();
+        for path in extra {
+            glyphs.push(read_json(&path)?);
+        }
+    }
+
+    let kerning_path = dir.join("kerning.json");
+    let kerning: BTreeMap<String, Vec<KernPair>> = if kerning_path.exists() {
+        read_json(&kerning_path)?
+    } else {
+        BTreeMap::new()
+    };
+    let fea_path = dir.join("features.fea");
+    let features = if fea_path.exists() {
+        fs::read_to_string(&fea_path).at(&fea_path)?
+    } else {
+        String::new()
+    };
+
+    let font = Font {
+        info: file.info,
+        axes: file.axes,
+        masters: file.masters,
+        glyphs,
+        kerning,
+        features,
+    };
+    font.validate()?;
+    Ok(font)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sample::sample_font;
+
+    #[test]
+    fn file_names_are_unique_on_windows() {
+        assert_eq!(glyph_file_name("A"), "A_.json");
+        assert_eq!(glyph_file_name("a"), "a.json");
+        assert_eq!(glyph_file_name("a.sc"), "a.sc.json");
+        assert_eq!(glyph_file_name("con"), "_con.json");
+        assert_eq!(glyph_file_name("con.alt"), "_con.alt.json");
+        assert_eq!(glyph_file_name("Con"), "C_on.json");
+        assert_eq!(glyph_file_name(".notdef"), "_notdef.json");
+        assert_eq!(glyph_file_name("a/b"), "a_b.json");
+        assert_ne!(
+            glyph_file_name("A").to_lowercase(),
+            glyph_file_name("a").to_lowercase()
+        );
+    }
+
+    #[test]
+    fn round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Sample.kernest");
+        let font = sample_font();
+        save(&font, &path).unwrap();
+        let back = open(&path).unwrap();
+        assert_eq!(font, back);
+        // Saving again without changes rewrites nothing and stays identical.
+        save(&back, &path).unwrap();
+        assert_eq!(open(&path).unwrap(), font);
+    }
+
+    #[test]
+    fn removed_glyphs_are_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        save(&font, &path).unwrap();
+        assert!(path.join("glyphs/H_.json").exists());
+        font.glyphs.retain(|g| g.name != "H");
+        save(&font, &path).unwrap();
+        assert!(!path.join("glyphs/H_.json").exists());
+        assert!(open(&path).unwrap().glyph("H").is_none());
+    }
+
+    #[test]
+    fn rejects_newer_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        save(&sample_font(), &path).unwrap();
+        let fj = path.join("font.json");
+        let text = fs::read_to_string(&fj)
+            .unwrap()
+            .replace("\"formatVersion\": 1", "\"formatVersion\": 99");
+        fs::write(&fj, text).unwrap();
+        assert!(matches!(
+            open(&path),
+            Err(Error::NewerFormat(_, 99, FORMAT_VERSION))
+        ));
+    }
+
+    #[test]
+    fn readable_glyph_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        save(&sample_font(), &path).unwrap();
+        let h = fs::read_to_string(path.join("glyphs/H_.json")).unwrap();
+        assert!(h.contains("\"unicodes\": [\n    \"0048\"\n  ]"), "{h}");
+        assert!(h.contains("\"80 0 line\""), "{h}");
+    }
+}

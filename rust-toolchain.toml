@@ -1,0 +1,7 @@
+# Pinned because rustc 1.99.1 crashes (internal compiler error) while compiling
+# markup5ever 0.39, which Tauri's build tooling depends on. Try the latest stable
+# again and remove this pin once that is fixed.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

@@ -1,0 +1,100 @@
+/*
+ * Kernest design tokens.
+ * Source of truth: Figma file "Kernest", collections "Kernest / Color" and
+ * "Kernest / Size", text styles "Kernest/*" (built on SegmentUI Kit 3.0).
+ * Exported 2026-11-12. Change values in Figma first, then update this file.
+ * Light theme only for now (dark mode is out of scope).
+ */
+:root {
+  /* Background */
+  --k-bg-app: #f8fafc;
+  --k-bg-surface: #ffffff;
+  --k-bg-subtle: #edf2f7;
+  --k-bg-hover: #edf2f7;
+  --k-bg-selected: #ebecff;
+  --k-bg-inverse: #020617;
+
+  /* Text */
+  --k-text-primary: #020617;
+  --k-text-secondary: #475569;
+  --k-text-muted: #64748b;
+  --k-text-on-accent: #ffffff;
+  --k-text-accent: #4a2be4;
+  --k-text-warning: #8c5800;
+  --k-text-danger: #9c0015;
+  --k-text-success: #3f6212;
+
+  /* Border & accent */
+  --k-border-default: #e2e9f0;
+  --k-border-strong: #cbd5e1;
+  --k-border-focus: #594fee;
+  --k-accent-default: #594fee;
+  --k-accent-hover: #4a2be4;
+  --k-accent-subtle: #ebecff;
+
+  /* Status */
+  --k-status-danger: #ef4444;
+  --k-status-danger-subtle: #fff2f0;
+  --k-status-warning: #f59e09;
+  --k-status-warning-subtle: #fff3e6;
+  --k-status-success: #65a30d;
+  --k-status-success-subtle: #ecfccb;
+
+  /* Editor */
+  --k-editor-canvas: #ffffff;
+  --k-editor-outline: #020617;
+  --k-editor-glyph-fill: #edf2f7;
+  --k-editor-metric-line: #cbd5e1;
+  --k-editor-zone: #fff3e6;
+  --k-editor-node-corner: #594fee;
+  --k-editor-node-smooth: #65a30d;
+  --k-editor-handle: #64748b;
+  --k-editor-anchor: #f59e09;
+  --k-editor-guide: #7072ff;
+  --k-editor-background-layer: #ff9087;
+  --k-editor-selection: #594fee;
+
+  /* Space */
+  --k-space-2: 2px;
+  --k-space-4: 4px;
+  --k-space-6: 6px;
+  --k-space-8: 8px;
+  --k-space-12: 12px;
+  --k-space-16: 16px;
+  --k-space-20: 20px;
+  --k-space-24: 24px;
+  --k-space-32: 32px;
+
+  /* Radius */
+  --k-radius-sm: 4px;
+  --k-radius-md: 6px;
+  --k-radius-lg: 8px;
+  --k-radius-xl: 12px;
+
+  /* Control heights */
+  --k-control-sm: 24px;
+  --k-control-md: 28px;
+  --k-control-lg: 32px;
+
+  /* Shadows (SegmentUI s / m / l / xl) */
+  --k-shadow-s: 0 1.14px 2.72px 0 #00000005, 0 0.3px 0.51px 0 #0000000f;
+  --k-shadow-m: 0 1.14px 4px 0 #00000014, 0 0.3px 1px 0 #00000005;
+  --k-shadow-l: 0 5px 13px -2.5px #00000014, 0 1.14px 2.98px -1.67px #00000014, 0 0.3px 0.78px -0.83px #00000014;
+  --k-shadow-xl: 0 4px 7.2px -0.5px #00000025, 0 0.48px 0.87px -0.25px #00000008;
+
+  /* Type. Windows ships Segoe UI Variable; the Figma mockups use Inter. */
+  --k-font-ui: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, sans-serif;
+  --k-font-display: "Segoe UI Variable Display", "Segoe UI", Inter, system-ui, sans-serif;
+  --k-font-code: "Cascadia Mono", Consolas, monospace;
+}
+
+/* Text styles (Kernest/*) */
+.k-display { font: 700 28px/36px var(--k-font-display); }
+.k-title { font: 600 20px/28px var(--k-font-display); }
+.k-subtitle { font: 600 15px/20px var(--k-font-ui); }
+.k-body { font: 400 13px/18px var(--k-font-ui); }
+.k-body-strong { font: 600 13px/18px var(--k-font-ui); }
+.k-label { font: 500 12px/16px var(--k-font-ui); }
+.k-caption { font: 400 11px/14px var(--k-font-ui); }
+.k-overline { font: 600 10px/12px var(--k-font-ui); letter-spacing: 0.06em; text-transform: uppercase; }
+.k-code { font: 400 12px/18px var(--k-font-code); }
