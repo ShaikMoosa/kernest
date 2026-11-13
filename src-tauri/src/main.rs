@@ -4,12 +4,14 @@
 mod commands;
 mod export;
 mod fontinfo;
+mod glyphs;
 mod import;
 mod spacing;
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(commands::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::glyph_sets,
@@ -40,6 +42,9 @@ fn main() {
             fontinfo::compatibility,
             export::export_font,
             import::import_font,
+            glyphs::add_glyphs,
+            glyphs::remove_glyphs,
+            commands::path_operation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kernest");

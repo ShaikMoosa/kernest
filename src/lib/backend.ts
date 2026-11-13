@@ -189,6 +189,13 @@ export interface ExportReport {
   problems: string[];
 }
 
+export interface AddGlyphsResult {
+  added: string[];
+  /** Already in the font (same name or code point). */
+  skipped: string[];
+  status: DocStatus;
+}
+
 export interface ImportResult {
   view: FontView;
   /** What was left out or changed while converting. */
@@ -234,7 +241,15 @@ export interface Backend {
   exportFont(variable: boolean, statics: boolean, outDir: string): Promise<ExportReport>;
   /** Opens a .glyphs, .glyphspackage, .ufo or .designspace source as a new, unsaved font. */
   importFont(path: string): Promise<ImportResult>;
+  /** Adds glyphs typed as names/characters/code points plus whole glyph sets. */
+  addGlyphs(text: string, glyphSets: string[]): Promise<AddGlyphsResult>;
+  /** Removes glyphs; components using them are decomposed. */
+  removeGlyphs(names: string[]): Promise<DocStatus>;
+  /** Correct Path Direction or Add Extremes on one layer (Add Extremes: only `paths`, if given). */
+  pathOperation(glyph: string, masterId: string, operation: PathOperation, paths?: number[]): Promise<LayerView>;
 }
+
+export type PathOperation = "correct-direction" | "add-extremes";
 
 const tauriBackend: Backend = {
   glyphSets: () => invoke("glyph_sets"),
@@ -265,6 +280,9 @@ const tauriBackend: Backend = {
   compatibility: () => invoke("compatibility"),
   exportFont: (variable, statics, outDir) => invoke("export_font", { variable, statics, outDir }),
   importFont: (path) => invoke("import_font", { path }),
+  addGlyphs: (text, glyphSets) => invoke("add_glyphs", { text, glyphSets }),
+  removeGlyphs: (names) => invoke("remove_glyphs", { names }),
+  pathOperation: (glyph, masterId, operation, paths) => invoke("path_operation", { glyph, masterId, operation, paths }),
 };
 
 // ---------- Browser preview mock ----------
@@ -642,6 +660,15 @@ const mockBackend: Backend = {
   },
   async importFont() {
     throw "Importing fonts needs the desktop app (npm run tauri dev).";
+  },
+  async addGlyphs() {
+    throw "Adding glyphs needs the desktop app (npm run tauri dev).";
+  },
+  async removeGlyphs() {
+    throw "Removing glyphs needs the desktop app (npm run tauri dev).";
+  },
+  async pathOperation() {
+    throw "Path operations need the desktop app (npm run tauri dev).";
   },
   async compatibility() {
     return [];

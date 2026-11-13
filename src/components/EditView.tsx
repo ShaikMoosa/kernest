@@ -23,7 +23,7 @@ const TOOLS: { id: Tool; key: string; label: string; icon: React.ReactNode }[] =
 const HIT = 7; // px
 
 /** Commands sent from the app menus to the active Edit View. */
-export type EditCommand = "add-component" | "cut" | "copy" | "paste";
+export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes";
 export const sendEditCommand = (name: EditCommand) => window.dispatchEvent(new CustomEvent("kernest:edit", { detail: name }));
 
 // Clipboard shared by all Edit View tabs; also mirrored to the system clipboard as JSON.
@@ -141,10 +141,12 @@ interface Props {
   glyphs: { name: string; width: number }[];
   onCommitted: (status: DocStatus) => void;
   onError: (e: unknown) => void;
+  /** View › Show Metrics: metric lines, labels and the advance box. */
+  showMetrics?: boolean;
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, showMetrics = true }: Props) {
   const [layer, setLayer] = useState<LayerView | null>(null);
   const [paths, setPaths] = useState<EditPath[]>([]);
   const [comps, setComps] = useState<Comp[]>([]);
@@ -528,6 +530,18 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
 
   const runCommand = useCallback(async (name: EditCommand) => {
     if (name === "add-component") return setPicking(true);
+    if (name === "correct-direction" || name === "add-extremes") {
+      // Add Extremes works on the selected paths, or on every path when none is selected.
+      const only = name === "add-extremes" ? [...new Set([...latest.current.selection].map((k) => parseKey(k)[0]))] : undefined;
+      chain.current = chain.current.then(async () => {
+        try {
+          accept(await backend.pathOperation(glyph, masterId, name, only));
+        } catch (e) {
+          onError(e);
+        }
+      });
+      return;
+    }
     const { pathIdx, data } = selectedContent();
     if (name === "copy" || name === "cut") {
       if (!data.paths.length && !data.components.length) return;
@@ -556,7 +570,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       setCompSel(new Set(clip.components.map((_, i) => comps.length + i)));
       commit(nextPaths, nextComps);
     }
-  }, [commit, selectedContent]);
+  }, [commit, selectedContent, accept, glyph, masterId, onError]);
 
   useEffect(() => {
     if (!active) return;
@@ -603,7 +617,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         e.preventDefault();
         return;
       }
-      if ((e.key === "Delete" || e.key === "Backspace") && (selection.size || compSel.size)) {
+      if (!e.ctrlKey && (e.key === "Delete" || e.key === "Backspace") && (selection.size || compSel.size)) {
         const next = deleteSelection(paths, selection);
         const nextComps = comps.filter((_, i) => !compSel.has(i));
         setSelection(new Set());
@@ -698,7 +712,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             setSelection(new Set(paths[pi].nodes.map((_, ni) => nodeKey(pi, ni))));
           }}>
           {/* Metric lines */}
-          {lines.map(([label, y]) => {
+          {showMetrics && lines.map(([label, y]) => {
             const sy = toScreen(0, y).y;
             return (
               <g key={label}>
@@ -707,7 +721,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               </g>
             );
           })}
-          <rect x={x0} y={toScreen(0, ascender).y} width={Math.max(0, x1 - x0)} height={(ascender - descender) * view.s} className="advance-box" />
+          {showMetrics && <rect x={x0} y={toScreen(0, ascender).y} width={Math.max(0, x1 - x0)} height={(ascender - descender) * view.s} className="advance-box" />}
           {/* Glyph */}
           <g transform={`translate(${view.ox} ${view.oy}) scale(${view.s} ${-view.s})`}>
             {comps.map((c, i) => (

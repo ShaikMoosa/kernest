@@ -1,8 +1,10 @@
 # Kernest
 
-An open-source font editor for Windows. Draw glyphs, space and kern, interpolate masters and export OTF, TTF and variable fonts — offline, no account.
+An open-source font editor for Windows. Draw glyphs, space and kern, interpolate masters and export TrueType and variable fonts — offline, no account.
 
-> **Status: early development.** You can create a font from glyph sets, browse glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static TrueType fonts, import Glyphs (`.glyphs`, `.glyphspackage`), UFO and designspace sources, and save/open `.kernest` fonts.
+> **Status: early development.** You can create a font from glyph sets, browse, add and remove glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static TrueType fonts, import Glyphs (`.glyphs`, `.glyphspackage`), UFO and designspace sources, and save/open `.kernest` fonts.
+
+See the [Handbook](docs/HANDBOOK.md) for how to use Kernest.
 
 ## Install
 

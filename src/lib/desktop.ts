@@ -2,6 +2,7 @@
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { isTauri } from "./backend";
 
 export const windowControls = {
@@ -9,6 +10,16 @@ export const windowControls = {
   toggleMaximize: () => (isTauri ? getCurrentWindow().toggleMaximize() : Promise.resolve()),
   close: () => (isTauri ? getCurrentWindow().close() : Promise.resolve()),
 };
+
+export const REPO_URL = "https://github.com/ShaikMoosa/kernest";
+export const HANDBOOK_URL = `${REPO_URL}/blob/main/docs/HANDBOOK.md`;
+
+/** Opens a web page in the default browser (not inside the app window). */
+export function openExternal(url: string): Promise<void> {
+  if (isTauri) return openUrl(url);
+  window.open(url, "_blank", "noopener");
+  return Promise.resolve();
+}
 
 /** A `.kernest` font is a folder, so Open picks a directory. */
 export async function pickFontToOpen(): Promise<string | null> {

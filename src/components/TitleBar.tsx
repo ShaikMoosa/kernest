@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { windowControls } from "../lib/desktop";
 import { CaptionIcon } from "./Icons";
+import logoUrl from "../assets/kernest-logo.svg";
 
 export interface MenuItem {
   label: string;
@@ -8,6 +9,8 @@ export interface MenuItem {
   onSelect?: () => void;
   disabled?: boolean;
   separatorBefore?: boolean;
+  /** Shows a check mark (toggles such as View › Show Metrics). */
+  checked?: boolean;
 }
 
 export interface Menu {
@@ -41,7 +44,7 @@ export function TitleBar({ title, menus }: { title: string; menus: Menu[] }) {
 
   return (
     <header className="titlebar" ref={barRef} data-tauri-drag-region onDoubleClick={(e) => e.target === e.currentTarget && windowControls.toggleMaximize()}>
-      <div className="titlebar-icon" aria-hidden="true">K</div>
+      <img className="titlebar-icon" src={logoUrl} alt="" aria-hidden="true" />
       <nav className="menubar" aria-label="Main menu">
         {menus.map((m, i) => (
           <div key={m.label} className="menubar-entry">
@@ -60,7 +63,8 @@ export function TitleBar({ title, menus }: { title: string; menus: Menu[] }) {
                   <div key={item.label}>
                     {item.separatorBefore && <div className="menu-separator" role="separator" />}
                     <button
-                      role="menuitem"
+                      role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+                      aria-checked={item.checked}
                       className="menu-item"
                       disabled={item.disabled || !item.onSelect}
                       onClick={() => {
@@ -68,6 +72,7 @@ export function TitleBar({ title, menus }: { title: string; menus: Menu[] }) {
                         item.onSelect?.();
                       }}
                     >
+                      <span className="menu-check" aria-hidden="true">{item.checked ? "✓" : ""}</span>
                       <span>{item.label}</span>
                       {item.shortcut && <span className="menu-shortcut">{item.shortcut}</span>}
                     </button>

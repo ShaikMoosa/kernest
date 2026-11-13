@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FontView, GlyphSummary } from "../lib/backend";
 import { SearchIcon } from "./Icons";
 
@@ -31,10 +31,18 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen }: { glyph: GlyphSu
 }
 
 /** S03 · Font View — grid of glyphs with category sidebar and glyph info. */
-export function FontViewScreen({ font, onOpenGlyph }: { font: FontView; onOpenGlyph: (name: string) => void }) {
+export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void }) {
   const [category, setCategory] = useState<string>("All");
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
+
+  // Keep the selection to glyphs that still exist, and tell the app (for Remove Glyph).
+  useEffect(() => {
+    const names = new Set(font.glyphs.map((g) => g.name));
+    const kept = [...selection].filter((n) => names.has(n));
+    if (kept.length !== selection.size) setSelection(new Set(kept));
+    onSelectionChange?.(font.glyphs.filter((g) => selection.has(g.name)).map((g) => g.name));
+  }, [selection, font.glyphs, onSelectionChange]);
 
   const incompatibleCount = useMemo(() => font.glyphs.filter((g) => !g.compatible).length, [font.glyphs]);
   const counts = useMemo(() => {
@@ -120,6 +128,8 @@ export function FontViewScreen({ font, onOpenGlyph }: { font: FontView; onOpenGl
         <div className="grid-header">
           <h2 className="k-subtitle">{category === "All" ? "All glyphs" : category}</h2>
           <span className="k-caption muted">{shown.length} glyphs</span>
+          <span className="spacer" />
+          {onAddGlyphs && <button type="button" className="btn btn-secondary btn-sm" onClick={onAddGlyphs}>Add Glyphs…</button>}
         </div>
         {shown.length ? (
           <div className="glyph-grid" role="list" onKeyDown={(e) => {

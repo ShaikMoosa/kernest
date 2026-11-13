@@ -105,6 +105,36 @@ pub fn name_for(cp: u32) -> String {
     }
 }
 
+/// The code point a production-style name stands for: `A`, `zero`, `uni0416`, `u1F600`.
+/// Suffixed names such as `a.sc` have none.
+pub fn codepoint_for_name(name: &str) -> Option<u32> {
+    if let Some((cp, _)) = ASCII_NAMES.iter().find(|(_, n)| *n == name) {
+        return Some(*cp);
+    }
+    let mut chars = name.chars();
+    if let (Some(c), None) = (chars.next(), chars.next()) {
+        if c.is_ascii_alphabetic() {
+            return Some(c as u32);
+        }
+    }
+    let hex = name
+        .strip_prefix("uni")
+        .filter(|h| h.len() == 4)
+        .or_else(|| {
+            name.strip_prefix('u')
+                .filter(|h| (4..=6).contains(&h.len()))
+        })?;
+    if !hex
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase())
+    {
+        return None;
+    }
+    u32::from_str_radix(hex, 16)
+        .ok()
+        .filter(|&cp| char::from_u32(cp).is_some())
+}
+
 /// Category for a code point using the standard library's Unicode tables.
 pub fn category(cp: u32) -> Category {
     let Some(c) = char::from_u32(cp) else {

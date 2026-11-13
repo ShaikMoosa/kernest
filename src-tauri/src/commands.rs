@@ -12,7 +12,7 @@ use kernest_core::geometry::{sidebearings, svg_path};
 use kernest_core::glyphdata::{codepoints_for, GLYPH_SETS};
 use kernest_core::interpolate::check_glyph;
 use kernest_core::{
-    package, sample, Anchor, Font, Layer, Metrics, Node, NodeKind, Path as KPath, Shape,
+    package, pathops, sample, Anchor, Font, Layer, Metrics, Node, NodeKind, Path as KPath, Shape,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -575,6 +575,43 @@ pub fn set_metric(
         other => return Err(format!("Unknown metric \"{other}\"")),
     };
     let next = with_metric(&doc.font, &glyph, &master_id, edit).map_err(|e| e.to_string())?;
+    if doc
+        .history
+        .apply(&mut doc.font, &glyph, &master_id, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    layer_view_of(doc, &glyph, &master_id)
+}
+
+/// Path › Correct Path Direction ("correct-direction") or Add Extremes ("add-extremes")
+/// on one layer, as one undoable step. `paths` limits Add Extremes to those paths.
+#[tauri::command]
+pub fn path_operation(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    operation: String,
+    paths: Option<Vec<usize>>,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let mut next = doc
+        .font
+        .glyph(&glyph)
+        .and_then(|g| g.layer(&master_id))
+        .ok_or_else(|| format!("No layer for \"{glyph}\""))?
+        .clone();
+    match operation.as_str() {
+        "correct-direction" => {
+            pathops::correct_direction(&mut next);
+        }
+        "add-extremes" => {
+            pathops::add_extremes(&mut next, paths.as_deref().filter(|p| !p.is_empty()));
+        }
+        other => return Err(format!("Unknown path operation \"{other}\"")),
+    }
     if doc
         .history
         .apply(&mut doc.font, &glyph, &master_id, next)

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { relativeDate, type RecentFont } from "../lib/desktop";
+import { openExternal, relativeDate, REPO_URL, type RecentFont } from "../lib/desktop";
 import { ExternalIcon, SearchIcon, CloseIcon } from "./Icons";
+import logoUrl from "../assets/kernest-logo.svg";
 
 interface Props {
   recents: RecentFont[];
@@ -64,12 +65,12 @@ export function StartWindow({ recents, onNew, onOpen, onOpenRecent, onForgetRece
         {recents.length > 0 && shown.length === 0 && <p className="k-body muted">No recent fonts match “{query}”.</p>}
       </section>
       <aside className="start-side">
-        <div className="logo">K</div>
+        <img className="logo" src={logoUrl} alt="Kernest logo" />
         <h2 className="k-title">Kernest</h2>
         <p className="k-caption muted">Version {__APP_VERSION__} · open source · offline</p>
         <div className="divider" />
         <button className="link" onClick={onSample}>Explore the sample font</button>
-        <a className="link" href="https://github.com/ShaikMoosa/kernest" target="_blank" rel="noreferrer">
+        <a className="link" href={REPO_URL} onClick={(e) => { e.preventDefault(); openExternal(REPO_URL); }}>
           Project on GitHub <ExternalIcon />
         </a>
       </aside>

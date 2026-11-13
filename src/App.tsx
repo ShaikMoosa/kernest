@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { backend, errorMessage, isTauri, type DocStatus, type FontView, type GlyphSetInfo } from "./lib/backend";
-import { forgetRecent, loadRecents, pickFontToOpen, pickSavePath, pickSourceToImport, rememberRecent, type RecentFont } from "./lib/desktop";
+import { forgetRecent, HANDBOOK_URL, loadRecents, openExternal, pickFontToOpen, pickSavePath, pickSourceToImport, rememberRecent, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu } from "./components/TitleBar";
 import { StartWindow } from "./components/StartWindow";
 import { NewFontDialog } from "./components/NewFontDialog";
+import { AddGlyphsDialog } from "./components/AddGlyphsDialog";
 import { FontViewScreen } from "./components/FontViewScreen";
 import { EditView, sendEditCommand } from "./components/EditView";
 import { AddIcon, CloseIcon } from "./components/Icons";
@@ -14,8 +15,8 @@ import { KerningView } from "./components/KerningView";
 import { FontInfoView } from "./components/FontInfoView";
 import { ExportDialog } from "./components/ExportDialog";
 import { ImportNotesDialog } from "./components/ImportNotesDialog";
+import { AboutDialog } from "./components/AboutDialog";
 
-const later = (label: string, shortcut?: string) => ({ label, shortcut, disabled: true });
 const CLEAN: DocStatus = { dirty: false, canUndo: false, canRedo: false };
 
 export default function App() {
@@ -27,7 +28,17 @@ export default function App() {
   const [fontStale, setFontStale] = useState(false);
   const [recents, setRecents] = useState<RecentFont[]>(() => loadRecents());
   const [glyphSets, setGlyphSets] = useState<GlyphSetInfo[] | null>(null);
+  const [addGlyphSets, setAddGlyphSets] = useState<GlyphSetInfo[] | null>(null);
+  const [fontSelection, setFontSelection] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [about, setAbout] = useState(false);
+  const [showMetrics, setShowMetrics] = useState(() => {
+    try { return localStorage.getItem("kernest.showMetrics") !== "0"; } catch { return true; }
+  });
+  const toggleMetrics = useCallback(() => setShowMetrics((v) => {
+    try { localStorage.setItem("kernest.showMetrics", v ? "0" : "1"); } catch { /* not persisted */ }
+    return !v;
+  }), []);
   const [importNotes, setImportNotes] = useState<{ source: string; familyName: string; warnings: string[] } | null>(null);
   const [toast, setToast] = useState<{ kind: "info" | "danger"; text: string } | null>(null);
   const dirtyRef = useRef(false);
@@ -40,6 +51,7 @@ export default function App() {
   }, [toast]);
 
   const fail = useCallback((e: unknown) => setToast({ kind: "danger", text: errorMessage(e) }), []);
+  const openHandbook = useCallback(() => { openExternal(HANDBOOK_URL).catch(fail); }, [fail]);
 
   const show = useCallback((view: FontView) => {
     setFont(view);
@@ -179,6 +191,14 @@ export default function App() {
     });
   }, []);
 
+  // Glyph tabs whose glyph no longer exists (removed, or an undone add) are closed.
+  useEffect(() => {
+    if (!font) return;
+    const names = new Set(font.glyphs.map((g) => g.name));
+    const gone = tabs.filter((t) => t.startsWith("g:") && !names.has(t.slice(2)));
+    for (const t of gone) closeTab(t);
+  }, [font, tabs, closeTab]);
+
   // The Font View is refreshed lazily when it becomes visible after edits.
   useEffect(() => {
     if (font && active === null && fontStale) backend.fontView(font.masterId).then(show, fail);
@@ -202,9 +222,11 @@ export default function App() {
     show(view);
     setDocVersion((v) => v + 1);
     // Every open glyph tab reloads (its outlines may have changed with the masters).
+    // Tabs of glyphs that no longer exist are closed instead (see the effect above).
+    const names = new Set(view.glyphs.map((g) => g.name));
     setVersions((v) => {
       const next = { ...v };
-      for (const id of tabsRef.current) if (id.startsWith("g:")) next[id.slice(2)] = (next[id.slice(2)] ?? 0) + 1;
+      for (const id of tabsRef.current) if (id.startsWith("g:") && names.has(id.slice(2))) next[id.slice(2)] = (next[id.slice(2)] ?? 0) + 1;
       return next;
     });
   }, [show]);
@@ -215,6 +237,31 @@ export default function App() {
     setStatus(s);
     refreshAll(font?.masterId).catch(fail);
   }, [refreshAll, font?.masterId, fail]);
+
+  const showAddGlyphs = useCallback(() => {
+    if (font) backend.glyphSets().then(setAddGlyphSets, fail);
+  }, [font, fail]);
+
+  /** The glyphs Remove Glyph acts on: the open glyph tab, or the Font View selection. */
+  const removalTargets = active?.startsWith("g:") ? [active.slice(2)] : active === null ? fontSelection : [];
+
+  const removeGlyphs = useCallback(async (names: string[]) => {
+    if (!font || names.length === 0) return;
+    const shown = names.slice(0, 6).join(", ") + (names.length > 6 ? ` and ${names.length - 6} more` : "");
+    const msg = `Remove ${names.length === 1 ? "the glyph" : `${names.length} glyphs`} ${shown}?
+
+Components that use ${names.length === 1 ? "it" : "them"} are turned into outlines in other glyphs. You can undo this with Ctrl+Z.`;
+    const ok = isTauri ? await ask(msg, { title: "Remove Glyph", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" }) : window.confirm(msg);
+    if (!ok) return;
+    try {
+      const s = await backend.removeGlyphs(names);
+      setFontSelection([]);
+      onStructureChanged(s);
+      setToast({ kind: "info", text: names.length === 1 ? `Removed ${names[0]}` : `Removed ${names.length} glyphs` });
+    } catch (e) {
+      fail(e);
+    }
+  }, [font, onStructureChanged, fail]);
 
   const undoRedo = useCallback(async (redo: boolean) => {
     if (!font) return;
@@ -238,6 +285,10 @@ export default function App() {
   // Windows shortcuts (Ctrl, not Cmd).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "F1") {
+        e.preventDefault();
+        return openHandbook();
+      }
       if (!e.ctrlKey || e.altKey) return;
       const k = e.key.toLowerCase();
       const inField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
@@ -255,12 +306,16 @@ export default function App() {
       else if (k === "k" && e.shiftKey && font) openKerning();
       else if (k === "i" && !e.shiftKey && font) openInfo();
       else if (k === "e" && !e.shiftKey && font) setExporting(true);
+      else if (k === "g" && e.shiftKey && font) showAddGlyphs();
+      else if (k === "r" && e.shiftKey && active?.startsWith("g:")) sendEditCommand("correct-direction");
+      else if (k === "m" && e.shiftKey) toggleMetrics();
+      else if (k === "delete" && !inField && font) removeGlyphs(removalTargets);
       else return;
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showNewFont, open, importSource, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font]);
+  }, [showNewFont, open, importSource, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font, showAddGlyphs, removeGlyphs, removalTargets, toggleMetrics, openHandbook]);
 
   const inGlyph = font !== null && active !== null && active.startsWith("g:");
   const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? "Kerning" : id === "info" ? "Font Info" : `Text ${id.slice(5)}`);
@@ -295,13 +350,19 @@ export default function App() {
     {
       label: "Glyph",
       items: [
-        later("Add Glyphs…", "Ctrl+Shift+G"),
-        later("Remove Glyph", "Ctrl+Del"),
+        { label: "Add Glyphs…", shortcut: "Ctrl+Shift+G", onSelect: font ? showAddGlyphs : undefined },
+        { label: removalTargets.length > 1 ? `Remove ${removalTargets.length} Glyphs` : "Remove Glyph", shortcut: "Ctrl+Del", onSelect: font && removalTargets.length ? () => removeGlyphs(removalTargets) : undefined },
         { label: "Add Component…", shortcut: "Ctrl+Shift+C", onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
       ],
     },
-    { label: "Path", items: [later("Correct Path Direction", "Ctrl+Shift+R"), later("Add Extremes")] },
-    { label: "View", items: [later("Show Metrics", "Ctrl+Shift+M")] },
+    {
+      label: "Path",
+      items: [
+        { label: "Correct Path Direction", shortcut: "Ctrl+Shift+R", onSelect: inGlyph ? () => sendEditCommand("correct-direction") : undefined },
+        { label: "Add Extremes", onSelect: inGlyph ? () => sendEditCommand("add-extremes") : undefined },
+      ],
+    },
+    { label: "View", items: [{ label: "Show Metrics", shortcut: "Ctrl+Shift+M", onSelect: toggleMetrics, checked: showMetrics }] },
     {
       label: "Window",
       items: [
@@ -309,7 +370,13 @@ export default function App() {
         { label: "Kerning", shortcut: "Ctrl+Shift+K", onSelect: font ? openKerning : undefined },
       ],
     },
-    { label: "Help", items: [later("Kernest Handbook", "F1"), later("About Kernest")] },
+    {
+      label: "Help",
+      items: [
+        { label: "Kernest Handbook", shortcut: "F1", onSelect: openHandbook },
+        { label: "About Kernest", onSelect: () => setAbout(true), separatorBefore: true },
+      ],
+    },
   ];
 
   const title = font ? `${font.familyName}${font.path ? ".kernest" : ""}${status.dirty ? " • Edited" : ""} — Kernest` : "Kernest";
@@ -346,11 +413,11 @@ export default function App() {
             <button className="btn btn-secondary" onClick={openInfo} title="Font Info (Ctrl+I)">Font Info</button>
             <button className="btn btn-primary" onClick={() => setExporting(true)} title="Export fonts (Ctrl+E)">Export</button>
           </div>
-          {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} />}
+          {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} onSelectionChange={setFontSelection} onAddGlyphs={showAddGlyphs} />}
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={font.masterId} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} />
+                <EditView glyph={id.slice(2)} masterId={font.masterId} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} showMetrics={showMetrics} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} />
               ) : id === "kerning" ? (
@@ -372,6 +439,7 @@ export default function App() {
           onImport={() => importSource(false)}
         />
       )}
+      {about && <AboutDialog onClose={() => setAbout(false)} />}
       {importNotes && <ImportNotesDialog {...importNotes} onClose={() => setImportNotes(null)} />}
       {exporting && font && <ExportDialog fontPath={font.path} onClose={() => setExporting(false)} />}
       {glyphSets && (
@@ -381,6 +449,19 @@ export default function App() {
           onCreate={async (name, sets) => {
             loadDocument(await backend.newFont(name, sets));
             setGlyphSets(null);
+          }}
+        />
+      )}
+      {addGlyphSets && (
+        <AddGlyphsDialog
+          sets={addGlyphSets}
+          onCancel={() => setAddGlyphSets(null)}
+          onAdd={async (text, sets) => {
+            const r = await backend.addGlyphs(text, sets);
+            setAddGlyphSets(null);
+            onStructureChanged(r.status);
+            const skipped = r.skipped.length ? ` · ${r.skipped.length} already in the font` : "";
+            setToast({ kind: "info", text: r.added.length ? `Added ${r.added.length} glyph${r.added.length === 1 ? "" : "s"}${skipped}` : `Nothing added: all ${r.skipped.length} already in the font` });
           }}
         />
       )}
