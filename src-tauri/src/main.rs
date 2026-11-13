@@ -6,6 +6,7 @@ mod export;
 mod fontinfo;
 mod glyphs;
 mod import;
+mod layers;
 mod spacing;
 
 fn main() {
@@ -45,6 +46,11 @@ fn main() {
             glyphs::add_glyphs,
             glyphs::remove_glyphs,
             commands::path_operation,
+            layers::glyph_layers,
+            layers::add_brace_layer,
+            layers::add_bracket_layers,
+            layers::update_layer_position,
+            layers::remove_layer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kernest");

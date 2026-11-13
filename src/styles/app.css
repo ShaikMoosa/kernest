@@ -335,6 +335,12 @@ button.doc-tab { padding-right: var(--k-space-12); }
 .export-dialog { width: 600px; }
 .import-dialog { width: 560px; }
 .add-glyphs-dialog { width: 520px; }
+.layer-dialog { width: 480px; }
+.layer-dialog .dialog-body { display: flex; flex-direction: column; gap: var(--k-space-12); }
+.layer-axis .row { display: flex; gap: var(--k-space-8); align-items: center; }
+.layer-axis .row .text-input { flex: 1; min-width: 0; }
+.layer-picker { display: inline-flex; align-items: center; gap: var(--k-space-6); }
+.layer-select { height: var(--k-control-md); padding: 0 var(--k-space-6); max-width: 220px; }
 .add-glyphs-text { height: auto; min-height: 88px; padding: var(--k-space-8); resize: vertical; font-family: var(--k-font-code); }
 .import-dialog .dialog-body { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
 .export-option { height: auto; align-items: flex-start; padding: var(--k-space-6) 0; }

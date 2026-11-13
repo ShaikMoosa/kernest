@@ -5,8 +5,8 @@ use std::path::Path;
 
 use glyphs_reader::{Font as GFont, InstanceType, NodeType, Shape as GShape};
 use kernest_core::{
-    Anchor, Axis, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master, Metrics,
-    Node, NodeKind, Path as KPath, Shape,
+    Anchor, Axis, AxisRange, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master,
+    Metrics, Node, NodeKind, Path as KPath, Shape,
 };
 use ordered_float::OrderedFloat;
 
@@ -101,7 +101,11 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         .chain(g.glyphs.keys().map(|n| n.as_str()))
         .filter(|n| g.glyphs.contains_key(*n) && seen.insert(*n))
         .collect();
-    let (mut extra_layers, mut bracket_glyphs) = (0, Vec::new());
+    let tags: Vec<String> = g.axes.iter().map(|a| a.tag.clone()).collect();
+    let default_id = master_id(g.default_master_idx.min(g.masters.len() - 1));
+    let master_locs: Vec<BTreeMap<String, f64>> =
+        masters.iter().map(|m| m.location.clone()).collect();
+    let (mut extra_layers, mut skipped_braces) = (0, 0);
     let glyphs: Vec<Glyph> = order
         .iter()
         .map(|name| {
@@ -113,30 +117,84 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             out.export = src.export;
             out.left_group = src.left_kern.as_ref().map(|s| s.to_string());
             out.right_group = src.right_kern.as_ref().map(|s| s.to_string());
+            let owner = |l: &glyphs_reader::Layer| {
+                l.associated_master_id
+                    .as_deref()
+                    .and_then(|m| ids.get(m))
+                    .cloned()
+                    .unwrap_or_else(|| default_id.clone())
+            };
             for l in &src.layers {
                 match ids.get(l.layer_id.as_str()) {
                     Some(id) if out.layer(id).is_none() => out.layers.push(layer(id, l)),
-                    _ => extra_layers += 1,
+                    Some(_) => extra_layers += 1,
+                    None if !l.attributes.coordinates.is_empty() && !tags.is_empty() => {
+                        // Brace layer: its own location on the axes.
+                        let loc: BTreeMap<String, f64> = tags
+                            .iter()
+                            .zip(&l.attributes.coordinates)
+                            .map(|(t, v)| (t.clone(), v.0))
+                            .collect();
+                        if master_locs.contains(&loc)
+                            || out
+                                .brace_layers()
+                                .any(|b| b.location.as_ref() == Some(&loc))
+                        {
+                            skipped_braces += 1;
+                            continue;
+                        }
+                        let m = owner(l);
+                        let mut k = layer(&m, l);
+                        k.id = Some(out.new_layer_id(&m));
+                        k.location = Some(loc);
+                        out.layers.push(k);
+                    }
+                    None => extra_layers += 1,
                 }
             }
-            if !src.bracket_layers.is_empty() {
-                bracket_glyphs.push(name.to_string());
+            for l in &src.bracket_layers {
+                // Bracket layer: axis rules in the font's axis order.
+                let ranges: Vec<AxisRange> = tags
+                    .iter()
+                    .zip(&l.attributes.axis_rules)
+                    .filter(|(_, r)| r.min.is_some() || r.max.is_some())
+                    .map(|(t, r)| AxisRange {
+                        tag: t.clone(),
+                        min: r.min.map(|v| v.0),
+                        max: r.max.map(|v| v.0),
+                    })
+                    .collect();
+                if ranges.is_empty() {
+                    extra_layers += 1;
+                    continue;
+                }
+                let m = owner(l);
+                if out
+                    .bracket_layers()
+                    .any(|b| b.master_id == m && b.bracket == ranges)
+                {
+                    extra_layers += 1;
+                    continue;
+                }
+                let mut k = layer(&m, l);
+                k.id = Some(out.new_layer_id(&m));
+                k.bracket = ranges;
+                out.layers.push(k);
             }
             out
         })
         .collect();
     if extra_layers > 0 {
         warnings.push(format!(
-            "{extra_layers} intermediate (brace) or backup layer{} left out; Kernest only keeps master layers for now.",
+            "{extra_layers} extra layer{} (not a master, brace or bracket layer) left out.",
             if extra_layers == 1 { " was" } else { "s were" }
         ));
     }
-    if !bracket_glyphs.is_empty() {
+    if skipped_braces > 0 {
         warnings.push(format!(
-            "Bracket (alternate) layers were left out for {} glyph{}: {}",
-            bracket_glyphs.len(),
-            plural(bracket_glyphs.len()),
-            crate::list(&bracket_glyphs)
+            "{skipped_braces} brace layer{} sat on a master or another brace layer and {} left out.",
+            plural(skipped_braces),
+            if skipped_braces == 1 { "was" } else { "were" }
         ));
     }
 

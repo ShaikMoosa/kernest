@@ -85,8 +85,14 @@ fn finish(imp: &mut Imported) {
             }
         }
         g.layers.retain(|l| master_ids.contains(&l.master_id));
-        g.layers
-            .sort_by_key(|l| master_ids.iter().position(|m| *m == l.master_id));
+        // Master layers first, in master order; brace and bracket layers after them.
+        g.layers.sort_by_key(|l| {
+            let master = l.is_master();
+            (
+                !master,
+                master.then(|| master_ids.iter().position(|m| *m == l.master_id)),
+            )
+        });
         for l in &mut g.layers {
             l.shapes.retain(|s| match s {
                 kernest_core::Shape::Component { base, .. } if !names.contains(base) => {

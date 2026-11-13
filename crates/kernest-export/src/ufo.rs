@@ -21,14 +21,14 @@ fn point_type(kind: NodeKind) -> PointType {
     }
 }
 
-/// A UFO glyph for one Kernest layer.
-fn glyph(font: &Font, gname: &str, layer: &Layer) -> Result<Glyph, String> {
-    let g = font
-        .glyph(gname)
-        .ok_or_else(|| format!("no glyph named \"{gname}\""))?;
+/// A UFO glyph for one Kernest layer. `gname` may also be a generated glyph (such as a
+/// bracket alternate), which has no code points.
+pub fn glyph(font: &Font, gname: &str, layer: &Layer) -> Result<Glyph, String> {
     let mut out = Glyph::new(gname);
     out.width = layer.width;
-    out.codepoints = Codepoints::new(g.unicodes.iter().filter_map(|c| c.char()));
+    if let Some(g) = font.glyph(gname) {
+        out.codepoints = Codepoints::new(g.unicodes.iter().filter_map(|c| c.char()));
+    }
     for s in &layer.shapes {
         match s {
             Shape::Path(p) => {
@@ -102,8 +102,10 @@ pub struct UfoSource<'a> {
     pub style_name: &'a str,
     pub metrics: Metrics,
     /// Layer per glyph name, in glyph order.
-    pub layers: Vec<(&'a str, Layer)>,
+    pub layers: Vec<(String, Layer)>,
     pub kerning: Vec<KernPair>,
+    /// Generated glyphs (bracket alternates) and the glyph whose kerning groups they share.
+    pub alternates: Vec<(String, String)>,
 }
 
 pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
@@ -124,7 +126,7 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     info.open_type_name_designer = font.info.designer.clone();
     info.open_type_os2_vendor_id = font.info.vendor_id.clone();
 
-    let has_notdef = src.layers.iter().any(|(n, _)| *n == ".notdef");
+    let has_notdef = src.layers.iter().any(|(n, _)| n == ".notdef");
     let mut order: Vec<String> = Vec::with_capacity(src.layers.len() + 1);
     if !has_notdef {
         ufo.default_layer_mut().insert_glyph(notdef(&src.metrics));
@@ -133,7 +135,7 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     for (gname, layer) in &src.layers {
         ufo.default_layer_mut()
             .insert_glyph(glyph(font, gname, layer)?);
-        order.push((*gname).to_string());
+        order.push(gname.clone());
     }
     ufo.lib.insert(
         "public.glyphOrder".into(),
@@ -166,6 +168,23 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
                 .push(name(&g.name)?);
         }
     }
+    // Alternates kern like the glyph they replace.
+    for (alt, base) in &src.alternates {
+        if let Some(g) = font.glyph(base) {
+            if let Some(r) = &g.right_group {
+                groups
+                    .entry(kern_side(&format!("@{r}"), true)?)
+                    .or_default()
+                    .push(name(alt)?);
+            }
+            if let Some(l) = &g.left_group {
+                groups
+                    .entry(kern_side(&format!("@{l}"), false)?)
+                    .or_default()
+                    .push(name(alt)?);
+            }
+        }
+    }
     for p in &src.kerning {
         let (l, r) = (kern_side(&p.left, true)?, kern_side(&p.right, false)?);
         // Pairs that refer to groups nobody belongs to would be rejected by the compiler.
@@ -193,8 +212,23 @@ fn xml_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// A designspace (format 5) listing the axes, the master UFOs and their locations.
-pub fn designspace(font: &Font, sources: &[(String, String, BTreeMap<String, f64>)]) -> String {
+/// A source in a designspace: a UFO (or one layer of it, for sparse brace sources).
+pub struct DsSource {
+    pub file: String,
+    pub style: String,
+    pub location: BTreeMap<String, f64>,
+    pub layer: Option<String>,
+}
+
+/// A designspace rule: use `with` instead of `glyph` inside all of `ranges`.
+pub struct DsRule {
+    pub glyph: String,
+    pub with: String,
+    pub ranges: Vec<kernest_core::AxisRange>,
+}
+
+/// A designspace (format 5) listing the axes, rules, sources and instances.
+pub fn designspace(font: &Font, sources: &[DsSource], rules: &[DsRule]) -> String {
     let mut x = String::from(
         "<?xml version='1.0' encoding='UTF-8'?>\n<designspace format=\"5.0\">\n  <axes>\n",
     );
@@ -210,13 +244,53 @@ pub fn designspace(font: &Font, sources: &[(String, String, BTreeMap<String, f64
             if a.hidden { " hidden=\"1\"" } else { "" }
         );
     }
-    x.push_str("  </axes>\n  <sources>\n");
-    for (file, style, loc) in sources {
+    x.push_str("  </axes>\n");
+    if !rules.is_empty() {
+        x.push_str("  <rules>\n");
+        for r in rules {
+            let _ = write!(
+                x,
+                "    <rule name=\"{}\"><conditionset>",
+                xml_escape(&r.with)
+            );
+            for range in &r.ranges {
+                let Some(a) = font.axes.iter().find(|a| a.tag == range.tag) else {
+                    continue;
+                };
+                // Open ends are left out (an open range keeps going past the axis).
+                let bound = |attr: &str, v: Option<f64>| {
+                    v.map(|v| format!(" {attr}=\"{v}\"")).unwrap_or_default()
+                };
+                let _ = write!(
+                    x,
+                    "<condition name=\"{}\"{}{}/>",
+                    xml_escape(&a.name),
+                    bound("minimum", range.min),
+                    bound("maximum", range.max)
+                );
+            }
+            let _ = writeln!(
+                x,
+                "</conditionset><sub name=\"{}\" with=\"{}\"/></rule>",
+                xml_escape(&r.glyph),
+                xml_escape(&r.with)
+            );
+        }
+        x.push_str("  </rules>\n");
+    }
+    x.push_str("  <sources>\n");
+    for (n, s) in sources.iter().enumerate() {
+        let (file, style, loc) = (&s.file, &s.style, &s.location);
+        let layer = s
+            .layer
+            .as_ref()
+            .map(|l| format!(" layer=\"{}\"", xml_escape(l)))
+            .unwrap_or_default();
         let _ = write!(
             x,
-            "    <source filename=\"{}\" name=\"{}\" stylename=\"{}\"><location>",
+            "    <source filename=\"{}\" name=\"{}\" stylename=\"{}\"{layer}><location>",
             xml_escape(file),
-            xml_escape(style),
+            xml_escape(&format!("{style} {n}")),
             xml_escape(style)
         );
         for a in &font.axes {

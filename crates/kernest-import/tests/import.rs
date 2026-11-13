@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use kernest_core::sample::sample_font;
-use kernest_core::{structure, Axis, Font, Instance, KernPair, NodeKind, Shape};
+use kernest_core::{layers, structure, Axis, AxisRange, Font, Instance, KernPair, NodeKind, Shape};
 use kernest_import::import;
 
 /// The sample font with a Bold master, kerning groups and an instance.
@@ -40,6 +40,25 @@ fn two_masters() -> Font {
         location: BTreeMap::from([("wght".into(), 550.0)]),
         export: true,
     });
+    // A brace layer for H and an alternate for o.
+    let (mut f, brace) =
+        layers::add_brace_layer(&f, "H", "m01", &BTreeMap::from([("wght".into(), 550.0)])).unwrap();
+    f.glyph_mut("H").unwrap().layer_mut(&brace).unwrap().width += 20.0;
+    let ranges = [AxisRange {
+        tag: "wght".into(),
+        min: Some(600.0),
+        max: None,
+    }];
+    let (mut f, _) = layers::add_bracket_layers(&f, "o", "m02", &ranges).unwrap();
+    for l in f
+        .glyph_mut("o")
+        .unwrap()
+        .layers
+        .iter_mut()
+        .filter(|l| !l.bracket.is_empty())
+    {
+        l.width += 50.0;
+    }
     f
 }
 
@@ -277,6 +296,32 @@ associatedMasterId = "M-REG";
 layerId = "BACKUP-1";
 name = "Jan 1 26, 10:00";
 width = 600;
+}},
+{{
+associatedMasterId = "M-REG";
+attr = {{
+axisRules = (
+{{
+min = 600;
+}}
+);
+}};
+layerId = "BRACKET-R";
+name = "[600]";
+width = 610;
+}},
+{{
+associatedMasterId = "M-BLD";
+attr = {{
+axisRules = (
+{{
+min = 600;
+}}
+);
+}};
+layerId = "BRACKET-B";
+name = "[600]";
+width = 710;
 }}
 );
 unicode = 65;
@@ -394,7 +439,28 @@ fn check_glyphs_font(imp: &kernest_import::Imported) {
     let ga = f.glyph("A").unwrap();
     assert_eq!(ga.unicodes[0].0, 65);
     assert_eq!(ga.right_group.as_deref(), Some("A"));
-    assert_eq!(ga.layers.len(), 2, "brace and backup layers are left out");
+    assert_eq!(
+        ga.layers.len(),
+        5,
+        "2 masters, a brace and 2 bracket layers; no backup"
+    );
+    let brace = ga.brace_layers().next().unwrap();
+    assert_eq!((brace.master_id.as_str(), brace.width), ("m01", 650.0));
+    assert_eq!(brace.location.as_ref().unwrap()["wght"], 600.0);
+    let brackets: Vec<_> = ga.bracket_layers().collect();
+    assert_eq!(brackets.len(), 2);
+    assert_eq!(
+        (brackets[1].master_id.as_str(), brackets[1].width),
+        ("m02", 710.0)
+    );
+    assert_eq!(
+        brackets[0].bracket,
+        [AxisRange {
+            tag: "wght".into(),
+            min: Some(600.0),
+            max: None
+        }]
+    );
     let bold = ga.layer("m02").unwrap();
     assert_eq!(bold.width, 700.0);
     assert_eq!(bold.anchors[0].x, 350.0);
@@ -432,11 +498,7 @@ fn check_glyphs_font(imp: &kernest_import::Imported) {
     assert!(f.instances[0].export);
     assert!(!f.instances[1].export);
     assert!(f.features.contains("sub A by A.alt;"), "{}", f.features);
-    assert!(
-        imp.warnings.iter().any(|w| w.contains("brace")),
-        "{:?}",
-        imp.warnings
-    );
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
 }
 
 #[test]

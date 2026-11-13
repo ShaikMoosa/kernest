@@ -262,15 +262,16 @@ fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<Laye
     let g = font
         .glyph(glyph)
         .ok_or_else(|| format!("No glyph named \"{glyph}\""))?;
-    let master = font
-        .master(master_id)
-        .ok_or_else(|| format!("No master with id \"{master_id}\""))?;
+    // `master_id` is a layer key: a master id, or a brace/bracket layer's id.
     let layer = g
         .layer(master_id)
-        .ok_or_else(|| format!("\"{glyph}\" has no layer for {}", master.name))?;
+        .ok_or_else(|| format!("\"{glyph}\" has no layer \"{master_id}\""))?;
+    let master = font
+        .master(&layer.master_id)
+        .ok_or_else(|| format!("No master with id \"{}\"", layer.master_id))?;
     let mut paths = Vec::new();
     let mut components = Vec::new();
-    let mut comp_only = Layer::new(master_id, layer.width);
+    let mut comp_only = Layer::new(&layer.master_id, layer.width);
     for s in &layer.shapes {
         match s {
             Shape::Path(p) => paths.push(PathDto {
@@ -287,7 +288,7 @@ fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<Laye
                     .collect(),
             }),
             Shape::Component { base, transform } => {
-                let mut single = Layer::new(master_id, layer.width);
+                let mut single = Layer::new(&layer.master_id, layer.width);
                 single.shapes.push(s.clone());
                 components.push(ComponentDto {
                     base: base.clone(),
@@ -585,8 +586,10 @@ pub fn set_metric(
     layer_view_of(doc, &glyph, &master_id)
 }
 
-/// Path › Correct Path Direction ("correct-direction") or Add Extremes ("add-extremes")
-/// on one layer, as one undoable step. `paths` limits Add Extremes to those paths.
+/// Path › Correct Path Direction ("correct-direction") or Add Extremes ("add-extremes"),
+/// as one undoable step. The change is worked out on `master_id`'s layer and, when the
+/// glyph's masters are compatible, applied to every master the same way so they stay
+/// compatible. `paths` limits Add Extremes to those paths.
 #[tauri::command]
 pub fn path_operation(
     state: State<AppState>,
@@ -597,26 +600,60 @@ pub fn path_operation(
 ) -> CmdResult<LayerView> {
     let mut guard = lock(&state)?;
     let doc = doc_mut(&mut guard)?;
-    let mut next = doc
+    let g = doc
         .font
         .glyph(&glyph)
-        .and_then(|g| g.layer(&master_id))
-        .ok_or_else(|| format!("No layer for \"{glyph}\""))?
-        .clone();
+        .ok_or_else(|| format!("No glyph named \"{glyph}\""))?;
+    let current = g
+        .layer(&master_id)
+        .ok_or_else(|| format!("No layer for \"{glyph}\""))?;
+    // On a master layer of a compatible glyph, every master and brace layer changes the
+    // same way so they stay compatible. Bracket layers are a separate design, and are
+    // only changed when edited themselves.
+    let all_masters = current.is_master()
+        && doc.font.masters.len() > 1
+        && check_glyph(&doc.font, &glyph).is_empty();
+    let targets: Vec<String> = if all_masters {
+        g.layers
+            .iter()
+            .filter(|l| l.is_master() || l.location.is_some())
+            .map(|l| l.key().to_string())
+            .collect()
+    } else {
+        vec![master_id.clone()]
+    };
+    let mut next = doc.font.clone();
+    let ng = next.glyph_mut(&glyph).expect("glyph exists");
     match operation.as_str() {
         "correct-direction" => {
-            pathops::correct_direction(&mut next);
+            let plan = pathops::direction_plan(current);
+            for id in &targets {
+                if let Some(l) = ng.layer_mut(id) {
+                    pathops::apply_direction(l, &plan);
+                }
+            }
         }
         "add-extremes" => {
-            pathops::add_extremes(&mut next, paths.as_deref().filter(|p| !p.is_empty()));
+            let plan = pathops::extremes_plan(current, paths.as_deref().filter(|p| !p.is_empty()));
+            for id in &targets {
+                if let Some(l) = ng.layer_mut(id) {
+                    pathops::apply_extremes(l, &plan);
+                }
+            }
         }
         other => return Err(format!("Unknown path operation \"{other}\"")),
     }
-    if doc
-        .history
-        .apply(&mut doc.font, &glyph, &master_id, next)
-        .map_err(|e| e.to_string())?
-    {
+    let changed = if targets.len() == 1 {
+        let layer = ng.layer(&master_id).expect("layer exists").clone();
+        doc.history
+            .apply(&mut doc.font, &glyph, &master_id, layer)
+            .map_err(|e| e.to_string())?
+    } else {
+        doc.history
+            .apply_font(&mut doc.font, next)
+            .map_err(|e| e.to_string())?
+    };
+    if changed {
         doc.revision += 1;
     }
     layer_view_of(doc, &glyph, &master_id)

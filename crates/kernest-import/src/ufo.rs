@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use kernest_core::{
-    Anchor, Axis, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master, Metrics,
-    Node, NodeKind, Path as KPath, Shape,
+    Anchor, Axis, AxisRange, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master,
+    Metrics, Node, NodeKind, Path as KPath, Shape,
 };
 use norad::designspace::{AxisMapping, DesignSpaceDocument, Dimension};
 use norad::PointType;
@@ -87,17 +87,18 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
         loc
     };
 
-    // Load each UFO once; sources that point at a sparse layer are skipped.
+    // Load each UFO once. Sources that point at a layer of a UFO (sparse sources) become
+    // brace layers once the masters are built.
     let mut ufos: HashMap<String, norad::Font> = HashMap::new();
     let mut sources = Vec::new();
-    let mut sparse = 0;
+    let mut sparse = Vec::new();
     for s in &ds.sources {
-        if s.layer.is_some() {
-            sparse += 1;
-            continue;
-        }
         if !ufos.contains_key(&s.filename) {
             ufos.insert(s.filename.clone(), load(&dir.join(&s.filename))?);
+        }
+        if let Some(layer) = &s.layer {
+            sparse.push((s.filename.clone(), layer.clone(), location(&s.location)));
+            continue;
         }
         let ufo = &ufos[&s.filename];
         let name = s
@@ -107,13 +108,6 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
             .or_else(|| s.name.clone())
             .unwrap_or_else(|| format!("Master {}", sources.len() + 1));
         sources.push((name, location(&s.location), s.filename.clone()));
-    }
-    if sparse > 0 {
-        warnings.push(format!(
-            "{sparse} sparse source{} (intermediate layers) {} left out; Kernest doesn't support them yet.",
-            crate::plural(sparse),
-            if sparse == 1 { "was" } else { "were" }
-        ));
     }
     if sources.is_empty() {
         return Err("the designspace has no full UFO sources.".into());
@@ -144,8 +138,138 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
         .iter()
         .map(|(n, l, f)| (n.clone(), l.clone(), &ufos[f]))
         .collect();
-    let font = build(&refs, default_idx, axes, instances, &mut warnings);
+    let mut font = build(&refs, default_idx, axes, instances, &mut warnings);
+    add_sparse_sources(&mut font, &ufos, &sparse, &mut warnings);
+    add_rules(&mut font, &ds, &mut warnings);
     Ok(Imported { font, warnings })
+}
+
+/// Sparse sources (a layer of a UFO at its own location) become brace layers of the
+/// glyphs they contain, shown with the default master.
+fn add_sparse_sources(
+    font: &mut Font,
+    ufos: &HashMap<String, norad::Font>,
+    sparse: &[(String, String, BTreeMap<String, f64>)],
+    warnings: &mut Vec<String>,
+) {
+    let master_locs: Vec<BTreeMap<String, f64>> =
+        font.masters.iter().map(|m| m.location.clone()).collect();
+    let default_id = font.masters[0].id.clone();
+    let (mut added, mut skipped) = (0, 0);
+    let mut open_points = 0;
+    for (file, layer_name, loc) in sparse {
+        let Some(layer) = ufos.get(file).and_then(|u| u.layers.get(layer_name)) else {
+            skipped += 1;
+            continue;
+        };
+        if master_locs.contains(loc) {
+            skipped += 1;
+            continue;
+        }
+        for ug in layer.iter() {
+            let Some(g) = font.glyph_mut(ug.name()) else {
+                continue;
+            };
+            if g.brace_layers().any(|b| b.location.as_ref() == Some(loc)) {
+                continue;
+            }
+            let mut l = self::layer(&default_id, ug, &mut open_points);
+            l.id = Some(g.new_layer_id(&default_id));
+            l.location = Some(loc.clone());
+            g.layers.push(l);
+            added += 1;
+        }
+    }
+    if skipped > 0 {
+        warnings.push(format!(
+            "{skipped} sparse source{} couldn't be used (missing layer, or on a master) and {} left out.",
+            crate::plural(skipped),
+            if skipped == 1 { "was" } else { "were" }
+        ));
+    }
+    let _ = added;
+}
+
+/// Designspace rules become bracket layers: where a rule swaps `A` for `A.alt`, `A` gets
+/// an alternate made from `A.alt`'s outlines in every master. Substitute glyphs with
+/// generated names (`*.BRACKET.*`, `*.rvrn`) are then removed.
+fn add_rules(font: &mut Font, ds: &DesignSpaceDocument, warnings: &mut Vec<String>) {
+    let mut converted = 0;
+    let mut left_out = 0;
+    let mut generated = Vec::new();
+    for rule in &ds.rules.rules {
+        let [set] = rule.condition_sets.as_slice() else {
+            left_out += rule.substitutions.len();
+            continue;
+        };
+        let ranges: Option<Vec<AxisRange>> = set
+            .conditions
+            .iter()
+            .map(|c| {
+                font.axes
+                    .iter()
+                    .find(|a| a.name == c.name)
+                    .map(|a| AxisRange {
+                        tag: a.tag.clone(),
+                        min: c.minimum,
+                        max: c.maximum,
+                    })
+            })
+            .collect();
+        let Some(mut ranges) = ranges.filter(|r| !r.is_empty()) else {
+            left_out += rule.substitutions.len();
+            continue;
+        };
+        ranges.sort_by(|a, b| a.tag.cmp(&b.tag));
+        for sub in &rule.substitutions {
+            let (name, with) = (sub.name.as_str(), sub.with.as_str());
+            let Some(alt) = font.glyph(with).cloned() else {
+                left_out += 1;
+                continue;
+            };
+            let masters: Vec<String> = font.masters.iter().map(|m| m.id.clone()).collect();
+            let Some(g) = font.glyph_mut(name) else {
+                left_out += 1;
+                continue;
+            };
+            if g.bracket_groups().contains(&ranges) {
+                left_out += 1;
+                continue;
+            }
+            for m in &masters {
+                if let Some(src) = alt.layer(m) {
+                    let mut l = src.clone();
+                    l.id = Some(g.new_layer_id(m));
+                    l.bracket = ranges.clone();
+                    g.layers.push(l);
+                }
+            }
+            converted += 1;
+            if with.contains(".BRACKET.") || with.ends_with(".rvrn") {
+                generated.push(with.to_string());
+            }
+        }
+    }
+    let used_as_component: HashSet<String> = font
+        .glyphs
+        .iter()
+        .flat_map(|g| g.layers.iter())
+        .flat_map(|l| l.shapes.iter())
+        .filter_map(|s| match s {
+            kernest_core::Shape::Component { base, .. } => Some(base.clone()),
+            _ => None,
+        })
+        .collect();
+    font.glyphs
+        .retain(|g| !(generated.contains(&g.name) && !used_as_component.contains(&g.name)));
+    if left_out > 0 {
+        warnings.push(format!(
+            "{left_out} designspace rule substitution{} couldn't become alternate layers and {} left out.",
+            crate::plural(left_out),
+            if left_out == 1 { "was" } else { "were" }
+        ));
+    }
+    let _ = converted;
 }
 
 /// Piecewise-linear user → design mapping (identity without a map).

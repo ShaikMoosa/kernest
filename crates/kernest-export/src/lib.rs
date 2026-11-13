@@ -15,7 +15,7 @@ use kernest_core::interpolate::{check_glyph, Interpolator};
 use kernest_core::{structure, Font, KernPair, Layer, Master, Metrics};
 use serde::Serialize;
 
-use ufo::{designspace, to_ufo, UfoSource};
+use ufo::{designspace, to_ufo, DsRule, DsSource, UfoSource};
 
 /// What to build and where.
 #[derive(Debug, Clone)]
@@ -66,7 +66,15 @@ fn compile(input: &Path) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("the font compiler failed: {e}"))
 }
 
-fn master_source<'a>(font: &'a Font, master: &Master, style: &'a str) -> UfoSource<'a> {
+/// One master as a UFO source. For a static font (`for_static`) each glyph uses the
+/// layer that applies at the master's location (a bracket alternate if its ranges
+/// include it); for the variable font, the master's own layers.
+fn master_source<'a>(
+    font: &'a Font,
+    master: &Master,
+    style: &'a str,
+    for_static: bool,
+) -> UfoSource<'a> {
     UfoSource {
         font,
         style_name: style,
@@ -74,10 +82,23 @@ fn master_source<'a>(font: &'a Font, master: &Master, style: &'a str) -> UfoSour
         layers: font
             .glyphs
             .iter()
-            .filter_map(|g| g.layer(&master.id).map(|l| (g.name.as_str(), l.clone())))
+            .filter_map(|g| {
+                let l = if for_static {
+                    font.static_layer(&g.name, &master.id)
+                } else {
+                    g.layer(&master.id)
+                };
+                l.map(|l| (g.name.clone(), l.clone()))
+            })
             .collect(),
         kerning: font.kerning.get(&master.id).cloned().unwrap_or_default(),
+        alternates: Vec::new(),
     }
+}
+
+/// The generated glyph name for a glyph's `n`-th alternate (bracket layers).
+pub fn alternate_name(glyph: &str, n: usize) -> String {
+    format!("{glyph}.BRACKET.{}", n + 1)
 }
 
 /// The font at a design-space location, as one master's worth of data.
@@ -93,14 +114,14 @@ fn instance_source<'a>(
         .iter()
         .find(|m| normalize(font, &m.location) == norm)
     {
-        return Ok(master_source(font, m, style));
+        return Ok(master_source(font, m, style, true));
     }
     let interp = Interpolator::new(font, location)?;
-    let mut layers: Vec<(&str, Layer)> = Vec::with_capacity(font.glyphs.len());
+    let mut layers: Vec<(String, Layer)> = Vec::with_capacity(font.glyphs.len());
     let mut failed: Vec<&str> = Vec::new();
     for g in &font.glyphs {
         match interp.layer(font, &g.name) {
-            Ok(l) => layers.push((g.name.as_str(), l)),
+            Ok(l) => layers.push((g.name.clone(), l)),
             Err(_) => failed.push(&g.name),
         }
     }
@@ -177,6 +198,7 @@ fn instance_source<'a>(
         metrics,
         layers,
         kerning,
+        alternates: Vec::new(),
     })
 }
 
@@ -287,17 +309,83 @@ fn variable(font: &Font, tmp: &Path) -> Result<Vec<u8>, String> {
 
 /// Writes every master as a UFO plus a designspace into `dir`, and returns the
 /// designspace's path. This is the source set the variable font is compiled from.
+///
+/// - Bracket layers become alternate glyphs (`A.BRACKET.1`) in every master, swapped
+///   in by designspace rules inside their axis ranges.
+/// - Brace layers become sparse sources: one extra layer in the default master's UFO
+///   per distinct location.
 pub fn write_sources(font: &Font, dir: &Path) -> Result<PathBuf, String> {
+    // Alternates: (glyph, alternate name, ranges).
+    let mut rules = Vec::new();
+    for g in &font.glyphs {
+        for (n, ranges) in g.bracket_groups().into_iter().enumerate() {
+            rules.push(DsRule {
+                glyph: g.name.clone(),
+                with: alternate_name(&g.name, n),
+                ranges,
+            });
+        }
+    }
+    // Brace locations, each with the glyphs that have a brace layer there.
+    let mut braces: Vec<(Location, Vec<(String, Layer)>)> = Vec::new();
+    for g in &font.glyphs {
+        for l in g.brace_layers() {
+            let loc = l.location.clone().unwrap_or_default();
+            let mut plain = l.clone();
+            plain.id = None;
+            plain.location = None;
+            match braces.iter_mut().find(|(b, _)| *b == loc) {
+                Some((_, list)) => list.push((g.name.clone(), plain)),
+                None => braces.push((loc, vec![(g.name.clone(), plain)])),
+            }
+        }
+    }
+    let default_id = kernest_core::interpolate::default_master(font).id.clone();
     let mut sources = Vec::new();
     for (i, m) in font.masters.iter().enumerate() {
         let file = format!("master{i}.ufo");
-        to_ufo(&master_source(font, m, &m.name))?
-            .save(dir.join(&file))
+        let mut src = master_source(font, m, &m.name, false);
+        for r in &rules {
+            let g = font.glyph(&r.glyph).expect("rule glyphs exist");
+            let layer = g
+                .bracket_layers()
+                .find(|l| l.master_id == m.id && l.bracket == r.ranges)
+                .or_else(|| g.layer(&m.id))
+                .cloned()
+                .ok_or_else(|| format!("\"{}\" has no layer for {}", g.name, m.name))?;
+            src.layers.push((r.with.clone(), layer));
+            src.alternates.push((r.with.clone(), r.glyph.clone()));
+        }
+        let mut ufo = to_ufo(&src)?;
+        if m.id == default_id {
+            for (k, (loc, glyphs)) in braces.iter().enumerate() {
+                let layer_name = format!("brace{}", k + 1);
+                let layer = ufo
+                    .layers
+                    .new_layer(&layer_name)
+                    .map_err(|e| format!("could not add a UFO layer: {e}"))?;
+                for (gname, l) in glyphs {
+                    layer.insert_glyph(ufo::glyph(font, gname, l)?);
+                }
+                sources.push(DsSource {
+                    file: file.clone(),
+                    style: format!("{} {{{}}}", m.name, k + 1),
+                    location: loc.clone(),
+                    layer: Some(layer_name),
+                });
+            }
+        }
+        ufo.save(dir.join(&file))
             .map_err(|e| format!("could not write a UFO: {e}"))?;
-        sources.push((file, m.name.clone(), m.location.clone()));
+        sources.push(DsSource {
+            file,
+            style: m.name.clone(),
+            location: m.location.clone(),
+            layer: None,
+        });
     }
     let ds = dir.join("font.designspace");
-    std::fs::write(&ds, designspace(font, &sources))
+    std::fs::write(&ds, designspace(font, &sources, &rules))
         .map_err(|e| format!("could not write the designspace: {e}"))?;
     Ok(ds)
 }
@@ -397,6 +485,81 @@ mod tests {
         let medium = r.files.iter().find(|x| x.style == "Medium").unwrap();
         assert!(medium.path.ends_with("KernestSample-Medium.ttf"));
         assert_eq!(advance(&std::fs::read(&medium.path).unwrap(), 'H'), 730);
+    }
+
+    #[test]
+    fn brace_and_bracket_layers_export() {
+        use kernest_core::{layers, AxisRange};
+        let f = two_masters();
+        let bold = f.masters[1].id.clone();
+        // A brace layer for H at 550 and an alternate for o from 600 up, 50 units wider.
+        let (f, brace) =
+            layers::add_brace_layer(&f, "H", "m01", &BTreeMap::from([("wght".into(), 550.0)]))
+                .unwrap();
+        let ranges = [AxisRange {
+            tag: "wght".into(),
+            min: Some(600.0),
+            max: None,
+        }];
+        let (mut f, _) = layers::add_bracket_layers(&f, "o", &bold, &ranges).unwrap();
+        f.glyph_mut("H").unwrap().layer_mut(&brace).unwrap().width += 20.0;
+        for l in f.glyph_mut("o").unwrap().layers.iter_mut() {
+            if !l.bracket.is_empty() {
+                l.width += 50.0;
+            }
+        }
+        let o_regular = f.glyph("o").unwrap().layer("m01").unwrap().width as u16;
+        let out = tempfile::tempdir().unwrap();
+        let r = export(
+            &f,
+            &ExportOptions {
+                variable: true,
+                statics: true,
+                out_dir: out.path().into(),
+            },
+        )
+        .unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+
+        let vf =
+            std::fs::read(&r.files.iter().find(|x| x.kind == "variable").unwrap().path).unwrap();
+        let font = FontRef::new(&vf).unwrap();
+        assert_eq!(
+            font.maxp().unwrap().num_glyphs(),
+            97,
+            "95 glyphs, .notdef and o.BRACKET.1"
+        );
+        let gsub = font.gsub().expect("the alternate is swapped in with GSUB");
+        assert!(
+            gsub.feature_variations().is_some(),
+            "the swap depends on the weight (feature variations)"
+        );
+
+        // Static Bold (wght 700) uses the alternate; Regular doesn't.
+        let style =
+            |s: &str| std::fs::read(&r.files.iter().find(|x| x.style == s).unwrap().path).unwrap();
+        assert_eq!(advance(&style("Regular"), 'o'), o_regular);
+        assert_eq!(advance(&style("Bold"), 'o'), o_regular + 50);
+        // An instance at the brace location picks up the brace layer's extra width.
+        let mut f2 = f.clone();
+        f2.instances.push(Instance {
+            name: "Medium".into(),
+            location: BTreeMap::from([("wght".into(), 550.0)]),
+            export: true,
+        });
+        let out2 = tempfile::tempdir().unwrap();
+        let r2 = export(
+            &f2,
+            &ExportOptions {
+                variable: false,
+                statics: true,
+                out_dir: out2.path().into(),
+            },
+        )
+        .unwrap();
+        let medium =
+            std::fs::read(&r2.files.iter().find(|x| x.style == "Medium").unwrap().path).unwrap();
+        assert_eq!(advance(&medium, 'H'), 730 + 20);
     }
 
     #[test]

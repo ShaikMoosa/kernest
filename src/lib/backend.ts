@@ -87,6 +87,24 @@ export interface LayerView {
 
 export type Location = Record<string, number>;
 
+/** A bracket layer's range on one axis: min ≤ value < max; null = no limit. */
+export interface AxisRange {
+  tag: string;
+  min?: number | null;
+  max?: number | null;
+}
+
+export interface LayerInfo {
+  /** Pass as `masterId` to the layer commands to edit this layer. */
+  key: string;
+  kind: "master" | "brace" | "bracket";
+  label: string;
+  masterId: string;
+  masterName: string;
+  location?: Location;
+  bracket?: AxisRange[];
+}
+
 export interface Axis {
   name: string;
   tag: string;
@@ -247,6 +265,12 @@ export interface Backend {
   removeGlyphs(names: string[]): Promise<DocStatus>;
   /** Correct Path Direction or Add Extremes on one layer (Add Extremes: only `paths`, if given). */
   pathOperation(glyph: string, masterId: string, operation: PathOperation, paths?: number[]): Promise<LayerView>;
+  /** Master, brace and bracket layers of a glyph. */
+  glyphLayers(glyph: string): Promise<LayerInfo[]>;
+  addBraceLayer(glyph: string, masterId: string, location: Location): Promise<{ key: string; status: DocStatus }>;
+  addBracketLayers(glyph: string, masterId: string, ranges: AxisRange[]): Promise<{ key: string; status: DocStatus }>;
+  updateLayerPosition(glyph: string, key: string, location?: Location, ranges?: AxisRange[]): Promise<{ key: string; status: DocStatus }>;
+  removeLayer(glyph: string, key: string): Promise<DocStatus>;
 }
 
 export type PathOperation = "correct-direction" | "add-extremes";
@@ -283,6 +307,11 @@ const tauriBackend: Backend = {
   addGlyphs: (text, glyphSets) => invoke("add_glyphs", { text, glyphSets }),
   removeGlyphs: (names) => invoke("remove_glyphs", { names }),
   pathOperation: (glyph, masterId, operation, paths) => invoke("path_operation", { glyph, masterId, operation, paths }),
+  glyphLayers: (glyph) => invoke("glyph_layers", { glyph }),
+  addBraceLayer: (glyph, masterId, location) => invoke("add_brace_layer", { glyph, masterId, location }),
+  addBracketLayers: (glyph, masterId, ranges) => invoke("add_bracket_layers", { glyph, masterId, ranges }),
+  updateLayerPosition: (glyph, key, location, ranges) => invoke("update_layer_position", { glyph, key, location, ranges }),
+  removeLayer: (glyph, key) => invoke("remove_layer", { glyph, key }),
 };
 
 // ---------- Browser preview mock ----------
@@ -669,6 +698,22 @@ const mockBackend: Backend = {
   },
   async pathOperation() {
     throw "Path operations need the desktop app (npm run tauri dev).";
+  },
+  async glyphLayers(glyph) {
+    const d = need();
+    return d.masters.filter(() => findGlyph(d, glyph)).map((m) => ({ key: m.id, kind: "master" as const, label: m.name, masterId: m.id, masterName: m.name }));
+  },
+  async addBraceLayer() {
+    throw "Intermediate layers need the desktop app (npm run tauri dev).";
+  },
+  async addBracketLayers() {
+    throw "Alternate layers need the desktop app (npm run tauri dev).";
+  },
+  async updateLayerPosition() {
+    throw "Intermediate and alternate layers need the desktop app (npm run tauri dev).";
+  },
+  async removeLayer() {
+    throw "Intermediate and alternate layers need the desktop app (npm run tauri dev).";
   },
   async compatibility() {
     return [];

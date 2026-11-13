@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, type ComponentEdit, type ComponentView, type DocStatus, type LayerView, type MetricName } from "../lib/backend";
+import { backend, type Axis, type ComponentEdit, type ComponentView, type DocStatus, type LayerInfo, type LayerView, type MetricName } from "../lib/backend";
+import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import {
   clonePaths, deleteSelection, ellipsePath, handleOwner, isOn, moveSelection, nodeKey, parseKey, pathsToSvg, rectPath,
   type EditNode, type EditPath,
@@ -143,10 +144,60 @@ interface Props {
   onError: (e: unknown) => void;
   /** View › Show Metrics: metric lines, labels and the advance box. */
   showMetrics?: boolean;
+  /** The current master's id; `masterId` differs when a brace or bracket layer is open. */
+  masterKey?: string;
+  /** Switches this tab to another layer (a layer key). */
+  onPickLayer?: (key: string) => void;
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, showMetrics = true }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, showMetrics = true, masterKey, onPickLayer }: Props) {
+  const master = masterKey ?? masterId;
+  // ---------- Layers (master, brace, bracket) ----------
+  const [layerList, setLayerList] = useState<LayerInfo[]>([]);
+  const [layerDialog, setLayerDialog] = useState<{ mode: LayerDialogMode; axes: Axis[] } | null>(null);
+  const [layersVersion, setLayersVersion] = useState(0);
+  useEffect(() => {
+    backend.glyphLayers(glyph).then(setLayerList, () => setLayerList([]));
+  }, [glyph, version, masterId, layersVersion]);
+  const currentLayer = layerList.find((l) => l.key === masterId);
+  const openLayerDialog = useCallback(async (kind: "brace" | "bracket", editing: boolean) => {
+    try {
+      const info = await backend.fontInfo();
+      if (!info.axes.length) return onError("Add an axis in Font Info first: intermediate and alternate layers are positions on the axes.");
+      const here = info.masters.find((m) => m.id === master)?.location ?? {};
+      const mode: LayerDialogMode = kind === "brace"
+        ? { kind, editing, initial: editing && currentLayer?.location ? currentLayer.location : here }
+        : { kind, editing, initial: editing && currentLayer?.bracket ? currentLayer.bracket : [] };
+      setLayerDialog({ mode, axes: info.axes });
+    } catch (e) {
+      onError(e);
+    }
+  }, [master, currentLayer, onError]);
+  const saveLayerDialog = useCallback(async (v: { location?: Record<string, number>; ranges?: { tag: string; min?: number | null; max?: number | null }[] }) => {
+    if (!layerDialog) return;
+    const { mode } = layerDialog;
+    const r = mode.editing
+      ? await backend.updateLayerPosition(glyph, masterId, v.location, v.ranges)
+      : mode.kind === "brace"
+        ? await backend.addBraceLayer(glyph, master, v.location ?? {})
+        : await backend.addBracketLayers(glyph, master, v.ranges ?? []);
+    setLayerDialog(null);
+    onCommitted(r.status);
+    setLayersVersion((n) => n + 1);
+    onPickLayer?.(r.key);
+  }, [layerDialog, glyph, masterId, master, onCommitted, onPickLayer]);
+  const removeCurrentLayer = useCallback(async () => {
+    try {
+      const s = await backend.removeLayer(glyph, masterId);
+      onCommitted(s);
+      setLayersVersion((n) => n + 1);
+      onPickLayer?.(master);
+    } catch (e) {
+      onError(e);
+    }
+  }, [glyph, masterId, master, onCommitted, onPickLayer, onError]);
+
   const [layer, setLayer] = useState<LayerView | null>(null);
   const [paths, setPaths] = useState<EditPath[]>([]);
   const [comps, setComps] = useState<Comp[]>([]);
@@ -182,9 +233,15 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       setComps(fromView(l.components));
       setSelection((sel) => new Set([...sel].filter((k) => { const [pi, ni] = parseKey(k); return !!l.paths[pi]?.nodes[ni]; })));
       setCompSel((sel) => new Set([...sel].filter((i) => i < l.components.length)));
-    }, onError);
+    }, (e) => {
+      if (cancelled) return;
+      // A brace or bracket layer that no longer exists (undo, removed elsewhere): go back
+      // to the master's own layer.
+      if (masterId !== master && onPickLayer) onPickLayer(master);
+      else onError(e);
+    });
     return () => { cancelled = true; };
-  }, [glyph, masterId, version, onError]);
+  }, [glyph, masterId, version, onError, master, onPickLayer]);
 
   const accept = useCallback((l: LayerView) => {
     setLayer(l);
@@ -695,6 +752,27 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         ))}
         <span className="toolbar-sep" />
         <button className="btn btn-secondary btn-sm" onClick={() => setPicking(true)} title="Add Component (Ctrl+Shift+C)">Add Component</button>
+        <span className="toolbar-sep" />
+        <label className="layer-picker" title="Intermediate (brace) and alternate (bracket) layers of this glyph">
+          <span className="k-caption muted">Layer</span>
+          <select className="text-input layer-select" value={masterId} onChange={(e) => onPickLayer?.(e.target.value)} aria-label="Layer">
+            {layerList
+              .filter((l) => (l.kind === "master" ? l.key === master : l.kind === "brace" || l.masterId === master))
+              .map((l) => (
+                <option key={l.key} value={l.key}>
+                  {l.kind === "master" ? `${l.label} (master)` : l.kind === "brace" ? `Intermediate ${l.label}` : `Alternate ${l.label}`}
+                </option>
+              ))}
+          </select>
+        </label>
+        <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("brace", false)} title="Add an intermediate (brace) layer">+ Intermediate</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("bracket", false)} title="Add an alternate design (bracket layers)">+ Alternate</button>
+        {currentLayer && currentLayer.kind !== "master" && (
+          <>
+            <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog(currentLayer.kind as "brace" | "bracket", true)}>{currentLayer.kind === "brace" ? "Move…" : "Ranges…"}</button>
+            <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? "Removes this alternate from every master" : "Removes this intermediate layer"}>Remove</button>
+          </>
+        )}
         <span className="toolbar-hint k-caption muted">{hint(activeTool)}</span>
         <span className="spacer" />
         <span className="k-caption muted">{cursor ? `${cursor.x}, ${cursor.y}` : ""}</span>
@@ -790,6 +868,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         </div>
       </div>
       {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}
+      {layerDialog && <LayerDialog glyph={glyph} axes={layerDialog.axes} mode={layerDialog.mode} onCancel={() => setLayerDialog(null)} onSave={saveLayerDialog} />}
     </div>
   );
 }

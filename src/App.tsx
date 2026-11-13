@@ -206,6 +206,9 @@ export default function App() {
 
   // Bumped on every change, so text and kerning tabs refresh.
   const [docVersion, setDocVersion] = useState(0);
+  // Glyph tabs showing a brace or bracket layer instead of the current master's layer.
+  const [layerOf, setLayerOf] = useState<Record<string, string | undefined>>({});
+  useEffect(() => setLayerOf({}), [font?.masterId]);
 
   const onCommitted = useCallback((s: DocStatus) => {
     setStatus(s);
@@ -417,7 +420,7 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={font.masterId} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} showMetrics={showMetrics} />
+                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} showMetrics={showMetrics} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} />
               ) : id === "kerning" ? (

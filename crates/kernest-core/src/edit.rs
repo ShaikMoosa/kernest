@@ -184,7 +184,8 @@ impl History {
         master_id: &str,
         after: Layer,
     ) -> Result<bool> {
-        if after.master_id != master_id {
+        // `master_id` is the layer's key: a master id, or a brace/bracket layer's id.
+        if after.key() != master_id {
             return Err(Error::Invalid("layer master does not match".into()));
         }
         let slot = font

@@ -72,6 +72,19 @@ pub fn set_axes(font: &Font, axes: Vec<Axis>) -> R<Font> {
     };
     f.masters.iter_mut().for_each(|m| fix(&mut m.location));
     f.instances.iter_mut().for_each(|i| fix(&mut i.location));
+    // Brace layers move like masters (and go when there are no axes left); bracket
+    // layers lose ranges on removed axes, and are dropped if no range is left.
+    for g in &mut f.glyphs {
+        for l in &mut g.layers {
+            if let Some(loc) = &mut l.location {
+                fix(loc);
+            }
+            l.bracket.retain(|r| axes.iter().any(|a| a.tag == r.tag));
+        }
+        g.layers.retain(|l| {
+            l.is_master() || (l.location.is_some() && !axes.is_empty()) || !l.bracket.is_empty()
+        });
+    }
     f.axes = axes;
     Ok(f)
 }

@@ -1,7 +1,7 @@
 //! Master compatibility and interpolating glyph layers at any design-space location.
 
 use crate::designspace::{normalize, Location, VariationModel};
-use crate::model::{Font, Layer, Master, NodeKind, Shape};
+use crate::model::{in_bracket, Font, Layer, Master, NodeKind, Shape};
 
 /// The master at the default location of every axis, or the first master.
 pub fn default_master(font: &Font) -> &Master {
@@ -22,8 +22,47 @@ fn describe(shape: &Shape) -> String {
     }
 }
 
-/// Reasons a glyph's masters can't be interpolated (empty when compatible).
-/// Each layer is compared with the default master's layer.
+/// Why `layer` can't be interpolated with `reference` (empty when compatible).
+fn compare(name: &str, reference: &Layer, ref_name: &str, layer: &Layer) -> Vec<String> {
+    let mut issues = Vec::new();
+    if layer.shapes.len() != reference.shapes.len() {
+        issues.push(format!(
+            "{name}: {} shapes, {ref_name} has {}",
+            layer.shapes.len(),
+            reference.shapes.len()
+        ));
+        return issues;
+    }
+    for (i, (a, b)) in reference.shapes.iter().zip(&layer.shapes).enumerate() {
+        let ok = match (a, b) {
+            (Shape::Path(pa), Shape::Path(pb)) => {
+                pa.closed == pb.closed
+                    && pa.nodes.len() == pb.nodes.len()
+                    && pa.nodes.iter().zip(&pb.nodes).all(|(x, y)| {
+                        (x.kind == NodeKind::OffCurve) == (y.kind == NodeKind::OffCurve)
+                    })
+            }
+            (Shape::Component { base: ba, .. }, Shape::Component { base: bb, .. }) => ba == bb,
+            _ => false,
+        };
+        if !ok {
+            issues.push(format!(
+                "{name}: shape {} is a {}, {ref_name} has a {}",
+                i + 1,
+                describe(b),
+                describe(a)
+            ));
+        }
+    }
+    if anchor_names(layer) != anchor_names(reference) {
+        issues.push(format!("{name}: anchors differ from {ref_name}"));
+    }
+    issues
+}
+
+/// Reasons a glyph can't be interpolated (empty when compatible): every master layer
+/// and brace layer is compared with the default master's layer, and the bracket
+/// layers of each alternate (with the master layers they fall back to) with each other.
 pub fn check_glyph(font: &Font, glyph: &str) -> Vec<String> {
     let Some(g) = font.glyph(glyph) else {
         return vec![format!("no glyph named \"{glyph}\"")];
@@ -34,45 +73,39 @@ pub fn check_glyph(font: &Font, glyph: &str) -> Vec<String> {
     };
     let mut issues = Vec::new();
     for m in font.masters.iter().filter(|m| m.id != def.id) {
-        let Some(layer) = g.layer(&m.id) else {
-            issues.push(format!("{}: layer is missing", m.name));
-            continue;
-        };
-        if layer.shapes.len() != reference.shapes.len() {
-            issues.push(format!(
-                "{}: {} shapes, {} has {}",
-                m.name,
-                layer.shapes.len(),
-                def.name,
-                reference.shapes.len()
-            ));
-            continue;
+        match g.layer(&m.id) {
+            Some(layer) => issues.extend(compare(&m.name, reference, &def.name, layer)),
+            None => issues.push(format!("{}: layer is missing", m.name)),
         }
-        for (i, (a, b)) in reference.shapes.iter().zip(&layer.shapes).enumerate() {
-            let ok = match (a, b) {
-                (Shape::Path(pa), Shape::Path(pb)) => {
-                    pa.closed == pb.closed
-                        && pa.nodes.len() == pb.nodes.len()
-                        && pa.nodes.iter().zip(&pb.nodes).all(|(x, y)| {
-                            (x.kind == NodeKind::OffCurve) == (y.kind == NodeKind::OffCurve)
-                        })
-                }
-                (Shape::Component { base: ba, .. }, Shape::Component { base: bb, .. }) => ba == bb,
-                _ => false,
-            };
-            if !ok {
-                issues.push(format!(
-                    "{}: shape {} is a {}, {} has a {}",
-                    m.name,
-                    i + 1,
-                    describe(b),
-                    def.name,
-                    describe(a)
+    }
+    for l in g.brace_layers() {
+        let name = l.label().unwrap_or_default();
+        issues.extend(compare(&name, reference, &def.name, l));
+    }
+    for ranges in g.bracket_groups() {
+        let alt = |m: &Master| {
+            g.bracket_layers()
+                .find(|l| l.master_id == m.id && l.bracket == ranges)
+                .or_else(|| g.layer(&m.id))
+        };
+        let Some(alt_ref) = alt(def) else { continue };
+        let label = format!(
+            "alternate [{}]",
+            ranges
+                .iter()
+                .map(|r| r.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        for m in font.masters.iter().filter(|m| m.id != def.id) {
+            if let Some(l) = alt(m) {
+                issues.extend(compare(
+                    &format!("{} {label}", m.name),
+                    alt_ref,
+                    &format!("{} {label}", def.name),
+                    l,
                 ));
             }
-        }
-        if anchor_names(layer) != anchor_names(reference) {
-            issues.push(format!("{}: anchors differ from {}", m.name, def.name));
         }
     }
     issues
@@ -126,9 +159,14 @@ fn rebuild(template: &Layer, vals: &[f64]) -> Layer {
 /// Interpolates layers for one design-space location.
 pub struct Interpolator {
     model: Option<VariationModel>,
+    /// Normalized location.
     location: Location,
+    /// Location in design units, for bracket ranges.
+    design: Location,
     default_id: String,
     master_ids: Vec<String>,
+    master_locs: Vec<Location>,
+    axis_order: Vec<String>,
 }
 
 impl Interpolator {
@@ -136,22 +174,25 @@ impl Interpolator {
     pub fn new(font: &Font, location: &Location) -> Result<Self, String> {
         let default_id = default_master(font).id.clone();
         let master_ids: Vec<String> = font.masters.iter().map(|m| m.id.clone()).collect();
+        let master_locs: Vec<Location> = font
+            .masters
+            .iter()
+            .map(|m| normalize(font, &m.location))
+            .collect();
+        let axis_order: Vec<String> = font.axes.iter().map(|a| a.tag.clone()).collect();
         let model = if font.masters.len() > 1 {
-            let locs: Vec<Location> = font
-                .masters
-                .iter()
-                .map(|m| normalize(font, &m.location))
-                .collect();
-            let axis_order: Vec<String> = font.axes.iter().map(|a| a.tag.clone()).collect();
-            Some(VariationModel::new(&locs, &axis_order)?)
+            Some(VariationModel::new(&master_locs, &axis_order)?)
         } else {
             None
         };
         Ok(Self {
             model,
             location: normalize(font, location),
+            design: location.clone(),
             default_id,
             master_ids,
+            master_locs,
+            axis_order,
         })
     }
 
@@ -163,36 +204,82 @@ impl Interpolator {
         }
     }
 
-    /// The glyph's layer at this location. Fails if its masters are incompatible.
-    /// The result's `master_id` is the default master's.
+    /// The glyph's layer at this location, using its bracket (alternate) layers where
+    /// their ranges apply and its brace (intermediate) layers as extra sources. Fails if
+    /// the layers involved are incompatible. The result is a plain layer whose
+    /// `master_id` is the default master's.
     pub fn layer(&self, font: &Font, glyph: &str) -> Result<Layer, String> {
         let g = font
             .glyph(glyph)
             .ok_or_else(|| format!("no glyph named \"{glyph}\""))?;
-        let template = g
-            .layer(&self.default_id)
-            .ok_or_else(|| format!("\"{glyph}\" has no default layer"))?;
-        let Some(model) = &self.model else {
-            return Ok(template.clone());
+        let alternate = g
+            .bracket_groups()
+            .into_iter()
+            .find(|r| in_bracket(font, r, &self.design));
+        // (normalized location, layer) for every source of this glyph.
+        let mut sources: Vec<(Location, &Layer)> = Vec::new();
+        for (id, loc) in self.master_ids.iter().zip(&self.master_locs) {
+            let layer = alternate
+                .as_ref()
+                .and_then(|r| {
+                    g.bracket_layers()
+                        .find(|l| &l.master_id == id && &l.bracket == r)
+                })
+                .or_else(|| g.layer(id))
+                .ok_or_else(|| format!("\"{glyph}\" is missing a layer"))?;
+            sources.push((loc.clone(), layer));
+        }
+        if alternate.is_none() {
+            for l in g.brace_layers() {
+                let loc = l.location.as_ref().expect("brace layers have a location");
+                sources.push((normalize(font, loc), l));
+            }
+        }
+        let default_index = self
+            .master_ids
+            .iter()
+            .position(|id| *id == self.default_id)
+            .unwrap_or(0);
+        let template = sources[default_index].1;
+        let plain = |l: &Layer| {
+            let mut out = l.clone();
+            out.master_id = self.default_id.clone();
+            out.id = None;
+            out.location = None;
+            out.bracket.clear();
+            out
         };
-        let issues = check_glyph(font, glyph);
+        if sources.len() == 1 {
+            return Ok(plain(template));
+        }
+        let issues: Vec<String> = sources
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != default_index)
+            .flat_map(|(_, (_, l))| {
+                let name = l.label().unwrap_or_else(|| "a master".into());
+                compare(&name, template, "the default master", l)
+            })
+            .collect();
         if !issues.is_empty() {
             return Err(format!(
                 "\"{glyph}\" can't be interpolated: {}",
                 issues.join("; ")
             ));
         }
-        let per_master: Vec<Vec<f64>> = self
-            .master_ids
-            .iter()
-            .map(|id| {
-                g.layer(id)
-                    .map(values)
-                    .ok_or_else(|| format!("\"{glyph}\" is missing a layer"))
-            })
-            .collect::<Result<_, _>>()?;
-        let vals = model.interpolate(&per_master, &self.location);
-        Ok(rebuild(template, &vals))
+        let per_source: Vec<Vec<f64>> = sources.iter().map(|(_, l)| values(l)).collect();
+        let vals = if sources.len() == self.master_ids.len() {
+            match &self.model {
+                Some(m) => m.interpolate(&per_source, &self.location),
+                None => per_source[0].clone(),
+            }
+        } else {
+            let locs: Vec<Location> = sources.iter().map(|(l, _)| l.clone()).collect();
+            VariationModel::new(&locs, &self.axis_order)
+                .map_err(|e| format!("\"{glyph}\": {e}"))?
+                .interpolate(&per_source, &self.location)
+        };
+        Ok(plain(&rebuild(template, &vals)))
     }
 }
 

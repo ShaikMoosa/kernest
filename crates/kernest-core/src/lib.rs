@@ -15,6 +15,7 @@ pub mod glyphdata;
 pub mod glyphset;
 pub mod interpolate;
 pub mod kerning;
+pub mod layers;
 pub mod model;
 pub mod package;
 pub mod pathops;

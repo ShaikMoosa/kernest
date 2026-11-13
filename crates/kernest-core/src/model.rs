@@ -110,7 +110,7 @@ pub struct Glyph {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
-    /// One layer per master (plus, later, brace/bracket layers).
+    /// One layer per master, plus any brace (intermediate) and bracket (alternate) layers.
     pub layers: Vec<Layer>,
 }
 
@@ -135,12 +135,43 @@ impl Glyph {
         }
     }
 
-    pub fn layer(&self, master_id: &str) -> Option<&Layer> {
-        self.layers.iter().find(|l| l.master_id == master_id)
+    /// A layer by key: a master id gives that master's own layer; the id of a brace or
+    /// bracket layer (such as `m01~2`) gives that layer.
+    pub fn layer(&self, key: &str) -> Option<&Layer> {
+        self.layers.iter().find(|l| l.matches(key))
     }
 
-    pub fn layer_mut(&mut self, master_id: &str) -> Option<&mut Layer> {
-        self.layers.iter_mut().find(|l| l.master_id == master_id)
+    pub fn layer_mut(&mut self, key: &str) -> Option<&mut Layer> {
+        self.layers.iter_mut().find(|l| l.matches(key))
+    }
+
+    /// Brace (intermediate) layers.
+    pub fn brace_layers(&self) -> impl Iterator<Item = &Layer> {
+        self.layers.iter().filter(|l| l.location.is_some())
+    }
+
+    /// Bracket (alternate) layers.
+    pub fn bracket_layers(&self) -> impl Iterator<Item = &Layer> {
+        self.layers.iter().filter(|l| !l.bracket.is_empty())
+    }
+
+    /// The distinct bracket ranges this glyph has alternates for, in first-seen order.
+    pub fn bracket_groups(&self) -> Vec<Vec<AxisRange>> {
+        let mut groups: Vec<Vec<AxisRange>> = Vec::new();
+        for l in self.bracket_layers() {
+            if !groups.contains(&l.bracket) {
+                groups.push(l.bracket.clone());
+            }
+        }
+        groups
+    }
+
+    /// A fresh id for a new brace or bracket layer belonging to `master_id`.
+    pub fn new_layer_id(&self, master_id: &str) -> String {
+        (1..)
+            .map(|n| format!("{master_id}~{n}"))
+            .find(|id| !self.layers.iter().any(|l| l.id.as_deref() == Some(id)))
+            .expect("an unused id")
     }
 
     /// Category derived from the first code point (or the name suffix for unencoded glyphs).
@@ -155,7 +186,21 @@ impl Glyph {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Layer {
+    /// The master this layer belongs to. For brace and bracket layers it is the master
+    /// they were made from (and, for bracket layers, the master they replace).
     pub master_id: String,
+    /// Set for brace and bracket layers only, e.g. `m01~1`; master layers are found by
+    /// their master id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Brace (intermediate) layer: its own design-space location (by axis tag), which
+    /// adds a source to the glyph's interpolation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<BTreeMap<String, f64>>,
+    /// Bracket (alternate) layer: replaces `master_id`'s layer wherever the location is
+    /// inside every one of these ranges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bracket: Vec<AxisRange>,
     pub width: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shapes: Vec<Shape>,
@@ -169,6 +214,9 @@ impl Layer {
     pub fn new(master_id: impl Into<String>, width: f64) -> Self {
         Self {
             master_id: master_id.into(),
+            id: None,
+            location: None,
+            bracket: Vec::new(),
             width,
             shapes: Vec::new(),
             anchors: Vec::new(),
@@ -179,6 +227,79 @@ impl Layer {
     pub fn is_empty(&self) -> bool {
         self.shapes.is_empty()
     }
+
+    /// A master's own layer (not a brace or bracket layer).
+    pub fn is_master(&self) -> bool {
+        self.id.is_none()
+    }
+
+    /// The key that finds this layer with [`Glyph::layer`].
+    pub fn key(&self) -> &str {
+        self.id.as_deref().unwrap_or(&self.master_id)
+    }
+
+    fn matches(&self, key: &str) -> bool {
+        match &self.id {
+            Some(id) => id == key,
+            None => self.master_id == key,
+        }
+    }
+
+    /// A short label: `{wght 550}` for a brace layer, `[wght 600–]` for a bracket layer.
+    pub fn label(&self) -> Option<String> {
+        if let Some(loc) = &self.location {
+            let parts: Vec<String> = loc
+                .iter()
+                .map(|(t, v)| format!("{t} {}", fmt_num(*v)))
+                .collect();
+            return Some(format!("{{{}}}", parts.join(", ")));
+        }
+        if !self.bracket.is_empty() {
+            let parts: Vec<String> = self.bracket.iter().map(AxisRange::to_string).collect();
+            return Some(format!("[{}]", parts.join(", ")));
+        }
+        None
+    }
+}
+
+/// An axis range for bracket layers, in design units: `min <= value < max`, where a
+/// missing bound is open.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AxisRange {
+    pub tag: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+impl AxisRange {
+    pub fn contains(&self, v: f64) -> bool {
+        self.min.is_none_or(|m| v >= m) && self.max.is_none_or(|m| v < m)
+    }
+}
+
+impl fmt::Display for AxisRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.min, self.max) {
+            (Some(a), Some(b)) => write!(f, "{} {}–{}", self.tag, fmt_num(a), fmt_num(b)),
+            (Some(a), None) => write!(f, "{} {}–", self.tag, fmt_num(a)),
+            (None, Some(b)) => write!(f, "{} –{}", self.tag, fmt_num(b)),
+            (None, None) => write!(f, "{} any", self.tag),
+        }
+    }
+}
+
+/// Whether `loc` (design units by tag; missing axes at their default) is inside every range.
+pub fn in_bracket(font: &Font, ranges: &[AxisRange], loc: &BTreeMap<String, f64>) -> bool {
+    ranges.iter().all(|r| {
+        let v = loc
+            .get(&r.tag)
+            .copied()
+            .or_else(|| font.axes.iter().find(|a| a.tag == r.tag).map(|a| a.default))
+            .unwrap_or(0.0);
+        r.contains(v)
+    })
 }
 
 /// Metrics keys such as `=n` or `=|H` that link sidebearings to other glyphs.
@@ -389,6 +510,16 @@ impl<'de> Deserialize<'de> for Codepoint {
 }
 
 impl Font {
+    /// The layer a static font at `master_id`'s location uses: the master's bracket
+    /// layer if that location is inside its ranges, otherwise the master layer.
+    pub fn static_layer(&self, glyph: &str, master_id: &str) -> Option<&Layer> {
+        let g = self.glyph(glyph)?;
+        let loc = &self.master(master_id)?.location;
+        g.bracket_layers()
+            .find(|l| l.master_id == master_id && in_bracket(self, &l.bracket, loc))
+            .or_else(|| g.layer(master_id))
+    }
+
     /// A new, empty single-master font with the given glyph set.
     pub fn new(family_name: impl Into<String>, codepoints: impl IntoIterator<Item = u32>) -> Self {
         let master = Master {
@@ -458,8 +589,39 @@ impl Font {
                 return bad(format!("glyph name \"{}\" is used twice", g.name));
             }
         }
+        let tags: HashSet<&str> = self.axes.iter().map(|a| a.tag.as_str()).collect();
         for g in &self.glyphs {
+            let mut layer_ids = HashSet::new();
             for l in &g.layers {
+                if let Some(id) = &l.id {
+                    if !id.contains('~') || !layer_ids.insert(id.as_str()) {
+                        return bad(format!(
+                            "glyph \"{}\" has a bad or repeated layer id \"{id}\"",
+                            g.name
+                        ));
+                    }
+                    if l.location.is_none() == l.bracket.is_empty() {
+                        return bad(format!(
+                            "layer \"{id}\" of \"{}\" must be either a brace or a bracket layer",
+                            g.name
+                        ));
+                    }
+                    let used: Vec<&str> = match &l.location {
+                        Some(loc) => loc.keys().map(String::as_str).collect(),
+                        None => l.bracket.iter().map(|r| r.tag.as_str()).collect(),
+                    };
+                    if let Some(t) = used.iter().find(|t| !tags.contains(**t)) {
+                        return bad(format!(
+                            "layer \"{id}\" of \"{}\" uses unknown axis \"{t}\"",
+                            g.name
+                        ));
+                    }
+                } else if l.location.is_some() || !l.bracket.is_empty() {
+                    return bad(format!(
+                        "a brace or bracket layer of \"{}\" has no id",
+                        g.name
+                    ));
+                }
                 if !master_ids.contains(l.master_id.as_str()) {
                     return bad(format!(
                         "glyph \"{}\" has a layer for unknown master \"{}\"",

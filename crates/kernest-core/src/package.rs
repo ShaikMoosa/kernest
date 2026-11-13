@@ -264,6 +264,41 @@ mod tests {
     }
 
     #[test]
+    fn brace_and_bracket_layers_round_trip() {
+        use crate::model::{Axis, AxisRange};
+        let mut font = sample_font();
+        font.axes.push(Axis {
+            name: "Weight".into(),
+            tag: "wght".into(),
+            min: 400.0,
+            default: 400.0,
+            max: 700.0,
+            hidden: false,
+        });
+        let g = font.glyph_mut("H").unwrap();
+        let mut brace = g.layers[0].clone();
+        brace.id = Some("m01~1".into());
+        brace.location = Some([("wght".to_string(), 550.0)].into());
+        let mut bracket = g.layers[0].clone();
+        bracket.id = Some("m01~2".into());
+        bracket.bracket = vec![AxisRange {
+            tag: "wght".into(),
+            min: Some(600.0),
+            max: None,
+        }];
+        g.layers.extend([brace, bracket]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Layers.kernest");
+        save(&font, &path).unwrap();
+        assert_eq!(open(&path).unwrap(), font);
+        let json = std::fs::read_to_string(path.join("glyphs").join("H_.json")).unwrap();
+        assert!(
+            json.contains("\"location\"") && json.contains("\"bracket\""),
+            "{json}"
+        );
+    }
+
+    #[test]
     fn removed_glyphs_are_deleted() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("x.kernest");
