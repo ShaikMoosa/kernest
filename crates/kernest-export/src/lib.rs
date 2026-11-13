@@ -7,6 +7,7 @@
 
 pub mod cff;
 pub mod cff2;
+mod charstring;
 pub mod ufo;
 pub mod woff2;
 
@@ -949,6 +950,223 @@ mod tests {
         assert!(
             (x_min(0.25) - (x0 + 12.5 + 10.0)).abs() <= 1.0,
             "halfway to the brace layer"
+        );
+    }
+
+    /// The sample font with a drawn acute and accented O / o made of components, as
+    /// imported fonts usually have.
+    fn with_composites(mut f: Font) -> Font {
+        use kernest_core::glyphset::{add_glyphs, parse_glyph_list};
+        let list =
+            parse_glyph_list("acutecomb gravecomb Oacute Ograve oacute ograve Oslash.alt").unwrap();
+        f = add_glyphs(&f, &list).unwrap().font;
+        let ids: Vec<String> = f.masters.iter().map(|m| m.id.clone()).collect();
+        for id in &ids {
+            let mark = |x0: f64, x1: f64| {
+                Shape::Path(kernest_core::Path {
+                    closed: true,
+                    nodes: [
+                        (x0, 720.0),
+                        (x0 + 40.0, 720.0),
+                        (x1, 800.0),
+                        (x1 - 40.0, 800.0),
+                    ]
+                    .into_iter()
+                    .map(|(x, y)| kernest_core::Node::new(x, y, NodeKind::Line))
+                    .collect(),
+                })
+            };
+            f.glyph_mut("acutecomb")
+                .unwrap()
+                .layer_mut(id)
+                .unwrap()
+                .shapes = vec![mark(250.0, 330.0)];
+            f.glyph_mut("gravecomb")
+                .unwrap()
+                .layer_mut(id)
+                .unwrap()
+                .shapes = vec![mark(330.0, 250.0)];
+            for (g, base, mark) in [
+                ("Oacute", "O", "acutecomb"),
+                ("Ograve", "O", "gravecomb"),
+                ("oacute", "o", "acutecomb"),
+                ("ograve", "o", "gravecomb"),
+                ("Oslash.alt", "O", "acutecomb"),
+            ] {
+                let width = f.glyph(base).unwrap().layer(id).unwrap().width;
+                let l = f.glyph_mut(g).unwrap().layer_mut(id).unwrap();
+                l.width = width;
+                l.shapes = vec![
+                    Shape::Component {
+                        base: base.into(),
+                        transform: kernest_core::IDENTITY,
+                    },
+                    Shape::Component {
+                        base: mark.into(),
+                        transform: [1.0, 0.0, 0.0, 1.0, 40.0, 0.0],
+                    },
+                ];
+            }
+        }
+        f
+    }
+
+    /// (width, bounds) of every glyph of a CFF or CFF2 table at `coord` on the first axis.
+    fn cff_glyphs(
+        table: &[u8],
+        cff2: bool,
+        coord: f32,
+        count: u16,
+    ) -> Vec<(f64, Option<[f64; 4]>)> {
+        use write_fonts::read::ps::cff::CffFontRef;
+        use write_fonts::types::{F2Dot14, GlyphId};
+        let coords = [F2Dot14::from_f32(coord)];
+        let coords: &[F2Dot14] = if cff2 { &coords } else { &[] };
+        let cff = if cff2 {
+            CffFontRef::new_cff2(table, None).unwrap()
+        } else {
+            CffFontRef::new_cff(table, 0, None).unwrap()
+        };
+        let sub = cff.subfont(0, coords).unwrap();
+        (0..count)
+            .map(|g| {
+                let gid = GlyphId::new(u32::from(g));
+                let w = if cff2 {
+                    0.0
+                } else {
+                    cff.evaluate_width(&sub, gid, coords)
+                        .unwrap()
+                        .map(|w| w.to_f64())
+                        .unwrap_or(0.0)
+                };
+                let b = cff.evaluate_extents(&sub, gid, coords).unwrap().map(|b| {
+                    [
+                        b.x_min.to_f64(),
+                        b.y_min.to_f64(),
+                        b.x_max.to_f64(),
+                        b.y_max.to_f64(),
+                    ]
+                });
+                (w, b)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn optimised_cff_draws_the_same_and_is_smaller() {
+        use write_fonts::types::Tag;
+        // Static CFF.
+        let f = with_composites(sample_font());
+        let m = f.masters[0].clone();
+        let ufo = to_ufo(&master_source(&f, &m, "Regular", true)).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.ufo");
+        ufo.save(&path).unwrap();
+        let ttf = compile(&path).unwrap();
+        let font = FontRef::new(&ttf).unwrap();
+        let n = font.maxp().unwrap().num_glyphs();
+        let post = font.post().unwrap();
+        let order: Vec<String> = (0..n)
+            .map(|g| {
+                post.glyph_name(write_fonts::types::GlyphId16::new(g))
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        let hmtx = font.hmtx().unwrap();
+        let widths: Vec<u16> = (0..n)
+            .map(|g| {
+                hmtx.advance(write_fonts::types::GlyphId::new(u32::from(g)))
+                    .unwrap()
+            })
+            .collect();
+        let build =
+            |opt| cff::build_cff_with(&ufo, &order, &widths, "T-R", "T R", "T", opt).unwrap();
+        let (small, plain) = (build(true), build(false));
+        assert_eq!(
+            cff_glyphs(&small, false, 0.0, n),
+            cff_glyphs(&plain, false, 0.0, n)
+        );
+        let w: Vec<f64> = cff_glyphs(&small, false, 0.0, n)
+            .iter()
+            .map(|g| g.0)
+            .collect();
+        assert_eq!(
+            w,
+            widths.iter().map(|w| f64::from(*w)).collect::<Vec<_>>(),
+            "widths"
+        );
+        assert!(
+            (small.len() as f64) < plain.len() as f64 * 0.85,
+            "static CFF: {} vs {} bytes",
+            small.len(),
+            plain.len()
+        );
+        println!(
+            "static CFF: {} bytes optimised, {} plain",
+            small.len(),
+            plain.len()
+        );
+
+        // Variable CFF2, at three weights.
+        let mut f = with_composites(two_masters());
+        let bold = f.masters[1].id.clone();
+        // Bold's H and O outlines differ, so their charstrings blend.
+        for g in ["H", "O"] {
+            kernest_core::edit::translate_x(
+                f.glyph_mut(g).unwrap().layer_mut(&bold).unwrap(),
+                50.0,
+            );
+        }
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        let vf = std::fs::read(&r.files[0].path).unwrap();
+        let vfont = FontRef::new(&vf).unwrap();
+        let n = vfont.maxp().unwrap().num_glyphs();
+        let small = FontRef::new(&variable_otf(&f, &vf).unwrap())
+            .unwrap()
+            .table_data(Tag::new(b"CFF2"))
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        // The same font, encoded plainly.
+        let post = vfont.post().unwrap();
+        let names: Vec<String> = (0..n)
+            .map(|g| {
+                post.glyph_name(write_fonts::types::GlyphId16::new(g))
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        let mut statics = norad::Font::new();
+        statics
+            .default_layer_mut()
+            .insert_glyph(ufo::notdef(&f.masters[0].metrics));
+        let order: Vec<cff2::GlyphSource> = names
+            .iter()
+            .map(|n| match f.glyph(n) {
+                Some(_) => cff2::GlyphSource::Glyph(n.as_str()),
+                None => cff2::GlyphSource::Static(statics.get_glyph(n.as_str()).unwrap()),
+            })
+            .collect();
+        let plain = cff2::build_cff2_with(&f, &order, false).unwrap();
+        for coord in [0.0, 0.5, 1.0] {
+            assert_eq!(
+                cff_glyphs(&small, true, coord, n),
+                cff_glyphs(&plain, true, coord, n),
+                "at {coord}"
+            );
+        }
+        assert!(
+            (small.len() as f64) < plain.len() as f64 * 0.85,
+            "CFF2: {} vs {} bytes",
+            small.len(),
+            plain.len()
+        );
+        println!(
+            "CFF2: {} bytes optimised, {} plain",
+            small.len(),
+            plain.len()
         );
     }
 

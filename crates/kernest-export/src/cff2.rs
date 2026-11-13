@@ -20,7 +20,8 @@ use write_fonts::tables::variations::{
 use write_fonts::types::{F2Dot14, Tag};
 use write_fonts::FontBuilder;
 
-use crate::cff::{apply, compose, int, int5, op, ring_contour, Contour, Pt, Seg};
+use crate::cff::{apply, compose, int5, op, ring_contour, Contour, Pt, Seg};
+use crate::charstring::{self, Format, GlyphOps, Operand};
 
 /// CFF2 allows 513 operands on the stack; a curve with k regions needs 6(k+1)+1.
 const MAX_REGIONS: usize = 84;
@@ -165,6 +166,15 @@ fn source_locations(font: &Font) -> Vec<Location> {
 
 /// Builds the CFF2 table for the glyphs `order` (glyph ids follow it).
 pub fn build_cff2(font: &Font, order: &[GlyphSource]) -> Result<Vec<u8>, String> {
+    build_cff2_with(font, order, true)
+}
+
+/// [`build_cff2`], with size optimisation (compact operators, subroutines) on or off.
+pub(crate) fn build_cff2_with(
+    font: &Font,
+    order: &[GlyphSource],
+    optimize: bool,
+) -> Result<Vec<u8>, String> {
     let sources = source_locations(font);
     let axis_order: Vec<String> = font.axes.iter().map(|a| a.tag.clone()).collect();
     let norm: Vec<Location> = sources.iter().map(|l| normalize(font, l)).collect();
@@ -181,7 +191,7 @@ pub fn build_cff2(font: &Font, order: &[GlyphSource]) -> Result<Vec<u8>, String>
         .map(|l| Interpolator::new(font, l))
         .collect::<Result<_, _>>()?;
 
-    let mut charstrings = Vec::with_capacity(order.len());
+    let mut glyphs = Vec::with_capacity(order.len());
     for src in order {
         // The outline's operations in every source.
         let per_source: Vec<Vec<(u8, Vec<f64>)>> = match src {
@@ -225,34 +235,18 @@ pub fn build_cff2(font: &Font, order: &[GlyphSource]) -> Result<Vec<u8>, String>
             .map(|ops| ops.iter().flat_map(|(_, v)| v.iter().copied()).collect())
             .collect();
         let deltas = model.deltas(&flat);
-        let mut cs = Vec::new();
+        let mut ops = Vec::with_capacity(base.len());
         let mut at = 0;
         for (code, args) in base {
-            let n = args.len();
-            let defaults: Vec<i32> = (0..n).map(|k| deltas[0][at + k].round() as i32).collect();
-            let region_deltas: Vec<Vec<i32>> = (0..n)
-                .map(|k| {
-                    deltas[1..]
-                        .iter()
-                        .map(|d| d[at + k].round() as i32)
-                        .collect()
-                })
+            let operands: Vec<Operand> = (0..args.len())
+                .map(|k| deltas.iter().map(|d| d[at + k].round() as i32).collect())
                 .collect();
-            for v in &defaults {
-                int(*v, &mut cs);
-            }
-            if region_deltas.iter().flatten().any(|d| *d != 0) {
-                for d in region_deltas.iter().flatten() {
-                    int(*d, &mut cs);
-                }
-                int(n as i32, &mut cs);
-                op(16, &mut cs); // blend
-            }
-            op(*code, &mut cs);
-            at += n;
+            ops.push((*code, operands));
+            at += args.len();
         }
-        charstrings.push(cs);
+        glyphs.push(GlyphOps { ops, width: None });
     }
+    let (charstrings, subrs) = charstring::encode(&glyphs, Format::Cff2, regions.len(), optimize);
 
     // Variation store: all regions, in fvar axis order; one data block using them all.
     let region_list = VariationRegionList::new(
@@ -283,7 +277,18 @@ pub fn build_cff2(font: &Font, order: &[GlyphSource]) -> Result<Vec<u8>, String>
     let mut vstore = (store_bytes.len() as u16).to_be_bytes().to_vec();
     vstore.extend(store_bytes);
 
-    let private: Vec<u8> = vec![139, 22]; // vsindex 0
+    // Private DICT: vsindex 0, and the local subroutines placed right after it.
+    let mut private: Vec<u8> = vec![139, 22];
+    if !subrs.is_empty() {
+        let len = private.len() + 6;
+        int5(len as i32, &mut private);
+        op(19, &mut private); // Subrs, relative to the Private DICT
+    }
+    let subrs_index = if subrs.is_empty() {
+        Vec::new()
+    } else {
+        index2(&subrs)
+    };
     let top = |cs_off: i32, fd_off: i32, vs_off: i32| -> Vec<u8> {
         let mut d = Vec::new();
         int5(cs_off, &mut d);
@@ -319,6 +324,7 @@ pub fn build_cff2(font: &Font, order: &[GlyphSource]) -> Result<Vec<u8>, String>
     out.extend(cs_index);
     out.extend(index2(&[font_dict(priv_off as i32)]));
     out.extend(private);
+    out.extend(subrs_index);
     Ok(out)
 }
 

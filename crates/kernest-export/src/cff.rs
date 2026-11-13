@@ -6,10 +6,15 @@
 //! That keeps the table simple and exact; files are a little larger than a fully
 //! optimised CFF.
 
+use std::collections::{BTreeMap, HashMap};
+
 use norad::{Glyph, PointType};
+use write_fonts::read::ps::Sid;
 use write_fonts::read::{FontRef, TableProvider};
 use write_fonts::types::Tag;
 use write_fonts::FontBuilder;
+
+use crate::charstring::{self, Format, GlyphOps, Ops};
 
 pub(crate) type Pt = (f64, f64);
 
@@ -165,8 +170,10 @@ pub(crate) fn op(code: u8, out: &mut Vec<u8>) {
 }
 
 /// The charstring for one glyph, and its points' bounds.
-fn charstring(width: i32, contours: &[Contour]) -> (Vec<u8>, Option<[i32; 4]>) {
-    let mut out = Vec::new();
+/// A glyph's plain operations (rmoveto / rlineto / rrcurveto with relative, rounded
+/// operands) and the bounds of its points.
+fn glyph_ops(contours: &[Contour]) -> (Ops, Option<[i32; 4]>) {
+    let mut ops: Ops = Vec::new();
     let mut bounds: Option<[i32; 4]> = None;
     let mut grow = |x: i32, y: i32| {
         let b = bounds.get_or_insert([x, y, x, y]);
@@ -177,22 +184,9 @@ fn charstring(width: i32, contours: &[Contour]) -> (Vec<u8>, Option<[i32; 4]>) {
     };
     let r = |p: Pt| (p.0.round() as i32, p.1.round() as i32);
     let (mut px, mut py) = (0, 0);
-    let mut first = true;
-    // Width goes first, before the first stack-clearing operator (default width is 0).
-    let width_arg = |out: &mut Vec<u8>, first: &mut bool| {
-        if *first {
-            if width != 0 {
-                int(width, out);
-            }
-            *first = false;
-        }
-    };
     for c in contours {
         let (sx, sy) = r(c.start);
-        width_arg(&mut out, &mut first);
-        int(sx - px, &mut out);
-        int(sy - py, &mut out);
-        op(21, &mut out); // rmoveto
+        ops.push((21, vec![vec![sx - px], vec![sy - py]]));
         grow(sx, sy);
         (px, py) = (sx, sy);
         let n = c.segs.len();
@@ -204,28 +198,61 @@ fn charstring(width: i32, contours: &[Contour]) -> (Vec<u8>, Option<[i32; 4]>) {
                     if i + 1 == n && (x, y) == (sx, sy) {
                         continue;
                     }
-                    int(x - px, &mut out);
-                    int(y - py, &mut out);
-                    op(5, &mut out); // rlineto
+                    ops.push((5, vec![vec![x - px], vec![y - py]]));
                     grow(x, y);
                     (px, py) = (x, y);
                 }
                 Seg::Cubic(a, b, p) => {
+                    let mut args = Vec::with_capacity(6);
                     for q in [*a, *b, *p] {
                         let (x, y) = r(q);
-                        int(x - px, &mut out);
-                        int(y - py, &mut out);
+                        args.push(vec![x - px]);
+                        args.push(vec![y - py]);
                         grow(x, y);
                         (px, py) = (x, y);
                     }
-                    op(8, &mut out); // rrcurveto
+                    ops.push((8, args));
                 }
             }
         }
     }
-    width_arg(&mut out, &mut first);
-    op(14, &mut out); // endchar
-    (out, bounds)
+    (ops, bounds)
+}
+
+/// The CFF string id (SID) of each standard string, such as "A" or "exclam".
+fn standard_sids() -> HashMap<&'static [u8], u16> {
+    (0..391u16)
+        .filter_map(|i| Sid::new(i).resolve_standard().ok().map(|s| (s, i)))
+        .collect()
+}
+
+/// A charset in format 2: runs of consecutive string ids (gid 0, .notdef, is implied).
+fn charset_ranges(sids: &[u16]) -> Vec<u8> {
+    let mut out = vec![2u8];
+    let mut i = 0;
+    while i < sids.len() {
+        let mut j = i;
+        while j + 1 < sids.len() && sids[j + 1] == sids[j] + 1 {
+            j += 1;
+        }
+        out.extend(sids[i].to_be_bytes());
+        out.extend(((j - i) as u16).to_be_bytes());
+        i = j + 1;
+    }
+    out
+}
+
+/// The most common value (the smallest among ties), or 0.
+pub(crate) fn most_common(values: &[i32]) -> i32 {
+    let mut counts: BTreeMap<i32, usize> = BTreeMap::new();
+    for v in values {
+        *counts.entry(*v).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
+        .map(|(v, _)| v)
+        .unwrap_or(0)
 }
 
 /// A CFF INDEX of `items`.
@@ -269,17 +296,46 @@ pub fn build_cff(
     full_name: &str,
     family_name: &str,
 ) -> Result<Vec<u8>, String> {
-    // Strings: SIDs from 391 up (the standard strings come first).
-    let mut strings: Vec<Vec<u8>> = Vec::new();
-    let sid = |s: &str, strings: &mut Vec<Vec<u8>>| -> i32 {
-        strings.push(s.as_bytes().to_vec());
-        390 + strings.len() as i32
-    };
-    let full_sid = sid(full_name, &mut strings);
-    let family_sid = sid(family_name, &mut strings);
+    build_cff_with(ufo, order, widths, ps_name, full_name, family_name, true)
+}
 
-    let mut charstrings = Vec::with_capacity(order.len());
-    let mut charset = vec![0u8]; // format 0
+/// [`build_cff`], with size optimisation (compact operators, subroutines) on or off.
+pub(crate) fn build_cff_with(
+    ufo: &norad::Font,
+    order: &[String],
+    widths: &[u16],
+    ps_name: &str,
+    full_name: &str,
+    family_name: &str,
+    optimize: bool,
+) -> Result<Vec<u8>, String> {
+    // Strings: standard names use their built-in ids; others get ids from 391 up.
+    let standard = standard_sids();
+    let mut strings: Vec<Vec<u8>> = Vec::new();
+    let mut sid = |s: &str| -> u16 {
+        if let Some(&i) = standard.get(s.as_bytes()) {
+            return i;
+        }
+        strings.push(s.as_bytes().to_vec());
+        390 + strings.len() as u16
+    };
+    let full_sid = sid(full_name);
+    let family_sid = sid(family_name);
+
+    // The most common width is the default (left out of charstrings) and the base
+    // the others are written relative to.
+    let widths: Vec<i32> = (0..order.len())
+        .map(|gid| i32::from(*widths.get(gid).unwrap_or(&0)))
+        .collect();
+    let (default_width, nominal_width) = if optimize {
+        let w = most_common(&widths);
+        (w, w)
+    } else {
+        (0, 0)
+    };
+
+    let mut glyphs = Vec::with_capacity(order.len());
+    let mut glyph_sids = Vec::with_capacity(order.len());
     let mut bbox: Option<[i32; 4]> = None;
     for (gid, name) in order.iter().enumerate() {
         let g = ufo
@@ -287,8 +343,7 @@ pub fn build_cff(
             .ok_or_else(|| format!("glyph \"{name}\" is missing from the source"))?;
         let mut cs = Vec::new();
         contours(ufo, g, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 0, &mut cs);
-        let width = i32::from(*widths.get(gid).unwrap_or(&0));
-        let (data, b) = charstring(width, &cs);
+        let (ops, b) = glyph_ops(&cs);
         if let Some(b) = b {
             let bb = bbox.get_or_insert(b);
             *bb = [
@@ -298,20 +353,41 @@ pub fn build_cff(
                 bb[3].max(b[3]),
             ];
         }
-        charstrings.push(data);
+        let w = widths[gid];
+        glyphs.push(GlyphOps {
+            ops,
+            width: (w != default_width).then_some(w - nominal_width),
+        });
         if gid > 0 {
-            let s = sid(name, &mut strings) as u16;
-            charset.extend(s.to_be_bytes());
+            glyph_sids.push(sid(name));
         }
     }
+    let (charstrings, subrs) = charstring::encode(&glyphs, Format::Cff, 0, optimize);
+    let charset = charset_ranges(&glyph_sids);
     let bbox = bbox.unwrap_or([0, 0, 0, 0]);
-    let private: Vec<u8> = vec![139, 21]; // nominalWidthX 0
+
+    // Private DICT: widths, and the local subroutines placed right after it.
+    let mut private = Vec::new();
+    int(default_width, &mut private);
+    op(20, &mut private); // defaultWidthX
+    int(nominal_width, &mut private);
+    op(21, &mut private); // nominalWidthX
+    if !subrs.is_empty() {
+        let len = private.len() + 6;
+        int5(len as i32, &mut private);
+        op(19, &mut private); // Subrs, relative to the Private DICT
+    }
+    let subrs_index = if subrs.is_empty() {
+        Vec::new()
+    } else {
+        index(&subrs)
+    };
 
     let top = |charset_off: i32, cs_off: i32, priv_off: i32| -> Vec<u8> {
         let mut d = Vec::new();
-        int(full_sid, &mut d);
+        int(i32::from(full_sid), &mut d);
         op(2, &mut d); // FullName
-        int(family_sid, &mut d);
+        int(i32::from(family_sid), &mut d);
         op(3, &mut d); // FamilyName
         for v in bbox {
             int(v, &mut d);
@@ -338,7 +414,7 @@ pub fn build_cff(
     let top_index = index(&[top(charset_off as i32, cs_off as i32, priv_off as i32)]);
     debug_assert_eq!(top_index.len(), top_len);
 
-    let mut out = Vec::with_capacity(priv_off + private.len());
+    let mut out = Vec::with_capacity(priv_off + private.len() + subrs_index.len());
     out.extend(header);
     out.extend(name_index);
     out.extend(top_index);
@@ -347,6 +423,7 @@ pub fn build_cff(
     out.extend(charset);
     out.extend(charstrings_index);
     out.extend(private);
+    out.extend(subrs_index);
     Ok(out)
 }
 
