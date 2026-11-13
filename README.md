@@ -81,7 +81,7 @@ Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens liv
 | Remove overlaps on export and as Path › Remove Overlap | ✅ v0.8 |
 | Metrics keys (`=n`, `=\|H`, `=o+10`): editing, Glyph › Update Metrics, applied on export | ✅ v0.8 |
 | Code-signed installer (no SmartScreen warning) | ⏳ planned |
-| Open fonts from Windows: Explorer "Open in Kernest", Open with, drag and drop, one window at a time | ✅ next release |
+| Open fonts from Windows: Explorer "Open in Kernest", Open with, drag and drop, one window at a time | ✅ v0.9 |
 
 Progress towards 1.0: **7 of 8** milestones done.
 
@@ -89,7 +89,7 @@ Progress towards 1.0: **7 of 8** milestones done.
 
 | Milestone | Status |
 |---|---|
-| Variable OTF (CFF2) export | ✅ next release |
+| Variable OTF (CFF2) export | ✅ v0.9 |
 | Smart components | ⏳ planned |
 | Autohinting for TrueType (ttfautohint) | ⏳ planned |
 | Colour fonts (COLRv1) | ⏳ planned |
