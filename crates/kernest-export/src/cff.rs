@@ -11,24 +11,24 @@ use write_fonts::read::{FontRef, TableProvider};
 use write_fonts::types::Tag;
 use write_fonts::FontBuilder;
 
-type Pt = (f64, f64);
+pub(crate) type Pt = (f64, f64);
 
 /// One closed contour: a start point and the segments that follow it.
-struct Contour {
-    start: Pt,
-    segs: Vec<Seg>,
+pub(crate) struct Contour {
+    pub(crate) start: Pt,
+    pub(crate) segs: Vec<Seg>,
 }
 
-enum Seg {
+pub(crate) enum Seg {
     Line(Pt),
     Cubic(Pt, Pt, Pt),
 }
 
-fn apply(t: &[f64; 6], (x, y): Pt) -> Pt {
+pub(crate) fn apply(t: &[f64; 6], (x, y): Pt) -> Pt {
     (t[0] * x + t[2] * y + t[4], t[1] * x + t[3] * y + t[5])
 }
 
-fn compose(o: &[f64; 6], i: &[f64; 6]) -> [f64; 6] {
+pub(crate) fn compose(o: &[f64; 6], i: &[f64; 6]) -> [f64; 6] {
     [
         o[0] * i[0] + o[2] * i[1],
         o[1] * i[0] + o[3] * i[1],
@@ -48,6 +48,61 @@ fn quad_to_cubic(p0: Pt, q: Pt, p2: Pt) -> Seg {
     Seg::Cubic(lerp(p0, q, 2.0 / 3.0), lerp(p2, q, 2.0 / 3.0), p2)
 }
 
+/// A closed contour from its points (UFO point types), starting on an on-curve point;
+/// quadratic splines become cubics. `None` for open paths, which CFF can't hold.
+pub(crate) fn ring_contour(pts: Vec<(PointType, Pt)>) -> Option<Contour> {
+    if pts.is_empty() || pts[0].0 == PointType::Move {
+        return None; // CFF has no open paths
+    }
+    // Start on an on-curve point; an all-off-curve (TrueType) contour starts at the
+    // implied midpoint of its last and first points.
+    let (start, ring): (Pt, Vec<(PointType, Pt)>) =
+        match pts.iter().position(|(k, _)| *k != PointType::OffCurve) {
+            Some(i) => {
+                let mut r = pts[i + 1..].to_vec();
+                r.extend_from_slice(&pts[..=i]);
+                (pts[i].1, r)
+            }
+            None => {
+                let s = lerp(pts[pts.len() - 1].1, pts[0].1, 0.5);
+                let mut r = pts.clone();
+                r.push((PointType::QCurve, s));
+                (s, r)
+            }
+        };
+    let mut segs = Vec::new();
+    let mut cur = start;
+    let mut offs: Vec<Pt> = Vec::new();
+    for (kind, p) in ring {
+        match kind {
+            PointType::OffCurve => offs.push(p),
+            PointType::Curve if offs.len() >= 2 => {
+                segs.push(Seg::Cubic(offs[0], offs[offs.len() - 1], p));
+                offs.clear();
+                cur = p;
+            }
+            PointType::Curve | PointType::QCurve if !offs.is_empty() => {
+                // Quadratic spline: implied on-curve points between handles.
+                for (k, q) in offs.iter().enumerate() {
+                    let end = match offs.get(k + 1) {
+                        Some(next) => lerp(*q, *next, 0.5),
+                        None => p,
+                    };
+                    segs.push(quad_to_cubic(cur, *q, end));
+                    cur = end;
+                }
+                offs.clear();
+            }
+            _ => {
+                segs.push(Seg::Line(p));
+                offs.clear();
+                cur = p;
+            }
+        }
+    }
+    Some(Contour { start, segs })
+}
+
 /// Every closed contour of `g` with components decomposed, transformed by `t`.
 fn contours(ufo: &norad::Font, g: &Glyph, t: [f64; 6], depth: usize, out: &mut Vec<Contour>) {
     if depth > 32 {
@@ -59,56 +114,9 @@ fn contours(ufo: &norad::Font, g: &Glyph, t: [f64; 6], depth: usize, out: &mut V
             .iter()
             .map(|p| (p.typ, apply(&t, (p.x, p.y))))
             .collect();
-        if pts.is_empty() || pts[0].0 == PointType::Move {
-            continue; // CFF has no open paths
+        if let Some(c) = ring_contour(pts) {
+            out.push(c);
         }
-        // Start on an on-curve point; an all-off-curve (TrueType) contour starts at the
-        // implied midpoint of its last and first points.
-        let (start, ring): (Pt, Vec<(PointType, Pt)>) =
-            match pts.iter().position(|(k, _)| *k != PointType::OffCurve) {
-                Some(i) => {
-                    let mut r = pts[i + 1..].to_vec();
-                    r.extend_from_slice(&pts[..=i]);
-                    (pts[i].1, r)
-                }
-                None => {
-                    let s = lerp(pts[pts.len() - 1].1, pts[0].1, 0.5);
-                    let mut r = pts.clone();
-                    r.push((PointType::QCurve, s));
-                    (s, r)
-                }
-            };
-        let mut segs = Vec::new();
-        let mut cur = start;
-        let mut offs: Vec<Pt> = Vec::new();
-        for (kind, p) in ring {
-            match kind {
-                PointType::OffCurve => offs.push(p),
-                PointType::Curve if offs.len() >= 2 => {
-                    segs.push(Seg::Cubic(offs[0], offs[offs.len() - 1], p));
-                    offs.clear();
-                    cur = p;
-                }
-                PointType::Curve | PointType::QCurve if !offs.is_empty() => {
-                    // Quadratic spline: implied on-curve points between handles.
-                    for (k, q) in offs.iter().enumerate() {
-                        let end = match offs.get(k + 1) {
-                            Some(next) => lerp(*q, *next, 0.5),
-                            None => p,
-                        };
-                        segs.push(quad_to_cubic(cur, *q, end));
-                        cur = end;
-                    }
-                    offs.clear();
-                }
-                _ => {
-                    segs.push(Seg::Line(p));
-                    offs.clear();
-                    cur = p;
-                }
-            }
-        }
-        out.push(Contour { start, segs });
     }
     for comp in &g.components {
         let ct = &comp.transform;
@@ -127,7 +135,7 @@ fn contours(ufo: &norad::Font, g: &Glyph, t: [f64; 6], depth: usize, out: &mut V
 }
 
 /// A Type 2 charstring / DICT integer operand.
-fn int(v: i32, out: &mut Vec<u8>) {
+pub(crate) fn int(v: i32, out: &mut Vec<u8>) {
     match v {
         -107..=107 => out.push((v + 139) as u8),
         108..=1131 => {
@@ -147,12 +155,12 @@ fn int(v: i32, out: &mut Vec<u8>) {
 }
 
 /// A DICT integer that always takes five bytes, so offsets can be filled in later.
-fn int5(v: i32, out: &mut Vec<u8>) {
+pub(crate) fn int5(v: i32, out: &mut Vec<u8>) {
     out.push(29);
     out.extend(v.to_be_bytes());
 }
 
-fn op(code: u8, out: &mut Vec<u8>) {
+pub(crate) fn op(code: u8, out: &mut Vec<u8>) {
     out.push(code);
 }
 

@@ -74,9 +74,7 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
   const staticStyles = exportedInstances.length ? exportedInstances.map((i) => i.name) : (info?.masters.map((m) => m.name) ?? []);
   const wantVariable = variable && canVariable;
   const noFormat = !formats.ttf && !formats.otf && !formats.woff2;
-  // Variable fonts are TTF or WOFF2 (no CFF2 yet).
-  const variableBuilds = wantVariable && (formats.ttf || formats.woff2);
-  const nothing = (!variableBuilds && !statics) || noFormat;
+  const nothing = (!wantVariable && !statics) || noFormat;
 
   async function browse() {
     const picked = await open({ directory: true, multiple: false, title: "Export fonts to", defaultPath: dir || undefined });
@@ -131,12 +129,9 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
             <legend className="k-overline muted">Formats</legend>
             <div className="export-formats">
               <label className="check-row"><input type="checkbox" checked={formats.ttf} onChange={(e) => setFormat("ttf", e.target.checked)} /> <span className="k-body">TTF</span> <span className="k-caption muted">TrueType, for desktop apps</span></label>
-              <label className="check-row"><input type="checkbox" checked={formats.otf} onChange={(e) => setFormat("otf", e.target.checked)} /> <span className="k-body">OTF</span> <span className="k-caption muted">PostScript (CFF) outlines, static fonts</span></label>
+              <label className="check-row"><input type="checkbox" checked={formats.otf} onChange={(e) => setFormat("otf", e.target.checked)} /> <span className="k-body">OTF</span> <span className="k-caption muted">PostScript outlines (CFF, and CFF2 for variable)</span></label>
               <label className="check-row"><input type="checkbox" checked={formats.woff2} onChange={(e) => setFormat("woff2", e.target.checked)} /> <span className="k-body">WOFF2</span> <span className="k-caption muted">compressed web fonts</span></label>
             </div>
-            {wantVariable && formats.otf && !formats.ttf && !formats.woff2 && (
-              <span className="k-caption muted">Variable fonts are built as TTF or WOFF2; OTF applies to static fonts.</span>
-            )}
           </fieldset>
           <fieldset className="field" disabled={busy}>
             <legend className="k-overline muted">Before building</legend>

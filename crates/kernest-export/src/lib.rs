@@ -6,6 +6,7 @@
 //! interpolated by Kernest first (same variation model as the editor's previews).
 
 pub mod cff;
+pub mod cff2;
 pub mod ufo;
 pub mod woff2;
 
@@ -283,7 +284,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
         Ok(())
     };
 
-    if opts.variable && (opts.ttf || opts.woff2) {
+    if opts.variable {
         match variable(font, tmp.path()) {
             Ok(bytes) => {
                 if opts.ttf {
@@ -309,14 +310,22 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                         Err(e) => report.problems.push(format!("Variable font (WOFF2): {e}")),
                     }
                 }
+                if opts.otf {
+                    match variable_otf(font, &bytes) {
+                        Ok(o) => emit(
+                            &mut report,
+                            "variable",
+                            "otf",
+                            "Variable",
+                            format!("{family}-VF.otf"),
+                            &o,
+                        )?,
+                        Err(e) => report.problems.push(format!("Variable font (OTF): {e}")),
+                    }
+                }
             }
             Err(e) => report.problems.push(format!("Variable font: {e}")),
         }
-    } else if opts.variable {
-        report.problems.push(
-            "Variable font: variable fonts are exported as TTF or WOFF2; variable OTF (CFF2) isn't supported yet."
-                .into(),
-        );
     }
 
     if opts.statics {
@@ -394,6 +403,26 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
         }
     }
     Ok(report)
+}
+
+/// The variable font with CFF2 outlines, made from the variable TrueType font.
+fn variable_otf(font: &Font, vf_ttf: &[u8]) -> Result<Vec<u8>, String> {
+    let alternates: BTreeMap<String, (String, Vec<kernest_core::AxisRange>)> = font
+        .glyphs
+        .iter()
+        .flat_map(|g| {
+            g.bracket_groups()
+                .into_iter()
+                .enumerate()
+                .map(|(n, r)| (alternate_name(&g.name, n), (g.name.clone(), r)))
+        })
+        .collect();
+    let def = kernest_core::interpolate::default_master(font);
+    let mut statics = norad::Font::new();
+    statics
+        .default_layer_mut()
+        .insert_glyph(ufo::notdef(&def.metrics));
+    cff2::vf_to_otf(vf_ttf, font, &alternates, &statics)
 }
 
 fn variable(font: &Font, tmp: &Path) -> Result<Vec<u8>, String> {
@@ -666,8 +695,8 @@ mod tests {
             assert!(f.path.ends_with(format));
             std::fs::read(&f.path).unwrap()
         };
-        // 2 statics × (ttf, otf, woff2) + variable × (ttf, woff2)
-        assert_eq!(r.files.len(), 8);
+        // 2 statics × (ttf, otf, woff2) + variable × (ttf, otf, woff2)
+        assert_eq!(r.files.len(), 9);
 
         // OTF: CFF outlines, same glyphs, widths and bounds as the TrueType font.
         let ttf_bytes = find("Bold", "ttf");
@@ -855,6 +884,72 @@ mod tests {
         let loc = BTreeMap::from([("wdth".to_string(), 75.0)]);
         assert_eq!(ufo::width_class(&h, &loc), Some(3));
         assert_eq!(ufo::width_class(&h, &BTreeMap::new()), Some(5));
+    }
+
+    #[test]
+    fn variable_otf_cff2() {
+        use kernest_core::{edit::translate_x, layers, AxisRange};
+        use write_fonts::read::ps::cff::CffFontRef;
+        use write_fonts::types::{F2Dot14, Tag};
+        // Bold's H outlines move 50 units right; a brace layer at 550 moves 20 more;
+        // o gets an alternate from 600 up.
+        let mut f = two_masters();
+        let bold = f.masters[1].id.clone();
+        translate_x(f.glyph_mut("H").unwrap().layer_mut(&bold).unwrap(), 50.0);
+        let (f, brace) =
+            layers::add_brace_layer(&f, "H", "m01", &BTreeMap::from([("wght".into(), 550.0)]))
+                .unwrap();
+        let mut f = f;
+        translate_x(f.glyph_mut("H").unwrap().layer_mut(&brace).unwrap(), 20.0);
+        let ranges = [AxisRange {
+            tag: "wght".into(),
+            min: Some(600.0),
+            max: None,
+        }];
+        let (f, _) = layers::add_bracket_layers(&f, "o", &bold, &ranges).unwrap();
+
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(true, false, out.path());
+        opts.ttf = false;
+        opts.otf = true;
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert_eq!(r.files.len(), 1);
+        assert!(r.files[0].path.ends_with("KernestSample-VF.otf"));
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        assert_eq!(font.table_directory().sfnt_version(), 0x4F54_544F, "OTTO");
+        assert!(font.table_data(Tag::new(b"glyf")).is_none());
+        assert!(font.table_data(Tag::new(b"gvar")).is_none());
+        assert!(font.fvar().is_ok() && font.gsub().is_ok());
+        let n = font.maxp().unwrap().num_glyphs();
+        let data = font.table_data(Tag::new(b"CFF2")).unwrap();
+        let cff = CffFontRef::new_cff2(data.as_bytes(), None).unwrap();
+        assert_eq!(cff.num_glyphs(), u32::from(n));
+        let gid = font.cmap().unwrap().map_codepoint('H').unwrap();
+        let x_min = |coord: f32| {
+            let coords = [F2Dot14::from_f32(coord)];
+            let sub = cff.subfont(0, &coords).unwrap();
+            cff.evaluate_extents(&sub, gid, &coords)
+                .unwrap()
+                .unwrap()
+                .x_min
+                .to_f64()
+        };
+        let x0 = f.glyph("H").unwrap().layer("m01").unwrap();
+        let x0 = kernest_core::geometry::bounds(&f, x0).unwrap().min_x;
+        assert_eq!(x_min(0.0), x0, "Regular");
+        assert_eq!(x_min(1.0), x0 + 50.0, "Bold");
+        assert_eq!(
+            x_min(0.5),
+            x0 + 25.0 + 20.0,
+            "the brace layer at 550 is a source"
+        );
+        // Between sources, deltas are whole units (as in TrueType variable fonts).
+        assert!(
+            (x_min(0.25) - (x0 + 12.5 + 10.0)).abs() <= 1.0,
+            "halfway to the brace layer"
+        );
     }
 
     #[test]

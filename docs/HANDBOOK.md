@@ -125,7 +125,7 @@ Switch the master you're editing with the buttons at the top right. Previews int
 Choose the formats:
 
 - **TTF:** TrueType outlines, for desktop apps.
-- **OTF:** PostScript (CFF) outlines, for static fonts. Variable fonts are built as TTF or WOFF2.
+- **OTF:** PostScript outlines: CFF for static fonts and CFF2 for the variable font (`Family-VF.otf`), with intermediate layers and alternates just as in the TrueType variable font.
 - **WOFF2:** compressed web fonts, for static and variable fonts.
 
 And what happens before building:

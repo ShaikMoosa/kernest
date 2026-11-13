@@ -274,10 +274,16 @@ impl VariationModel {
         self.locations.is_empty()
     }
 
-    /// Interpolates value vectors (one per master, in master order, all the same length)
-    /// at a normalised location.
-    pub fn interpolate(&self, master_values: &[Vec<f64>], loc: &Location) -> Vec<f64> {
-        let n = master_values.first().map_or(0, Vec::len);
+    /// The region each delta applies to, in the order [`deltas`](Self::deltas) returns
+    /// them. The first is the default master's (empty: it always applies fully).
+    pub fn supports(&self) -> &[Region] {
+        &self.supports
+    }
+
+    /// The deltas that reproduce `master_values` (one vector per master, in master
+    /// order): one vector per region of [`supports`](Self::supports). The first is the
+    /// default master's values themselves. This is what variable fonts store.
+    pub fn deltas(&self, master_values: &[Vec<f64>]) -> Vec<Vec<f64>> {
         let mut deltas: Vec<Vec<f64>> = Vec::with_capacity(self.locations.len());
         for (i, weights) in self.delta_weights.iter().enumerate() {
             let mut d = master_values[self.reverse_mapping[i]].clone();
@@ -288,6 +294,14 @@ impl VariationModel {
             }
             deltas.push(d);
         }
+        deltas
+    }
+
+    /// Interpolates value vectors (one per master, in master order, all the same length)
+    /// at a normalised location.
+    pub fn interpolate(&self, master_values: &[Vec<f64>], loc: &Location) -> Vec<f64> {
+        let n = master_values.first().map_or(0, Vec::len);
+        let deltas = self.deltas(master_values);
         let mut out = vec![0.0; n];
         for (d, s) in deltas.iter().zip(&self.supports) {
             let scalar = support_scalar(loc, s);

@@ -1,7 +1,7 @@
 //! Master compatibility and interpolating glyph layers at any design-space location.
 
 use crate::designspace::{normalize, Location, VariationModel};
-use crate::model::{in_bracket, Font, Layer, Master, NodeKind, Shape};
+use crate::model::{in_bracket, AxisRange, Font, Layer, Master, NodeKind, Shape};
 
 /// The master at the default location of every axis, or the first master.
 pub fn default_master(font: &Font) -> &Master {
@@ -216,14 +216,28 @@ impl Interpolator {
             .bracket_groups()
             .into_iter()
             .find(|r| in_bracket(font, r, &self.design));
+        self.layer_design(font, glyph, alternate.as_deref())
+    }
+
+    /// The glyph's layer at this location in one particular design: the normal one
+    /// (`None`, ignoring bracket layers) or the alternate with these ranges. Variable
+    /// fonts need both everywhere, as separate glyphs.
+    pub fn layer_design(
+        &self,
+        font: &Font,
+        glyph: &str,
+        alternate: Option<&[AxisRange]>,
+    ) -> Result<Layer, String> {
+        let g = font
+            .glyph(glyph)
+            .ok_or_else(|| format!("no glyph named \"{glyph}\""))?;
         // (normalized location, layer) for every source of this glyph.
         let mut sources: Vec<(Location, &Layer)> = Vec::new();
         for (id, loc) in self.master_ids.iter().zip(&self.master_locs) {
             let layer = alternate
-                .as_ref()
                 .and_then(|r| {
                     g.bracket_layers()
-                        .find(|l| &l.master_id == id && &l.bracket == r)
+                        .find(|l| &l.master_id == id && l.bracket.as_slice() == r)
                 })
                 .or_else(|| g.layer(id))
                 .ok_or_else(|| format!("\"{glyph}\" is missing a layer"))?;

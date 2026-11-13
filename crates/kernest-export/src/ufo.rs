@@ -75,7 +75,7 @@ fn kern_side(side: &str, first: bool) -> Result<Name, String> {
 }
 
 /// A box with a counter, used when the font has no `.notdef` glyph of its own.
-fn notdef(metrics: &Metrics) -> Glyph {
+pub(crate) fn notdef(metrics: &Metrics) -> Glyph {
     let mut g = Glyph::new(".notdef");
     g.width = 500.0;
     let top = metrics.cap_height.max(200.0);
