@@ -266,6 +266,19 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
     }
   }, [font, onStructureChanged, fail]);
 
+  /** Glyph › Update Metrics: re-applies every metrics key in the font. */
+  const updateMetrics = useCallback(async () => {
+    try {
+      const r = await backend.updateMetrics();
+      onStructureChanged(r.status);
+      setToast(r.problems.length
+        ? { kind: "danger", text: `Metrics updated; ${r.problems.length} key${r.problems.length === 1 ? "" : "s"} couldn't be applied: ${r.problems.slice(0, 3).join("; ")}` }
+        : { kind: "info", text: "Metrics updated" });
+    } catch (e) {
+      fail(e);
+    }
+  }, [onStructureChanged, fail]);
+
   const undoRedo = useCallback(async (redo: boolean) => {
     if (!font) return;
     try {
@@ -356,6 +369,7 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
         { label: "Add Glyphs…", shortcut: "Ctrl+Shift+G", onSelect: font ? showAddGlyphs : undefined },
         { label: removalTargets.length > 1 ? `Remove ${removalTargets.length} Glyphs` : "Remove Glyph", shortcut: "Ctrl+Del", onSelect: font && removalTargets.length ? () => removeGlyphs(removalTargets) : undefined },
         { label: "Add Component…", shortcut: "Ctrl+Shift+C", onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
+        { label: "Update Metrics", onSelect: font ? updateMetrics : undefined, separatorBefore: true },
       ],
     },
     {
@@ -363,6 +377,7 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
       items: [
         { label: "Correct Path Direction", shortcut: "Ctrl+Shift+R", onSelect: inGlyph ? () => sendEditCommand("correct-direction") : undefined },
         { label: "Add Extremes", onSelect: inGlyph ? () => sendEditCommand("add-extremes") : undefined },
+        { label: "Remove Overlap", onSelect: inGlyph ? () => sendEditCommand("remove-overlap") : undefined, separatorBefore: true },
       ],
     },
     { label: "View", items: [{ label: "Show Metrics", shortcut: "Ctrl+Shift+M", onSelect: toggleMetrics, checked: showMetrics }] },

@@ -24,7 +24,7 @@ const TOOLS: { id: Tool; key: string; label: string; icon: React.ReactNode }[] =
 const HIT = 7; // px
 
 /** Commands sent from the app menus to the active Edit View. */
-export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes";
+export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes" | "remove-overlap";
 export const sendEditCommand = (name: EditCommand) => window.dispatchEvent(new CustomEvent("kernest:edit", { detail: name }));
 
 // Clipboard shared by all Edit View tabs; also mirrored to the system clipboard as JSON.
@@ -55,18 +55,32 @@ const toEdit = (c: Comp): ComponentEdit => {
 };
 const fromView = (cs: ComponentView[]): Comp[] => cs.map((c) => ({ ...c, dx: 0, dy: 0 }));
 
-function MetricField({ label, value, disabled, onCommit }: { label: string; value: number | null; disabled?: boolean; onCommit: (v: number) => void }) {
+function MetricField({ label, value, disabled, onCommit, metricKey, onKey }: { label: string; value: number | null; disabled?: boolean; onCommit: (v: number) => void; metricKey?: string; onKey?: (key: string | null) => void }) {
   const shown = value === null ? "" : String(Math.round(value));
   const [text, setText] = useState(shown);
   useEffect(() => setText(shown), [shown]);
   const commit = (raw: string) => {
-    const v = Number(raw.trim().replace("−", "-"));
-    if (raw.trim() === "" || !Number.isFinite(v) || raw === shown) return setText(shown);
+    const t = raw.trim();
+    // A metrics key such as "=n" or "=|H+10" makes this value follow another glyph.
+    if (onKey && t.startsWith("=")) {
+      if (t !== metricKey) onKey(t);
+      return setText(shown);
+    }
+    const v = Number(t.replace("−", "-"));
+    if (t === "" || !Number.isFinite(v) || raw === shown) return setText(shown);
     onCommit(v);
   };
   return (
-    <label className="info-field">
-      <span className="k-caption muted">{label}</span>
+    <label className="info-field" title={onKey ? "Type a number, or a metrics key such as =n, =|H or =o+10" : undefined}>
+      <span className="k-caption muted">
+        {label}
+        {metricKey && (
+          <span className="metric-key">
+            {" "}{metricKey}
+            <button type="button" className="metric-key-clear" aria-label={`Remove the ${label} metrics key`} onClick={(e) => { e.preventDefault(); onKey?.(null); }}>×</button>
+          </span>
+        )}
+      </span>
       <input
         className="metric-input"
         value={text}
@@ -266,9 +280,23 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     });
   }, [glyph, masterId, accept, onError]);
 
+  const setMetricsKey = useCallback((metric: MetricName, key: string | null) => {
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await backend.setMetricsKey(glyph, masterId, metric, key));
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, accept, onError]);
+
   const setMetric = useCallback((metric: MetricName, value: number) => {
     chain.current = chain.current.then(async () => {
       try {
+        // Typing a number replaces the metrics key for that value.
+        const keys = latest.current.layer?.metricsKeys;
+        const has = metric === "lsb" ? keys?.left : metric === "rsb" ? keys?.right : keys?.width;
+        if (has) accept(await backend.setMetricsKey(glyph, masterId, metric, null));
         accept(await backend.setMetric(glyph, masterId, metric, value));
       } catch (e) {
         onError(e);
@@ -587,7 +615,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
 
   const runCommand = useCallback(async (name: EditCommand) => {
     if (name === "add-component") return setPicking(true);
-    if (name === "correct-direction" || name === "add-extremes") {
+    if (name === "correct-direction" || name === "add-extremes" || name === "remove-overlap") {
       // Add Extremes works on the selected paths, or on every path when none is selected.
       const only = name === "add-extremes" ? [...new Set([...latest.current.selection].map((k) => parseKey(k)[0]))] : undefined;
       chain.current = chain.current.then(async () => {
@@ -847,9 +875,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             <span className="k-body-strong">{layer.glyph}</span>
             <span className="k-code muted">{layer.unicode ? `U+${layer.unicode}` : ""}</span>
           </div>
-          <MetricField label="LSB" value={layer.lsb} disabled={layer.lsb === null} onCommit={(v) => setMetric("lsb", v)} />
-          <MetricField label="Width" value={layer.width} onCommit={(v) => setMetric("width", v)} />
-          <MetricField label="RSB" value={layer.rsb} disabled={layer.rsb === null} onCommit={(v) => setMetric("rsb", v)} />
+          <MetricField label="LSB" value={layer.lsb} disabled={layer.lsb === null} onCommit={(v) => setMetric("lsb", v)} metricKey={layer.metricsKeys?.left} onKey={(k) => setMetricsKey("lsb", k)} />
+          <MetricField label="Width" value={layer.width} onCommit={(v) => setMetric("width", v)} metricKey={layer.metricsKeys?.width} onKey={(k) => setMetricsKey("width", k)} />
+          <MetricField label="RSB" value={layer.rsb} disabled={layer.rsb === null} onCommit={(v) => setMetric("rsb", v)} metricKey={layer.metricsKeys?.right} onKey={(k) => setMetricsKey("rsb", k)} />
           <span className="info-sep" />
           {oneNode && one ? (
             <>

@@ -13,6 +13,5 @@ norad = "0.19.2"
 tempfile = "3"
 plist = "1"
 serde.workspace = true
-
-[dev-dependencies]
 write-fonts = "0.55"
+brotli = "9"

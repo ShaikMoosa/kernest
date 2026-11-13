@@ -204,6 +204,8 @@ pub struct LayerView {
     /// All components resolved to outlines, as SVG path data in font units (y up).
     component_svg: String,
     anchors: Vec<Anchor>,
+    /// Metrics keys of this layer, e.g. `=n` for the left sidebearing.
+    metrics_keys: kernest_core::MetricsKeys,
     /// Why this glyph's masters can't be interpolated (empty when they can).
     issues: Vec<String>,
     status: DocStatus,
@@ -312,6 +314,7 @@ fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<Laye
         components,
         component_svg: svg_path(font, &comp_only),
         anchors: layer.anchors.clone(),
+        metrics_keys: layer.metrics_keys.clone(),
         issues: check_glyph(font, glyph),
         status: status(doc),
     })
@@ -610,7 +613,8 @@ pub fn path_operation(
     // On a master layer of a compatible glyph, every master and brace layer changes the
     // same way so they stay compatible. Bracket layers are a separate design, and are
     // only changed when edited themselves.
-    let all_masters = current.is_master()
+    let all_masters = operation != "remove-overlap"
+        && current.is_master()
         && doc.font.masters.len() > 1
         && check_glyph(&doc.font, &glyph).is_empty();
     let targets: Vec<String> = if all_masters {
@@ -641,6 +645,11 @@ pub fn path_operation(
                 }
             }
         }
+        "remove-overlap" => {
+            if let Some(l) = ng.layer_mut(&master_id) {
+                kernest_core::overlap::remove_overlaps(l);
+            }
+        }
         other => return Err(format!("Unknown path operation \"{other}\"")),
     }
     let changed = if targets.len() == 1 {
@@ -657,6 +666,84 @@ pub fn path_operation(
         doc.revision += 1;
     }
     layer_view_of(doc, &glyph, &master_id)
+}
+
+/// Sets (or clears, with an empty key) a layer's metrics key for "lsb", "rsb" or
+/// "width", and applies it right away. One undoable step.
+#[tauri::command]
+pub fn set_metrics_key(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    metric: String,
+    key: Option<String>,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let key = key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
+    if let Some(k) = &key {
+        kernest_core::metricskeys::validate(k)?;
+    }
+    let mut next = doc.font.clone();
+    {
+        let layer = next
+            .glyph_mut(&glyph)
+            .and_then(|g| g.layer_mut(&master_id))
+            .ok_or_else(|| format!("No layer for \"{glyph}\""))?;
+        let slot = match metric.as_str() {
+            "lsb" => &mut layer.metrics_keys.left,
+            "rsb" => &mut layer.metrics_keys.right,
+            "width" => &mut layer.metrics_keys.width,
+            other => return Err(format!("Unknown metric \"{other}\"")),
+        };
+        *slot = key;
+    }
+    if let Some(l) = kernest_core::metricskeys::apply_layer(&next, &glyph, &master_id)? {
+        *next
+            .glyph_mut(&glyph)
+            .and_then(|g| g.layer_mut(&master_id))
+            .expect("layer exists") = l;
+    }
+    let layer = next
+        .glyph(&glyph)
+        .and_then(|g| g.layer(&master_id))
+        .expect("layer exists")
+        .clone();
+    if doc
+        .history
+        .apply(&mut doc.font, &glyph, &master_id, layer)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    layer_view_of(doc, &glyph, &master_id)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMetricsResult {
+    /// Problems with keys that couldn't be applied (missing glyphs, loops).
+    problems: Vec<String>,
+    status: DocStatus,
+}
+
+/// Glyph › Update Metrics: applies every metrics key in the font (one undoable step).
+#[tauri::command]
+pub fn update_metrics(state: State<AppState>) -> CmdResult<UpdateMetricsResult> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let (next, problems) = kernest_core::metricskeys::apply_all(&doc.font);
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(UpdateMetricsResult {
+        problems,
+        status: status(doc),
+    })
 }
 
 #[derive(Serialize)]

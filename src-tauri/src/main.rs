@@ -46,6 +46,8 @@ fn main() {
             glyphs::add_glyphs,
             glyphs::remove_glyphs,
             commands::path_operation,
+            commands::set_metrics_key,
+            commands::update_metrics,
             layers::glyph_layers,
             layers::add_brace_layer,
             layers::add_bracket_layers,

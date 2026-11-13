@@ -336,6 +336,9 @@ button.doc-tab { padding-right: var(--k-space-12); }
 .import-dialog { width: 560px; }
 .add-glyphs-dialog { width: 520px; }
 .layer-dialog { width: 480px; }
+.metric-key { color: var(--k-accent-default); font-family: var(--k-font-code); white-space: nowrap; }
+.metric-key-clear { border: 0; background: none; padding: 0 2px; color: var(--k-text-muted, inherit); cursor: pointer; }
+.export-formats { display: flex; gap: var(--k-space-16); flex-wrap: wrap; }
 .layer-dialog .dialog-body { display: flex; flex-direction: column; gap: var(--k-space-12); }
 .layer-axis .row { display: flex; gap: var(--k-space-8); align-items: center; }
 .layer-axis .row .text-input { flex: 1; min-width: 0; }

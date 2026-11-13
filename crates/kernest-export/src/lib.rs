@@ -5,7 +5,9 @@
 //! a designspace of all masters. Static instances that sit between masters are
 //! interpolated by Kernest first (same variation model as the editor's previews).
 
+pub mod cff;
 pub mod ufo;
+pub mod woff2;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -20,11 +22,38 @@ use ufo::{designspace, to_ufo, DsRule, DsSource, UfoSource};
 /// What to build and where.
 #[derive(Debug, Clone)]
 pub struct ExportOptions {
-    /// One variable TrueType font with all masters.
+    /// One variable font with all masters.
     pub variable: bool,
-    /// One static TrueType font per exported instance (or per master if there are none).
+    /// One static font per exported instance (or per master if there are none).
     pub statics: bool,
+    /// TrueType outlines (`.ttf`).
+    pub ttf: bool,
+    /// PostScript (CFF) outlines (`.otf`), for static fonts.
+    pub otf: bool,
+    /// Web fonts (`.woff2`, TrueType outlines inside).
+    pub woff2: bool,
+    /// Merge overlapping contours in static fonts (variable fonts keep them, as their
+    /// masters must stay compatible).
+    pub remove_overlaps: bool,
+    /// Apply metrics keys (such as `=n`) to every glyph before building.
+    pub apply_metrics_keys: bool,
     pub out_dir: PathBuf,
+}
+
+impl ExportOptions {
+    /// TrueType files only, as in earlier versions.
+    pub fn ttf(variable: bool, statics: bool, out_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            variable,
+            statics,
+            ttf: true,
+            otf: false,
+            woff2: false,
+            remove_overlaps: false,
+            apply_metrics_keys: true,
+            out_dir: out_dir.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +62,8 @@ pub struct ExportedFile {
     pub path: String,
     /// "variable" | "static"
     pub kind: &'static str,
+    /// "ttf" | "otf" | "woff2"
+    pub format: &'static str,
     pub style: String,
     pub bytes: usize,
 }
@@ -218,19 +249,72 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     let family = file_stem(&font.info.family_name);
     let mut report = ExportReport::default();
 
-    if opts.variable {
+    if !opts.ttf && !opts.otf && !opts.woff2 {
+        return Err("Choose at least one format: TTF, OTF or WOFF2.".into());
+    }
+    let keyed;
+    let font = if opts.apply_metrics_keys {
+        let (f, problems) = kernest_core::metricskeys::apply_all(font);
+        report
+            .problems
+            .extend(problems.into_iter().map(|p| format!("Metrics keys: {p}")));
+        keyed = f;
+        &keyed
+    } else {
+        font
+    };
+    let emit = |report: &mut ExportReport,
+                kind: &'static str,
+                format: &'static str,
+                style: &str,
+                file: String,
+                bytes: &[u8]|
+     -> Result<(), String> {
+        let path = write_out(&opts.out_dir, &file, bytes)?;
+        report.files.push(ExportedFile {
+            path: path.display().to_string(),
+            kind,
+            format,
+            style: style.to_string(),
+            bytes: bytes.len(),
+        });
+        Ok(())
+    };
+
+    if opts.variable && (opts.ttf || opts.woff2) {
         match variable(font, tmp.path()) {
             Ok(bytes) => {
-                let path = write_out(&opts.out_dir, &format!("{family}-VF.ttf"), &bytes)?;
-                report.files.push(ExportedFile {
-                    path: path.display().to_string(),
-                    kind: "variable",
-                    style: "Variable".into(),
-                    bytes: bytes.len(),
-                });
+                if opts.ttf {
+                    emit(
+                        &mut report,
+                        "variable",
+                        "ttf",
+                        "Variable",
+                        format!("{family}-VF.ttf"),
+                        &bytes,
+                    )?;
+                }
+                if opts.woff2 {
+                    match woff2::to_woff2(&bytes) {
+                        Ok(w) => emit(
+                            &mut report,
+                            "variable",
+                            "woff2",
+                            "Variable",
+                            format!("{family}-VF.woff2"),
+                            &w,
+                        )?,
+                        Err(e) => report.problems.push(format!("Variable font (WOFF2): {e}")),
+                    }
+                }
             }
             Err(e) => report.problems.push(format!("Variable font: {e}")),
         }
+    } else if opts.variable {
+        report.problems.push(
+            "Variable font: variable fonts are exported as TTF or WOFF2; variable OTF (CFF2) isn't supported yet."
+                .into(),
+        );
     }
 
     if opts.statics {
@@ -247,26 +331,57 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                 .collect()
         };
         for (i, (style, location)) in targets.iter().enumerate() {
-            let built = instance_source(font, style, location).and_then(|src| {
+            let built = instance_source(font, style, location).and_then(|mut src| {
+                if opts.remove_overlaps {
+                    for (_, layer) in &mut src.layers {
+                        kernest_core::overlap::remove_overlaps(layer);
+                    }
+                }
                 let path = tmp.path().join(format!("instance{i}.ufo"));
-                to_ufo(&src)?
-                    .save(&path)
+                let ufo = to_ufo(&src)?;
+                ufo.save(&path)
                     .map_err(|e| format!("could not write a UFO: {e}"))?;
-                compile(&path)
+                Ok((compile(&path)?, ufo))
             });
             match built {
-                Ok(bytes) => {
-                    let path = write_out(
-                        &opts.out_dir,
-                        &format!("{family}-{}.ttf", file_stem(style)),
-                        &bytes,
-                    )?;
-                    report.files.push(ExportedFile {
-                        path: path.display().to_string(),
-                        kind: "static",
-                        style: style.clone(),
-                        bytes: bytes.len(),
-                    });
+                Ok((bytes, ufo)) => {
+                    let stem = format!("{family}-{}", file_stem(style));
+                    if opts.ttf {
+                        emit(
+                            &mut report,
+                            "static",
+                            "ttf",
+                            style,
+                            format!("{stem}.ttf"),
+                            &bytes,
+                        )?;
+                    }
+                    if opts.otf {
+                        match cff::ttf_to_otf(&bytes, &ufo, &font.info.family_name, style) {
+                            Ok(otf) => emit(
+                                &mut report,
+                                "static",
+                                "otf",
+                                style,
+                                format!("{stem}.otf"),
+                                &otf,
+                            )?,
+                            Err(e) => report.problems.push(format!("{style} (OTF): {e}")),
+                        }
+                    }
+                    if opts.woff2 {
+                        match woff2::to_woff2(&bytes) {
+                            Ok(w) => emit(
+                                &mut report,
+                                "static",
+                                "woff2",
+                                style,
+                                format!("{stem}.woff2"),
+                                &w,
+                            )?,
+                            Err(e) => report.problems.push(format!("{style} (WOFF2): {e}")),
+                        }
+                    }
                 }
                 Err(e) => report.problems.push(if e.starts_with(style.as_str()) {
                     e
@@ -431,15 +546,7 @@ mod tests {
     #[test]
     fn static_from_a_single_master() {
         let out = tempfile::tempdir().unwrap();
-        let r = export(
-            &sample_font(),
-            &ExportOptions {
-                variable: false,
-                statics: true,
-                out_dir: out.path().into(),
-            },
-        )
-        .unwrap();
+        let r = export(&sample_font(), &ExportOptions::ttf(false, true, out.path())).unwrap();
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         assert_eq!(r.files.len(), 1);
         assert!(r.files[0].path.ends_with("KernestSample-Regular.ttf"));
@@ -460,15 +567,7 @@ mod tests {
             export: true,
         });
         let out = tempfile::tempdir().unwrap();
-        let r = export(
-            &f,
-            &ExportOptions {
-                variable: true,
-                statics: true,
-                out_dir: out.path().into(),
-            },
-        )
-        .unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
         assert!(r.problems.is_empty(), "{:?}", r.problems);
         let vf = r.files.iter().find(|x| x.kind == "variable").unwrap();
         let bytes = std::fs::read(&vf.path).unwrap();
@@ -510,15 +609,7 @@ mod tests {
         }
         let o_regular = f.glyph("o").unwrap().layer("m01").unwrap().width as u16;
         let out = tempfile::tempdir().unwrap();
-        let r = export(
-            &f,
-            &ExportOptions {
-                variable: true,
-                statics: true,
-                out_dir: out.path().into(),
-            },
-        )
-        .unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
         assert!(r.problems.is_empty(), "{:?}", r.problems);
 
         let vf =
@@ -548,18 +639,171 @@ mod tests {
             export: true,
         });
         let out2 = tempfile::tempdir().unwrap();
-        let r2 = export(
-            &f2,
-            &ExportOptions {
-                variable: false,
-                statics: true,
-                out_dir: out2.path().into(),
-            },
-        )
-        .unwrap();
+        let r2 = export(&f2, &ExportOptions::ttf(false, true, out2.path())).unwrap();
         let medium =
             std::fs::read(&r2.files.iter().find(|x| x.style == "Medium").unwrap().path).unwrap();
         assert_eq!(advance(&medium, 'H'), 730 + 20);
+    }
+
+    #[test]
+    fn otf_and_woff2() {
+        use write_fonts::read::ps::cff::CffFontRef;
+        use write_fonts::types::{GlyphId, Tag};
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(true, true, out.path());
+        opts.otf = true;
+        opts.woff2 = true;
+        let r = export(&two_masters(), &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let find = |style: &str, format: &str| {
+            let f = r
+                .files
+                .iter()
+                .find(|x| x.style == style && x.format == format)
+                .unwrap_or_else(|| panic!("no {style} {format}"));
+            assert!(f.path.ends_with(format));
+            std::fs::read(&f.path).unwrap()
+        };
+        // 2 statics × (ttf, otf, woff2) + variable × (ttf, woff2)
+        assert_eq!(r.files.len(), 8);
+
+        // OTF: CFF outlines, same glyphs, widths and bounds as the TrueType font.
+        let ttf_bytes = find("Bold", "ttf");
+        let otf_bytes = find("Bold", "otf");
+        let ttf = FontRef::new(&ttf_bytes).unwrap();
+        let otf = FontRef::new(&otf_bytes).unwrap();
+        assert_eq!(otf.table_directory().sfnt_version(), 0x4F54_544F, "OTTO");
+        assert!(otf.table_data(Tag::new(b"glyf")).is_none());
+        assert!(otf.gpos().is_ok(), "kerning is kept");
+        let n = ttf.maxp().unwrap().num_glyphs();
+        assert_eq!(otf.maxp().unwrap().num_glyphs(), n);
+        let cff_data = otf.table_data(Tag::new(b"CFF ")).unwrap();
+        let cff = CffFontRef::new(cff_data.as_bytes(), 0, None).unwrap();
+        assert_eq!(cff.num_glyphs(), u32::from(n));
+        let sub = cff.subfont(0, &[]).unwrap();
+        let gid = ttf.cmap().unwrap().map_codepoint('H').unwrap();
+        let width = cff.evaluate_width(&sub, gid, &[]).unwrap().unwrap();
+        assert_eq!(width.to_f64(), 780.0, "Bold H");
+        let b = cff.evaluate_extents(&sub, gid, &[]).unwrap().unwrap();
+        let glyf = ttf.glyf().unwrap();
+        let loca = ttf.loca(None).unwrap();
+        let tg = loca.get_glyf(gid, &glyf).unwrap().unwrap();
+        assert_eq!(
+            (
+                b.x_min.to_f64(),
+                b.y_min.to_f64(),
+                b.x_max.to_f64(),
+                b.y_max.to_f64()
+            ),
+            (
+                f64::from(tg.x_min()),
+                f64::from(tg.y_min()),
+                f64::from(tg.x_max()),
+                f64::from(tg.y_max())
+            ),
+            "same outline bounds as the TrueType glyph"
+        );
+        let _ = GlyphId::NOTDEF;
+
+        // WOFF2: header, and the compressed stream holds exactly the font's tables.
+        let w = find("Bold", "woff2");
+        assert_eq!(&w[..4], b"wOF2");
+        assert_eq!(
+            u32::from_be_bytes(w[8..12].try_into().unwrap()) as usize,
+            w.len()
+        );
+        let num_tables = u16::from_be_bytes(w[12..14].try_into().unwrap()) as usize;
+        let compressed_len = u32::from_be_bytes(w[20..24].try_into().unwrap()) as usize;
+        assert_eq!(num_tables, ttf.table_directory().table_records().len());
+        let dir_len = w.len() - 48 - compressed_len;
+        let start = 48
+            + (0..=3)
+                .find(|pad| {
+                    (dir_len - pad) > 0 && {
+                        let d = dir_len - pad;
+                        let mut out = Vec::new();
+                        brotli::BrotliDecompress(&mut &w[48 + d..48 + d + compressed_len], &mut out)
+                            .is_ok()
+                    }
+                })
+                .map(|pad| dir_len - pad)
+                .unwrap();
+        let mut stream = Vec::new();
+        brotli::BrotliDecompress(&mut &w[start..start + compressed_len], &mut stream).unwrap();
+        let mut tables: Vec<_> = ttf
+            .table_directory()
+            .table_records()
+            .iter()
+            .map(|r| {
+                (
+                    r.tag(),
+                    ttf.table_data(r.tag()).unwrap().as_bytes().to_vec(),
+                )
+            })
+            .collect();
+        tables.sort_by_key(|(t, _)| *t);
+        let expected: Vec<u8> = tables.into_iter().flat_map(|(_, d)| d).collect();
+        assert_eq!(stream, expected);
+        let vf = find("Variable", "woff2");
+        assert_eq!(&vf[..4], b"wOF2");
+    }
+
+    #[test]
+    fn overlaps_and_metrics_keys_on_export() {
+        let mut f = sample_font();
+        let m = f.masters[0].id.clone();
+        // T is a crossbar and a stem that overlap; n's left sidebearing follows H.
+        let t = f.glyph("T").unwrap().layer(&m).unwrap().shapes.len();
+        assert_eq!(t, 2, "the sample T is two overlapping bars");
+        f.glyph_mut("n")
+            .unwrap()
+            .layer_mut(&m)
+            .unwrap()
+            .metrics_keys
+            .left = Some("=H".into());
+        let h_lsb =
+            kernest_core::geometry::sidebearings(&f, f.glyph("H").unwrap().layer(&m).unwrap())
+                .unwrap()
+                .0;
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(false, true, out.path());
+        opts.remove_overlaps = true;
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let glyf = font.glyf().unwrap();
+        let loca = font.loca(None).unwrap();
+        let cmap = font.cmap().unwrap();
+        let contours = |c: char| {
+            let gid = cmap.map_codepoint(c).unwrap();
+            match loca.get_glyf(gid, &glyf).unwrap().unwrap() {
+                write_fonts::read::tables::glyf::Glyph::Simple(s) => s.number_of_contours(),
+                _ => panic!("expected a simple glyph"),
+            }
+        };
+        assert_eq!(contours('T'), 1, "the bars were merged");
+        assert_eq!(contours('H'), 1, "H's bars were merged too");
+        let gid = cmap.map_codepoint('n').unwrap();
+        let g = loca.get_glyf(gid, &glyf).unwrap().unwrap();
+        assert_eq!(
+            f64::from(g.x_min()),
+            h_lsb.round(),
+            "n's left sidebearing follows H"
+        );
+        // Without the option, T keeps both contours.
+        let out2 = tempfile::tempdir().unwrap();
+        let r2 = export(&f, &ExportOptions::ttf(false, true, out2.path())).unwrap();
+        let b2 = std::fs::read(&r2.files[0].path).unwrap();
+        let f2 = FontRef::new(&b2).unwrap();
+        let gid = f2.cmap().unwrap().map_codepoint('T').unwrap();
+        let g2 = f2
+            .loca(None)
+            .unwrap()
+            .get_glyf(gid, &f2.glyf().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(g2.number_of_contours(), 2);
     }
 
     #[test]
@@ -571,15 +815,7 @@ mod tests {
             assert!(p.nodes.iter().all(|n| n.kind == NodeKind::Line));
         }
         let out = tempfile::tempdir().unwrap();
-        let r = export(
-            &f,
-            &ExportOptions {
-                variable: true,
-                statics: true,
-                out_dir: out.path().into(),
-            },
-        )
-        .unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
         assert_eq!(r.problems.len(), 1, "{:?}", r.problems);
         assert!(
             r.problems[0].contains("Variable font") && r.problems[0].contains("H"),
@@ -593,15 +829,7 @@ mod tests {
     #[test]
     fn variable_needs_masters() {
         let out = tempfile::tempdir().unwrap();
-        let r = export(
-            &sample_font(),
-            &ExportOptions {
-                variable: true,
-                statics: false,
-                out_dir: out.path().into(),
-            },
-        )
-        .unwrap();
+        let r = export(&sample_font(), &ExportOptions::ttf(true, false, out.path())).unwrap();
         assert!(r.files.is_empty());
         assert!(r.problems[0].contains("two masters"));
     }

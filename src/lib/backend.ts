@@ -80,6 +80,8 @@ export interface LayerView {
   /** All components resolved to outlines, SVG path data in font units. */
   componentSvg: string;
   anchors: { name: string; x: number; y: number }[];
+  /** Metrics keys such as "=n" (left/right sidebearing, width). */
+  metricsKeys: { left?: string; right?: string; width?: string };
   /** Why this glyph's masters can't be interpolated (empty when they can). */
   issues: string[];
   status: DocStatus;
@@ -197,6 +199,7 @@ export interface KerningList {
 export interface ExportedFile {
   path: string;
   kind: "variable" | "static";
+  format: "ttf" | "otf" | "woff2";
   style: string;
   bytes: number;
 }
@@ -256,7 +259,11 @@ export interface Backend {
   setInstances(instances: Instance[]): Promise<FontInfo>;
   compatibility(): Promise<{ glyph: string; issues: string[] }[]>;
   /** Compiles a variable font and/or static fonts (TrueType) into `outDir`. */
-  exportFont(variable: boolean, statics: boolean, outDir: string): Promise<ExportReport>;
+  exportFont(variable: boolean, statics: boolean, outDir: string, options?: ExportFormats): Promise<ExportReport>;
+  /** Sets (or clears, with null) a metrics key such as "=n" and applies it. */
+  setMetricsKey(glyph: string, masterId: string, metric: MetricName, key: string | null): Promise<LayerView>;
+  /** Glyph › Update Metrics: applies every metrics key in the font. */
+  updateMetrics(): Promise<{ problems: string[]; status: DocStatus }>;
   /** Opens a .glyphs, .glyphspackage, .ufo or .designspace source as a new, unsaved font. */
   importFont(path: string): Promise<ImportResult>;
   /** Adds glyphs typed as names/characters/code points plus whole glyph sets. */
@@ -273,7 +280,17 @@ export interface Backend {
   removeLayer(glyph: string, key: string): Promise<DocStatus>;
 }
 
-export type PathOperation = "correct-direction" | "add-extremes";
+export type PathOperation = "correct-direction" | "add-extremes" | "remove-overlap";
+
+export interface ExportFormats {
+  ttf: boolean;
+  otf: boolean;
+  woff2: boolean;
+  /** Merge overlapping contours in static fonts. */
+  removeOverlaps: boolean;
+  /** Apply metrics keys before building. */
+  applyMetricsKeys: boolean;
+}
 
 const tauriBackend: Backend = {
   glyphSets: () => invoke("glyph_sets"),
@@ -302,7 +319,9 @@ const tauriBackend: Backend = {
   removeMaster: (id) => invoke("remove_master", { id }),
   setInstances: (instances) => invoke("set_instances", { instances }),
   compatibility: () => invoke("compatibility"),
-  exportFont: (variable, statics, outDir) => invoke("export_font", { variable, statics, outDir }),
+  exportFont: (variable, statics, outDir, options) => invoke("export_font", { variable, statics, outDir, ...options }),
+  setMetricsKey: (glyph, masterId, metric, key) => invoke("set_metrics_key", { glyph, masterId, metric, key }),
+  updateMetrics: () => invoke("update_metrics"),
   importFont: (path) => invoke("import_font", { path }),
   addGlyphs: (text, glyphSets) => invoke("add_glyphs", { text, glyphSets }),
   removeGlyphs: (names) => invoke("remove_glyphs", { names }),
@@ -458,7 +477,7 @@ function mockLayer(d: MockDoc, g: MockGlyph): LayerView {
   const components = g.components.map((c) => ({ base: c.base, transform: [...c.transform], svg: pathsToSvg(resolveComponent(d, c)) }));
   return {
     glyph: g.name, unicode: g.unicode, masterId: "m01", metrics: METRICS, width: g.width, ...sb(d, g),
-    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], issues: [], status: status(d),
+    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], metricsKeys: {}, issues: [], status: status(d),
   };
 }
 
@@ -686,6 +705,12 @@ const mockBackend: Backend = {
   },
   async exportFont() {
     throw "Exporting fonts needs the desktop app (npm run tauri dev).";
+  },
+  async setMetricsKey() {
+    throw "Metrics keys need the desktop app (npm run tauri dev).";
+  },
+  async updateMetrics() {
+    throw "Metrics keys need the desktop app (npm run tauri dev).";
   },
   async importFont() {
     throw "Importing fonts needs the desktop app (npm run tauri dev).";

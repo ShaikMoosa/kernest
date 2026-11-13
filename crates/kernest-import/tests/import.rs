@@ -539,15 +539,8 @@ fn imported_glyphs_font_exports() {
     fs::write(&path, glyphs_file()).unwrap();
     let font = import(&path).unwrap().font;
     let out = dir.path().join("out");
-    let r = kernest_export::export(
-        &font,
-        &kernest_export::ExportOptions {
-            variable: false,
-            statics: true,
-            out_dir: out,
-        },
-    )
-    .unwrap();
+    let r = kernest_export::export(&font, &kernest_export::ExportOptions::ttf(false, true, out))
+        .unwrap();
     assert!(r.problems.is_empty(), "{:?}", r.problems);
     assert_eq!(r.files.len(), 1, "one exported instance: SemiBold");
 }

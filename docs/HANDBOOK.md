@@ -58,11 +58,32 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
 - **Components** (Ctrl+Shift+C): add another glyph as a component. Kernest won't let a glyph contain itself.
 - **Clipboard:** Ctrl+X, Ctrl+C and Ctrl+V cut, copy and paste paths and components, including between glyph tabs.
 - **Sidebearings and width:** edit the left sidebearing, advance width and right sidebearing in the panel at the bottom.
-- **Path › Correct Path Direction** (Ctrl+Shift+R): makes outer contours run counter-clockwise and counters (holes) clockwise, which is what the compiler expects.
-- **Path › Add Extremes:** adds points where curves reach their horizontal and vertical extremes. It works on the selected paths, or on all paths if none is selected.
+- **Path › Correct Path Direction** (Ctrl+Shift+R): makes outer contours run counter-clockwise and counters (holes) clockwise, which is what the compiler expects. It also orders contours left to right, with each counter right after its outline.
+- **Path › Add Extremes:** adds points where curves reach their horizontal and vertical extremes, on cubic and quadratic (TrueType) curves. It works on the selected paths, or on all paths if none is selected.
+- **Every master at once:** when a glyph's masters are compatible, both path commands work out the change on the master you're editing and make the same change in every master and intermediate layer, so the glyph stays compatible.
+- **Path › Remove Overlap:** merges overlapping or touching contours of the layer you're editing into one outline (only that layer, so do it in every master to keep them compatible, or let export do it).
+- **Metrics keys:** type a key instead of a number in the LSB, Width or RSB field to make it follow another glyph:
+  - `=n` uses `n`'s value on the same side, and `=|H` uses the opposite side (H's right sidebearing for a left sidebearing);
+  - add arithmetic such as `=o+10` or `=n*1.1`, or give a fixed value with `=40`;
+  - the key shows next to the field name, and × removes it; typing a plain number replaces it;
+  - **Glyph › Update Metrics** re-applies every key in the font, and export applies them too.
 - **View › Show Metrics** (Ctrl+Shift+M): shows or hides the metric lines (ascender, cap height, x-height, baseline, descender) and the advance box.
 
 Every edit can be undone with **Ctrl+Z** and redone with **Ctrl+Y**.
+
+### Intermediate and alternate layers
+
+Use the **Layer** menu in the Edit View toolbar to switch between the master's own layer and the glyph's extra layers.
+
+- **+ Intermediate** adds a brace layer: an extra drawing at its own location on the axes (for example `{wght 550}`), used when a glyph needs a correction between two masters.
+  - It starts as the glyph interpolated there, so nothing changes until you edit it.
+  - It must stay compatible with the masters (same paths, points and components).
+  - **Move…** changes its location; **Remove** deletes it.
+- **+ Alternate** adds bracket layers: a second design used wherever the location is inside the axis ranges you give (for example `[wght 600–]` for a simpler `$` at heavy weights).
+  - Every master gets a copy to edit, and the alternates must be compatible with each other.
+  - A range includes its minimum and stops just below its maximum; leave a box empty for no limit.
+  - **Ranges…** changes the ranges for all masters; **Remove** removes the alternate everywhere.
+- **In exported fonts:** static fonts get the right design at their location. Variable fonts get intermediate layers as extra sources and swap alternates in with OpenType feature variations.
 
 ## Spacing and kerning
 
@@ -85,10 +106,21 @@ Switch the master you're editing with the buttons at the top right. Previews int
 
 ## Export
 
-**File › Export** (Ctrl+E) builds TrueType fonts with [fontc](https://github.com/googlefonts/fontc):
+**File › Export** (Ctrl+E) builds fonts with [fontc](https://github.com/googlefonts/fontc):
 
 - **Variable font** (`Family-VF.ttf`): built from all the masters. It needs at least two masters, an axis, a master at the default location, and glyphs that can be interpolated.
 - **Static fonts** (`Family-Style.ttf`): one per exported instance, or one per master if there are no instances. Instances between masters are interpolated by Kernest first.
+
+Choose the formats:
+
+- **TTF:** TrueType outlines, for desktop apps.
+- **OTF:** PostScript (CFF) outlines, for static fonts. Variable fonts are built as TTF or WOFF2.
+- **WOFF2:** compressed web fonts, for static and variable fonts.
+
+And what happens before building:
+
+- **Remove overlaps** merges overlapping contours in static fonts. Variable fonts keep them, because their masters must stay compatible.
+- **Apply metrics keys** re-applies every metrics key, so sidebearings are up to date.
 
 Kerning and kerning groups are compiled into GPOS, and your feature code is included. Glyphs that aren't set to export are left out.
 
@@ -101,7 +133,7 @@ Kerning and kerning groups are compiled into GPOS, and your feature code is incl
 
 `.glyphspackage` and `.ufo` sources are folders. Use **File › Import Folder…** to pick the folder, or pick any file inside it with Import….
 
-Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features. Brace and bracket layers, sparse sources and right-to-left kerning aren't supported yet. If anything is left out, a dialog lists it.
+Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
 
 ## Keyboard shortcuts
 

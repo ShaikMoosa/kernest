@@ -61,6 +61,9 @@ name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "ascii_plist_derive"
@@ -2237,6 +2240,8 @@ dependencies = [
 name = "kernest-core"
 version = "0.7.0"
 dependencies = [
+ "kurbo",
+ "linesweeper",
  "serde",
  "serde_json",
  "tempfile",
@@ -2247,6 +2252,7 @@ dependencies = [
 name = "kernest-export"
 version = "0.7.0"
 dependencies = [
+ "brotli",
  "fontc",
  "kernest-core",
  "norad",
@@ -2354,6 +2360,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61ff90caf6077a803a240f62fdbe88645a890bbca49ef8174c3cb0404362171d"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "linesweeper"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a25df1b0c5432893f41bba817150e323703ee5f6d974f3a6808ac7fd7f046d18"
+dependencies = [
+ "arrayvec",
+ "kurbo",
+ "polycool",
+ "rustc-hash",
+ "smallvec",
 ]
 
 [[package]]

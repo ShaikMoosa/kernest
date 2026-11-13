@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { backend, errorMessage, isTauri, type ExportReport, type FontInfo } from "../lib/backend";
+import { backend, errorMessage, isTauri, type ExportFormats, type ExportReport, type FontInfo } from "../lib/backend";
 import { CloseIcon, FolderIcon } from "./Icons";
 
 const DIR_KEY = "kernest.exportFolder";
@@ -21,14 +21,35 @@ function saveDir(dir: string) {
   }
 }
 
+const FORMATS_KEY = "kernest.exportFormats";
+const DEFAULT_FORMATS: ExportFormats = { ttf: true, otf: false, woff2: false, removeOverlaps: true, applyMetricsKeys: true };
+
+function loadFormats(): ExportFormats {
+  try {
+    return { ...DEFAULT_FORMATS, ...JSON.parse(localStorage.getItem(FORMATS_KEY) ?? "{}") };
+  } catch {
+    return DEFAULT_FORMATS;
+  }
+}
+
+function saveFormats(f: ExportFormats) {
+  try {
+    localStorage.setItem(FORMATS_KEY, JSON.stringify(f));
+  } catch {
+    // A convenience only.
+  }
+}
+
 const kb = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`);
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
-/** S14 · Export: variable and static TrueType fonts. */
+/** S14 · Export: variable and static fonts as TTF, OTF and WOFF2. */
 export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; onClose: () => void }) {
   const [info, setInfo] = useState<FontInfo | null>(null);
   const [variable, setVariable] = useState(true);
   const [statics, setStatics] = useState(true);
+  const [formats, setFormats] = useState<ExportFormats>(loadFormats);
+  const setFormat = (k: keyof ExportFormats, v: boolean) => setFormats((f) => ({ ...f, [k]: v }));
   const [dir, setDir] = useState(() => loadDir() || (fontPath ? fontPath.replace(/[\\/][^\\/]+$/, "") : ""));
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<ExportReport | null>(null);
@@ -52,7 +73,10 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
   const exportedInstances = info?.instances.filter((i) => i.export !== false) ?? [];
   const staticStyles = exportedInstances.length ? exportedInstances.map((i) => i.name) : (info?.masters.map((m) => m.name) ?? []);
   const wantVariable = variable && canVariable;
-  const nothing = !wantVariable && !statics;
+  const noFormat = !formats.ttf && !formats.otf && !formats.woff2;
+  // Variable fonts are TTF or WOFF2 (no CFF2 yet).
+  const variableBuilds = wantVariable && (formats.ttf || formats.woff2);
+  const nothing = (!variableBuilds && !statics) || noFormat;
 
   async function browse() {
     const picked = await open({ directory: true, multiple: false, title: "Export fonts to", defaultPath: dir || undefined });
@@ -66,7 +90,8 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
     setReport(null);
     try {
       saveDir(dir.trim());
-      setReport(await backend.exportFont(wantVariable, statics, dir.trim()));
+      saveFormats(formats);
+      setReport(await backend.exportFont(wantVariable, statics, dir.trim(), formats));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -87,20 +112,36 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
             <label className="check-row export-option">
               <input type="checkbox" checked={wantVariable} disabled={!canVariable} onChange={(e) => setVariable(e.target.checked)} />
               <span className="export-text">
-                <span className="k-body-strong">Variable font (.ttf)</span>
+                <span className="k-body-strong">Variable font</span>
                 <span className="k-caption muted">{variableNote}</span>
               </span>
             </label>
             <label className="check-row export-option">
               <input type="checkbox" checked={statics} onChange={(e) => setStatics(e.target.checked)} />
               <span className="export-text">
-                <span className="k-body-strong">Static fonts (.ttf)</span>
+                <span className="k-body-strong">Static fonts</span>
                 <span className="k-caption muted">
                   {staticStyles.length} file{staticStyles.length === 1 ? "" : "s"}: {staticStyles.join(", ")}
                   {exportedInstances.length ? " (instances)" : " (one per master)"}
                 </span>
               </span>
             </label>
+          </fieldset>
+          <fieldset className="field" disabled={busy}>
+            <legend className="k-overline muted">Formats</legend>
+            <div className="export-formats">
+              <label className="check-row"><input type="checkbox" checked={formats.ttf} onChange={(e) => setFormat("ttf", e.target.checked)} /> <span className="k-body">TTF</span> <span className="k-caption muted">TrueType, for desktop apps</span></label>
+              <label className="check-row"><input type="checkbox" checked={formats.otf} onChange={(e) => setFormat("otf", e.target.checked)} /> <span className="k-body">OTF</span> <span className="k-caption muted">PostScript (CFF) outlines, static fonts</span></label>
+              <label className="check-row"><input type="checkbox" checked={formats.woff2} onChange={(e) => setFormat("woff2", e.target.checked)} /> <span className="k-body">WOFF2</span> <span className="k-caption muted">compressed web fonts</span></label>
+            </div>
+            {wantVariable && formats.otf && !formats.ttf && !formats.woff2 && (
+              <span className="k-caption muted">Variable fonts are built as TTF or WOFF2; OTF applies to static fonts.</span>
+            )}
+          </fieldset>
+          <fieldset className="field" disabled={busy}>
+            <legend className="k-overline muted">Before building</legend>
+            <label className="check-row"><input type="checkbox" checked={formats.removeOverlaps} onChange={(e) => setFormat("removeOverlaps", e.target.checked)} /> <span className="k-body">Remove overlaps</span> <span className="k-caption muted">in static fonts (variable fonts keep them)</span></label>
+            <label className="check-row"><input type="checkbox" checked={formats.applyMetricsKeys} onChange={(e) => setFormat("applyMetricsKeys", e.target.checked)} /> <span className="k-body">Apply metrics keys</span> <span className="k-caption muted">such as =n on sidebearings</span></label>
           </fieldset>
           <label className="field">
             <span className="k-label">Destination folder</span>
@@ -120,6 +161,7 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
                     {report.files.map((f) => (
                       <li key={f.path} title={f.path}>
                         <span className={`pill ${f.kind === "variable" ? "pill-group" : "pill-static"}`}>{f.kind}</span>
+                        <span className="pill">{f.format.toUpperCase()}</span>
                         <span className="k-code">{fileName(f.path)}</span>
                         <span className="spacer" />
                         <span className="k-caption muted">{kb(f.bytes)}</span>
@@ -133,7 +175,7 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
           )}
         </div>
         <footer className="dialog-footer">
-          <span className="k-caption muted">TrueType outlines · compiled with fontc</span>
+          <span className="k-caption muted">Compiled with fontc · CFF and WOFF2 written by Kernest</span>
           <span className="spacer" />
           <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>{report ? "Done" : "Cancel"}</button>
           <button type="button" className="btn btn-primary" onClick={run} disabled={busy || nothing || !info}>{busy ? "Exporting…" : "Export"}</button>

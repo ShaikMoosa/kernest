@@ -1,8 +1,8 @@
 # Kernest
 
-An open-source font editor for Windows. Draw glyphs, space and kern, interpolate masters and export TrueType and variable fonts — offline, no account.
+An open-source font editor for Windows. Draw glyphs, space and kern, interpolate masters and export TTF, OTF, WOFF2 and variable fonts — offline, no account.
 
-> **Status: early development.** You can create a font from glyph sets, browse, add and remove glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static TrueType fonts, import Glyphs (`.glyphs`, `.glyphspackage`), UFO and designspace sources, and save/open `.kernest` fonts.
+> **Status: early development.** You can create a font from glyph sets, browse, add and remove glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings and metrics keys, path clean-up, intermediate and alternate layers, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static fonts as TTF, OTF and WOFF2 (with overlap removal), import Glyphs (`.glyphs`, `.glyphspackage`), UFO and designspace sources, and save/open `.kernest` fonts.
 
 See the [Handbook](docs/HANDBOOK.md) for how to use Kernest.
 
@@ -31,8 +31,8 @@ npm run tauri build      # build the setup installer into target/release/bundle/
 
 | Path | What it is |
 |---|---|
-| `crates/kernest-core` | Font data model, outline geometry, interpolation, glyph data and the `.kernest` file format. No UI dependencies. |
-| `crates/kernest-export` | Export: writes UFOs and a designspace with norad and compiles TrueType and variable fonts with fontc. |
+| `crates/kernest-core` | Font data model, outline geometry, interpolation (with brace and bracket layers), path tools, overlap removal, metrics keys, glyph data and the `.kernest` file format. No UI dependencies. |
+| `crates/kernest-export` | Export: writes UFOs and a designspace with norad, compiles TrueType and variable fonts with fontc, and writes CFF (OTF) and WOFF2 itself. |
 | `crates/kernest-import` | Import: converts Glyphs sources (with glyphs-reader) and UFO/designspace sources (with norad) into the Kernest model. |
 | `src-tauri` | The desktop app shell (Tauri 2): window, file dialogs and the commands the UI calls. |
 | `src` | The UI (React + TypeScript). `src/styles/tokens.css` holds the design tokens. |
@@ -57,16 +57,44 @@ Outline nodes are written as short strings such as `"80 0 line"` or `"300 700 cu
 
 Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens live in the Kernest Figma file. Design tokens in `src/styles/tokens.css` mirror the Figma variables `Kernest / Color` and `Kernest / Size`.
 
-## Roadmap (v1)
+## Roadmap
 
-1. Font View and `.kernest` files ✅
-2. Edit View: pen tool, nodes, components ✅
-3. Spacing and kerning (text mode, kerning window) ✅
-4. Masters, axes and interpolation ✅
-5. Export TTF and variable fonts (via [fontc](https://github.com/googlefonts/fontc)) ✅ — CFF-based OTF and WOFF2 later
-6. Import `.glyphs` / `.glyphspackage` and UFO ✅ — master layers only; brace and bracket layers later
+### v1: the core editor (done)
 
-Later: smart components, colour fonts, hinting, plug-ins and Python scripting.
+| # | Milestone | Status |
+|---|---|---|
+| 1 | Font View and `.kernest` files | ✅ v0.1 |
+| 2 | Edit View: pen tool, nodes, components | ✅ v0.2 |
+| 3 | Spacing and kerning (text mode, kerning window, groups) | ✅ v0.3 |
+| 4 | Masters, axes and interpolation | ✅ v0.4 |
+| 5 | Export TTF and variable fonts (via [fontc](https://github.com/googlefonts/fontc)) | ✅ v0.5 |
+| 6 | Import `.glyphs`, `.glyphspackage`, UFO and designspace | ✅ v0.6 |
+
+### 1.0 readiness
+
+| Milestone | Status |
+|---|---|
+| Add and remove glyphs, logo, Handbook, About | ✅ v0.7 |
+| Path tools: Correct Path Direction (with contour order), Add Extremes (cubic and quadratic), applied to every master so glyphs stay compatible | ✅ next release |
+| Brace (intermediate) and bracket (alternate) layers: editing, interpolation, export, Glyphs/designspace import | ✅ next release |
+| Export OTF (CFF outlines) and WOFF2 web fonts | ✅ next release |
+| Remove overlaps on export and as Path › Remove Overlap | ✅ next release |
+| Metrics keys (`=n`, `=\|H`, `=o+10`): editing, Glyph › Update Metrics, applied on export | ✅ next release |
+| Code-signed installer (no SmartScreen warning) | ⏳ planned |
+| Open `.kernest` fonts by double-clicking (file association) | ⏳ planned |
+
+Progress towards 1.0: **6 of 8** milestones done.
+
+### After 1.0
+
+| Milestone | Status |
+|---|---|
+| Variable OTF (CFF2) export | 🔜 next up after 1.0 |
+| Smart components | ⏳ planned |
+| Autohinting for TrueType (ttfautohint) | ⏳ planned |
+| Colour fonts (COLRv1) | ⏳ planned |
+| Python scripting and plug-ins | ⏳ planned |
+| Dark theme, ARM64 builds, more languages | ⏳ planned |
 
 ## Licence
 
