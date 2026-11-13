@@ -1988,7 +1988,7 @@ dependencies = [
 
 [[package]]
 name = "kernest"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "kernest-core",
  "kernest-export",
@@ -2001,7 +2001,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2011,7 +2011,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-export"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fontc",
  "kernest-core",
