@@ -2,7 +2,7 @@
 
 An open-source font editor for Windows. Draw glyphs, space and kern, interpolate masters and export OTF, TTF and variable fonts — offline, no account.
 
-> **Status: early development.** You can create a font from glyph sets, browse glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, and save/open `.kernest` fonts. Export is next.
+> **Status: early development.** You can create a font from glyph sets, browse glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static TrueType fonts, and save/open `.kernest` fonts. Importing other formats is next.
 
 ## Install
 
@@ -29,7 +29,8 @@ npm run tauri build      # build the setup installer into target/release/bundle/
 
 | Path | What it is |
 |---|---|
-| `crates/kernest-core` | Font data model, outline geometry, glyph data and the `.kernest` file format. No UI dependencies. |
+| `crates/kernest-core` | Font data model, outline geometry, interpolation, glyph data and the `.kernest` file format. No UI dependencies. |
+| `crates/kernest-export` | Export: writes UFOs and a designspace with norad and compiles TrueType and variable fonts with fontc. |
 | `src-tauri` | The desktop app shell (Tauri 2): window, file dialogs and the commands the UI calls. |
 | `src` | The UI (React + TypeScript). `src/styles/tokens.css` holds the design tokens. |
 
@@ -59,7 +60,7 @@ Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens liv
 2. Edit View: pen tool, nodes, components ✅
 3. Spacing and kerning (text mode, kerning window) ✅
 4. Masters, axes and interpolation ✅
-5. Export OTF, TTF and variable fonts (via [fontc](https://github.com/googlefonts/fontc))
+5. Export TTF and variable fonts (via [fontc](https://github.com/googlefonts/fontc)) ✅ — CFF-based OTF and WOFF2 later
 6. Import `.glyphs` / `.glyphspackage` and UFO
 
 Later: smart components, colour fonts, hinting, plug-ins and Python scripting.

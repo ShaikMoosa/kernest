@@ -176,6 +176,19 @@ export interface KerningList {
   status: DocStatus;
 }
 
+export interface ExportedFile {
+  path: string;
+  kind: "variable" | "static";
+  style: string;
+  bytes: number;
+}
+
+export interface ExportReport {
+  files: ExportedFile[];
+  /** Targets that could not be built, with the reason. */
+  problems: string[];
+}
+
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export interface Backend {
@@ -209,6 +222,8 @@ export interface Backend {
   removeMaster(id: string): Promise<FontInfo>;
   setInstances(instances: Instance[]): Promise<FontInfo>;
   compatibility(): Promise<{ glyph: string; issues: string[] }[]>;
+  /** Compiles a variable font and/or static fonts (TrueType) into `outDir`. */
+  exportFont(variable: boolean, statics: boolean, outDir: string): Promise<ExportReport>;
 }
 
 const tauriBackend: Backend = {
@@ -238,6 +253,7 @@ const tauriBackend: Backend = {
   removeMaster: (id) => invoke("remove_master", { id }),
   setInstances: (instances) => invoke("set_instances", { instances }),
   compatibility: () => invoke("compatibility"),
+  exportFont: (variable, statics, outDir) => invoke("export_font", { variable, statics, outDir }),
 };
 
 // ---------- Browser preview mock ----------
@@ -609,6 +625,9 @@ const mockBackend: Backend = {
       return { name, location: checkLocation(d, i.location), export: i.export ?? true };
     });
     return editMeta(d, (m) => { m.instances = clean; });
+  },
+  async exportFont() {
+    throw "Exporting fonts needs the desktop app (npm run tauri dev).";
   },
   async compatibility() {
     return [];

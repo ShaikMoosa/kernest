@@ -332,3 +332,18 @@ button.doc-tab { padding-right: var(--k-space-12); }
 .location-picker { display: flex; align-items: center; gap: var(--k-space-6); }
 .axis-slider { display: flex; align-items: center; gap: var(--k-space-4); }
 .axis-slider input[type="range"] { width: 90px; accent-color: var(--k-accent-default); }
+
+/* ---------- Export (S14) ---------- */
+.export-dialog { width: 600px; }
+.export-option { height: auto; align-items: flex-start; padding: var(--k-space-6) 0; }
+.export-option input { margin-top: 2px; }
+.export-text { display: flex; flex-direction: column; gap: 2px; }
+.dest-input { flex: 1; max-width: none; }
+.export-busy { display: flex; align-items: center; gap: var(--k-space-8); background: var(--k-bg-selected); color: var(--k-text-accent); }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--k-accent-subtle); border-top-color: var(--k-accent-default); animation: k-spin 0.8s linear infinite; }
+@keyframes k-spin { to { transform: rotate(360deg); } }
+.export-report { display: flex; flex-direction: column; gap: var(--k-space-8); }
+.export-files { list-style: none; margin: 0; padding: 0; border: 1px solid var(--k-border-default); border-radius: var(--k-radius-lg); }
+.export-files li { display: flex; align-items: center; gap: var(--k-space-8); padding: var(--k-space-6) var(--k-space-12); border-bottom: 1px solid var(--k-border-default); }
+.export-files li:last-child { border-bottom: 0; }
+.pill-static { background: var(--k-bg-subtle); color: var(--k-text-secondary); }

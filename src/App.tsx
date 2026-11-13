@@ -12,6 +12,7 @@ import { AddIcon, CloseIcon } from "./components/Icons";
 import { TextView } from "./components/TextView";
 import { KerningView } from "./components/KerningView";
 import { FontInfoView } from "./components/FontInfoView";
+import { ExportDialog } from "./components/ExportDialog";
 
 const later = (label: string, shortcut?: string) => ({ label, shortcut, disabled: true });
 const CLEAN: DocStatus = { dirty: false, canUndo: false, canRedo: false };
@@ -25,6 +26,7 @@ export default function App() {
   const [fontStale, setFontStale] = useState(false);
   const [recents, setRecents] = useState<RecentFont[]>(() => loadRecents());
   const [glyphSets, setGlyphSets] = useState<GlyphSetInfo[] | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [toast, setToast] = useState<{ kind: "info" | "danger"; text: string } | null>(null);
   const dirtyRef = useRef(false);
   dirtyRef.current = status.dirty;
@@ -229,6 +231,7 @@ export default function App() {
       else if (k === "t" && !e.shiftKey && font) newTextTab();
       else if (k === "k" && e.shiftKey && font) openKerning();
       else if (k === "i" && !e.shiftKey && font) openInfo();
+      else if (k === "e" && !e.shiftKey && font) setExporting(true);
       else return;
       e.preventDefault();
     };
@@ -250,7 +253,7 @@ export default function App() {
         { label: "Save", shortcut: "Ctrl+S", onSelect: font ? save : undefined, separatorBefore: true },
         { label: "Save As…", shortcut: "Ctrl+Shift+S", onSelect: font ? saveAs : undefined },
         { label: "Close Font", onSelect: font ? closeFont : undefined },
-        { ...later("Export…", "Ctrl+E"), separatorBefore: true },
+        { label: "Export…", shortcut: "Ctrl+E", onSelect: font ? () => setExporting(true) : undefined, separatorBefore: true },
         { label: "Font Info…", shortcut: "Ctrl+I", onSelect: font ? openInfo : undefined },
       ],
     },
@@ -316,7 +319,7 @@ export default function App() {
               ))}
             </div>
             <button className="btn btn-secondary" onClick={openInfo} title="Font Info (Ctrl+I)">Font Info</button>
-            <button className="btn btn-primary" disabled title="Coming in v1">Export</button>
+            <button className="btn btn-primary" onClick={() => setExporting(true)} title="Export fonts (Ctrl+E)">Export</button>
           </div>
           {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} />}
           {tabs.map((id) => (
@@ -343,6 +346,7 @@ export default function App() {
           onSample={openSample}
         />
       )}
+      {exporting && font && <ExportDialog fontPath={font.path} onClose={() => setExporting(false)} />}
       {glyphSets && (
         <NewFontDialog
           sets={glyphSets}

@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod export;
 mod fontinfo;
 mod spacing;
 
@@ -36,6 +37,7 @@ fn main() {
             fontinfo::remove_master,
             fontinfo::set_instances,
             fontinfo::compatibility,
+            export::export_font,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kernest");
