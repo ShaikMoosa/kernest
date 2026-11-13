@@ -75,11 +75,11 @@ Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens liv
 | Milestone | Status |
 |---|---|
 | Add and remove glyphs, logo, Handbook, About | ✅ v0.7 |
-| Path tools: Correct Path Direction (with contour order), Add Extremes (cubic and quadratic), applied to every master so glyphs stay compatible | ✅ next release |
-| Brace (intermediate) and bracket (alternate) layers: editing, interpolation, export, Glyphs/designspace import | ✅ next release |
-| Export OTF (CFF outlines) and WOFF2 web fonts | ✅ next release |
-| Remove overlaps on export and as Path › Remove Overlap | ✅ next release |
-| Metrics keys (`=n`, `=\|H`, `=o+10`): editing, Glyph › Update Metrics, applied on export | ✅ next release |
+| Path tools: Correct Path Direction (with contour order), Add Extremes (cubic and quadratic), applied to every master so glyphs stay compatible | ✅ v0.8 |
+| Brace (intermediate) and bracket (alternate) layers: editing, interpolation, export, Glyphs/designspace import | ✅ v0.8 |
+| Export OTF (CFF outlines) and WOFF2 web fonts | ✅ v0.8 |
+| Remove overlaps on export and as Path › Remove Overlap | ✅ v0.8 |
+| Metrics keys (`=n`, `=\|H`, `=o+10`): editing, Glyph › Update Metrics, applied on export | ✅ v0.8 |
 | Code-signed installer (no SmartScreen warning) | ⏳ planned |
 | Open `.kernest` fonts by double-clicking (file association) | ⏳ planned |
 
