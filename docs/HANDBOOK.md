@@ -20,6 +20,15 @@ A Kernest font is a **`.kernest` folder**. Inside it, `font.json` holds the font
 - **Save** (Ctrl+S) and **Save As** (Ctrl+Shift+S): the title bar shows **Edited** while there are unsaved changes, and Kernest asks before closing a font with unsaved changes.
 - **Open Sample Font**: a ready-made font to try things out with.
 
+### Opening fonts from Windows
+
+- **Right-click a `.kernest` folder › Open in Kernest.** A `.kernest` font is a folder, so double-clicking it opens it in Explorer, as with any folder. (On Windows 11, look under **Show more options** if it isn't on the short menu.)
+- **Drag and drop** a `.kernest` folder onto the Kernest window or its taskbar button.
+- **Font sources** open the same ways and are imported:
+  - right-click a `.ufo` or `.glyphspackage` folder › **Open in Kernest**;
+  - double-click a `.glyphs` or `.designspace` file, or use **Open with › Kernest**. Kernest only becomes their default app if no other app has claimed them.
+- **One window at a time:** if Kernest is already running, the font opens in that window, which asks first if there are unsaved changes.
+
 ## Font View
 
 The **Font** tab shows every glyph as a cell.

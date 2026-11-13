@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { listen } from "@tauri-apps/api/event";
 import { backend, errorMessage, isTauri, type DocStatus, type FontView, type GlyphSetInfo } from "./lib/backend";
-import { forgetRecent, HANDBOOK_URL, loadRecents, openExternal, pickFontToOpen, pickSavePath, pickSourceToImport, rememberRecent, type RecentFont } from "./lib/desktop";
+import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, loadRecents, openExternal, pickFontToOpen, pickSavePath, pickSourceToImport, rememberRecent, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu } from "./components/TitleBar";
 import { StartWindow } from "./components/StartWindow";
 import { NewFontDialog } from "./components/NewFontDialog";
@@ -105,11 +107,8 @@ export default function App() {
     if (path) await openPath(path, true);
   }, [openPath, confirmDiscard, fail]);
 
-  const importSource = useCallback(async (folder = false) => {
-    if (!isTauri) return fail("Importing fonts needs the desktop app (npm run tauri dev).");
-    if (!(await confirmDiscard())) return;
-    const path = await pickSourceToImport(folder);
-    if (!path) return;
+  const importPath = useCallback(async (path: string, confirmed = false) => {
+    if (!confirmed && !(await confirmDiscard())) return;
     setToast({ kind: "info", text: "Importing…" });
     try {
       const r = await backend.importFont(path);
@@ -124,6 +123,45 @@ export default function App() {
       fail(e);
     }
   }, [confirmDiscard, loadDocument, fail]);
+
+  const importSource = useCallback(async (folder = false) => {
+    if (!isTauri) return fail("Importing fonts needs the desktop app (npm run tauri dev).");
+    if (!(await confirmDiscard())) return;
+    const path = await pickSourceToImport(folder);
+    if (path) await importPath(path, true);
+  }, [confirmDiscard, importPath, fail]);
+
+  /** Opens a .kernest font or imports a source, from Explorer or a drop on the window. */
+  const openAny = useCallback(async (path: string) => {
+    const kind = classifyPath(path);
+    if (kind === "kernest") return openPath(kernestRoot(path));
+    if (kind === "source") return importPath(path);
+    fail("Kernest opens .kernest fonts and imports .glyphs, .glyphspackage, .ufo and .designspace sources.");
+  }, [openPath, importPath, fail]);
+
+  // Fonts from outside: the paths Kernest was started with, paths from a second launch
+  // ("Open in Kernest" while it's running), and files dropped on the window.
+  const [dropping, setDropping] = useState(false);
+  const openAnyRef = useRef(openAny);
+  openAnyRef.current = openAny;
+  useEffect(() => {
+    if (!isTauri) return;
+    backend.takeLaunchPaths().then((p) => { if (p[0]) openAnyRef.current(p[0]); }, () => {});
+    const offOpen = listen<string[]>("open-paths", (e) => { if (e.payload[0]) openAnyRef.current(e.payload[0]); });
+    const offDrop = getCurrentWebview().onDragDropEvent((e) => {
+      const p = e.payload;
+      if (p.type === "enter" || p.type === "over") setDropping(true);
+      else if (p.type === "leave") setDropping(false);
+      else if (p.type === "drop") {
+        setDropping(false);
+        if (p.paths[0]) openAnyRef.current(p.paths[0]);
+      }
+    });
+    return () => {
+      offOpen.then((f) => f());
+      offDrop.then((f) => f());
+    };
+  }, []);
 
   const openSample = useCallback(async () => {
     if (await confirmDiscard()) backend.openSample().then(loadDocument, fail);
@@ -458,6 +496,11 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
         />
       )}
       {about && <AboutDialog onClose={() => setAbout(false)} />}
+      {dropping && (
+        <div className="drop-overlay" aria-hidden="true">
+          <div className="drop-card k-subtitle">Drop to open a .kernest font, or import .glyphs, .ufo or .designspace</div>
+        </div>
+      )}
       {importNotes && <ImportNotesDialog {...importNotes} onClose={() => setImportNotes(null)} />}
       {exporting && font && <ExportDialog fontPath={font.path} onClose={() => setExporting(false)} />}
       {glyphSets && (

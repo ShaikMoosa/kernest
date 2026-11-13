@@ -278,6 +278,8 @@ export interface Backend {
   addBracketLayers(glyph: string, masterId: string, ranges: AxisRange[]): Promise<{ key: string; status: DocStatus }>;
   updateLayerPosition(glyph: string, key: string, location?: Location, ranges?: AxisRange[]): Promise<{ key: string; status: DocStatus }>;
   removeLayer(glyph: string, key: string): Promise<DocStatus>;
+  /** Paths Kernest was started with (Explorer's "Open in Kernest", "Open with"); once. */
+  takeLaunchPaths(): Promise<string[]>;
 }
 
 export type PathOperation = "correct-direction" | "add-extremes" | "remove-overlap";
@@ -331,6 +333,7 @@ const tauriBackend: Backend = {
   addBracketLayers: (glyph, masterId, ranges) => invoke("add_bracket_layers", { glyph, masterId, ranges }),
   updateLayerPosition: (glyph, key, location, ranges) => invoke("update_layer_position", { glyph, key, location, ranges }),
   removeLayer: (glyph, key) => invoke("remove_layer", { glyph, key }),
+  takeLaunchPaths: () => invoke("take_launch_paths"),
 };
 
 // ---------- Browser preview mock ----------
@@ -739,6 +742,9 @@ const mockBackend: Backend = {
   },
   async removeLayer() {
     throw "Intermediate and alternate layers need the desktop app (npm run tauri dev).";
+  },
+  async takeLaunchPaths() {
+    return [];
   },
   async compatibility() {
     return [];

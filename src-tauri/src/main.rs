@@ -6,16 +6,24 @@ mod export;
 mod fontinfo;
 mod glyphs;
 mod import;
+mod launch;
 mod layers;
 mod spacing;
 
 fn main() {
+    let launch_paths = launch::paths_from_args(std::env::args());
     tauri::Builder::default()
+        // Must be first: a second launch hands its paths to the running window.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            launch::on_second_instance(app, argv)
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(commands::AppState::default())
+        .manage(launch::LaunchPaths(std::sync::Mutex::new(launch_paths)))
         .invoke_handler(tauri::generate_handler![
             commands::glyph_sets,
+            launch::take_launch_paths,
             commands::new_font,
             commands::open_sample,
             commands::open_font,

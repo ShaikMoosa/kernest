@@ -47,6 +47,7 @@
       "nsis": {
         "installMode": "both",
         "installerIcon": "icons/icon.ico",
+        "installerHooks": "windows/hooks.nsh",
         "displayLanguageSelector": false
       }
     }

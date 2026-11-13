@@ -81,9 +81,9 @@ Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens liv
 | Remove overlaps on export and as Path › Remove Overlap | ✅ v0.8 |
 | Metrics keys (`=n`, `=\|H`, `=o+10`): editing, Glyph › Update Metrics, applied on export | ✅ v0.8 |
 | Code-signed installer (no SmartScreen warning) | ⏳ planned |
-| Open `.kernest` fonts by double-clicking (file association) | ⏳ planned |
+| Open fonts from Windows: Explorer "Open in Kernest", Open with, drag and drop, one window at a time | ✅ next release |
 
-Progress towards 1.0: **6 of 8** milestones done.
+Progress towards 1.0: **7 of 8** milestones done.
 
 ### After 1.0
 

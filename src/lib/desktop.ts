@@ -11,6 +11,22 @@ export const windowControls = {
   close: () => (isTauri ? getCurrentWindow().close() : Promise.resolve()),
 };
 
+/** What a path dropped on the window or passed by Explorer is. */
+export function classifyPath(path: string): "kernest" | "source" | null {
+  const parts = path.toLowerCase().split(/[\\/]/).filter(Boolean);
+  if (parts.some((p) => p.endsWith(".kernest"))) return "kernest";
+  const last = parts[parts.length - 1] ?? "";
+  if (last.endsWith(".glyphs") || last.endsWith(".designspace")) return "source";
+  if (parts.some((p) => p.endsWith(".ufo") || p.endsWith(".glyphspackage"))) return "source";
+  return null;
+}
+
+/** The .kernest folder a path is in (or is), e.g. for a file dropped from inside it. */
+export function kernestRoot(path: string): string {
+  const m = /^(.*?\.kernest)(?:[\\/]|$)/i.exec(path);
+  return m ? m[1] : path;
+}
+
 export const REPO_URL = "https://github.com/ShaikMoosa/kernest";
 export const HANDBOOK_URL = `${REPO_URL}/blob/main/docs/HANDBOOK.md`;
 

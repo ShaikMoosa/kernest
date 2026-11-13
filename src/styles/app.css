@@ -359,6 +359,14 @@ button.doc-tab { padding-right: var(--k-space-12); }
 .export-files li:last-child { border-bottom: 0; }
 .pill-static { background: var(--k-bg-subtle); color: var(--k-text-secondary); }
 
+/* ---------- Drop to open ---------- */
+.drop-overlay {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; pointer-events: none;
+  background: color-mix(in srgb, var(--k-accent-default) 12%, transparent);
+  border: 3px dashed var(--k-accent-default);
+}
+.drop-card { padding: var(--k-space-16) var(--k-space-24); border-radius: var(--k-radius-lg); background: var(--k-bg-surface); box-shadow: 0 8px 24px rgb(0 0 0 / 0.15); }
+
 /* ---------- About ---------- */
 .about-dialog { width: 400px; }
 .about-dialog .dialog-header { border-bottom: 0; }
