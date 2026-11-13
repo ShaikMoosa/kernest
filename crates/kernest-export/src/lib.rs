@@ -282,18 +282,24 @@ fn variable(font: &Font, tmp: &Path) -> Result<Vec<u8>, String> {
             if incompatible.len() > 8 { ", …" } else { "" }
         ));
     }
+    compile(&write_sources(font, tmp)?)
+}
+
+/// Writes every master as a UFO plus a designspace into `dir`, and returns the
+/// designspace's path. This is the source set the variable font is compiled from.
+pub fn write_sources(font: &Font, dir: &Path) -> Result<PathBuf, String> {
     let mut sources = Vec::new();
     for (i, m) in font.masters.iter().enumerate() {
         let file = format!("master{i}.ufo");
         to_ufo(&master_source(font, m, &m.name))?
-            .save(tmp.join(&file))
+            .save(dir.join(&file))
             .map_err(|e| format!("could not write a UFO: {e}"))?;
         sources.push((file, m.name.clone(), m.location.clone()));
     }
-    let ds = tmp.join("font.designspace");
+    let ds = dir.join("font.designspace");
     std::fs::write(&ds, designspace(font, &sources))
         .map_err(|e| format!("could not write the designspace: {e}"))?;
-    compile(&ds)
+    Ok(ds)
 }
 
 #[cfg(test)]

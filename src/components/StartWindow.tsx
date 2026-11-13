@@ -9,10 +9,11 @@ interface Props {
   onOpenRecent: (path: string) => void;
   onForgetRecent: (path: string) => void;
   onSample: () => void;
+  onImport: () => void;
 }
 
 /** S01 · Start Window */
-export function StartWindow({ recents, onNew, onOpen, onOpenRecent, onForgetRecent, onSample }: Props) {
+export function StartWindow({ recents, onNew, onOpen, onOpenRecent, onForgetRecent, onSample, onImport }: Props) {
   const [query, setQuery] = useState("");
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -25,6 +26,7 @@ export function StartWindow({ recents, onNew, onOpen, onOpenRecent, onForgetRece
         <div className="row">
           <h1 className="k-title">Recent fonts</h1>
           <span className="spacer" />
+          <button className="btn btn-secondary" onClick={onImport} title="Import a .glyphs, .glyphspackage, .ufo or .designspace source">Import…</button>
           <button className="btn btn-secondary" onClick={onOpen}>Open…</button>
           <button className="btn btn-primary" onClick={onNew}>New Font</button>
         </div>

@@ -4,6 +4,7 @@
 mod commands;
 mod export;
 mod fontinfo;
+mod import;
 mod spacing;
 
 fn main() {
@@ -38,6 +39,7 @@ fn main() {
             fontinfo::set_instances,
             fontinfo::compatibility,
             export::export_font,
+            import::import_font,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kernest");

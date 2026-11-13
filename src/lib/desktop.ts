@@ -17,6 +17,26 @@ export async function pickFontToOpen(): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
+/**
+ * Import picks a file: a .glyphs or .designspace file, or any file inside a
+ * .glyphspackage or .ufo folder (such as fontinfo.plist). With `folder`, it picks the
+ * .glyphspackage or .ufo folder itself.
+ */
+export async function pickSourceToImport(folder = false): Promise<string | null> {
+  if (!isTauri) return null;
+  const picked = folder
+    ? await open({ directory: true, multiple: false, title: "Import a .glyphspackage or .ufo folder" })
+    : await open({
+        multiple: false,
+        title: "Import a font source",
+        filters: [
+          { name: "Font sources", extensions: ["glyphs", "designspace", "plist"] },
+          { name: "All files", extensions: ["*"] },
+        ],
+      });
+  return typeof picked === "string" ? picked : null;
+}
+
 export async function pickSavePath(familyName: string): Promise<string | null> {
   if (!isTauri) return null;
   return save({

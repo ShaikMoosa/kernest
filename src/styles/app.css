@@ -335,6 +335,8 @@ button.doc-tab { padding-right: var(--k-space-12); }
 
 /* ---------- Export (S14) ---------- */
 .export-dialog { width: 600px; }
+.import-dialog { width: 560px; }
+.import-dialog .dialog-body { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
 .export-option { height: auto; align-items: flex-start; padding: var(--k-space-6) 0; }
 .export-option input { margin-top: 2px; }
 .export-text { display: flex; flex-direction: column; gap: 2px; }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { backend, errorMessage, isTauri, type DocStatus, type FontView, type GlyphSetInfo } from "./lib/backend";
-import { forgetRecent, loadRecents, pickFontToOpen, pickSavePath, rememberRecent, type RecentFont } from "./lib/desktop";
+import { forgetRecent, loadRecents, pickFontToOpen, pickSavePath, pickSourceToImport, rememberRecent, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu } from "./components/TitleBar";
 import { StartWindow } from "./components/StartWindow";
 import { NewFontDialog } from "./components/NewFontDialog";
@@ -13,6 +13,7 @@ import { TextView } from "./components/TextView";
 import { KerningView } from "./components/KerningView";
 import { FontInfoView } from "./components/FontInfoView";
 import { ExportDialog } from "./components/ExportDialog";
+import { ImportNotesDialog } from "./components/ImportNotesDialog";
 
 const later = (label: string, shortcut?: string) => ({ label, shortcut, disabled: true });
 const CLEAN: DocStatus = { dirty: false, canUndo: false, canRedo: false };
@@ -27,6 +28,7 @@ export default function App() {
   const [recents, setRecents] = useState<RecentFont[]>(() => loadRecents());
   const [glyphSets, setGlyphSets] = useState<GlyphSetInfo[] | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [importNotes, setImportNotes] = useState<{ source: string; familyName: string; warnings: string[] } | null>(null);
   const [toast, setToast] = useState<{ kind: "info" | "danger"; text: string } | null>(null);
   const dirtyRef = useRef(false);
   dirtyRef.current = status.dirty;
@@ -90,6 +92,26 @@ export default function App() {
     const path = await pickFontToOpen();
     if (path) await openPath(path, true);
   }, [openPath, confirmDiscard, fail]);
+
+  const importSource = useCallback(async (folder = false) => {
+    if (!isTauri) return fail("Importing fonts needs the desktop app (npm run tauri dev).");
+    if (!(await confirmDiscard())) return;
+    const path = await pickSourceToImport(folder);
+    if (!path) return;
+    setToast({ kind: "info", text: "Importing…" });
+    try {
+      const r = await backend.importFont(path);
+      loadDocument(r.view);
+      if (r.warnings.length > 0) {
+        setToast(null);
+        setImportNotes({ source: r.source, familyName: r.view.familyName, warnings: r.warnings });
+      } else {
+        setToast({ kind: "info", text: `Imported ${r.view.familyName}. Use Save As to keep it as a .kernest font.` });
+      }
+    } catch (e) {
+      fail(e);
+    }
+  }, [confirmDiscard, loadDocument, fail]);
 
   const openSample = useCallback(async () => {
     if (await confirmDiscard()) backend.openSample().then(loadDocument, fail);
@@ -221,6 +243,7 @@ export default function App() {
       const inField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
       if (k === "n" && !e.shiftKey) showNewFont();
       else if (k === "o" && !e.shiftKey) open();
+      else if (k === "o") importSource(false);
       else if (k === "s" && e.shiftKey) saveAs();
       else if (k === "s") save();
       else if (k === "w" && !e.shiftKey) {
@@ -237,7 +260,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showNewFont, open, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font]);
+  }, [showNewFont, open, importSource, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font]);
 
   const inGlyph = font !== null && active !== null && active.startsWith("g:");
   const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? "Kerning" : id === "info" ? "Font Info" : `Text ${id.slice(5)}`);
@@ -250,6 +273,8 @@ export default function App() {
         { label: "New…", shortcut: "Ctrl+N", onSelect: showNewFont },
         { label: "Open…", shortcut: "Ctrl+O", onSelect: open },
         { label: "Open Sample Font", onSelect: openSample },
+        { label: "Import…", shortcut: "Ctrl+Shift+O", onSelect: () => importSource(false), separatorBefore: true },
+        { label: "Import Folder…", onSelect: () => importSource(true) },
         { label: "Save", shortcut: "Ctrl+S", onSelect: font ? save : undefined, separatorBefore: true },
         { label: "Save As…", shortcut: "Ctrl+Shift+S", onSelect: font ? saveAs : undefined },
         { label: "Close Font", onSelect: font ? closeFont : undefined },
@@ -344,8 +369,10 @@ export default function App() {
           onOpenRecent={openPath}
           onForgetRecent={(p) => setRecents(forgetRecent(p))}
           onSample={openSample}
+          onImport={() => importSource(false)}
         />
       )}
+      {importNotes && <ImportNotesDialog {...importNotes} onClose={() => setImportNotes(null)} />}
       {exporting && font && <ExportDialog fontPath={font.path} onClose={() => setExporting(false)} />}
       {glyphSets && (
         <NewFontDialog

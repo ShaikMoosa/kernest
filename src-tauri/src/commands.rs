@@ -390,6 +390,13 @@ fn to_component(font: &Font, glyph: &str, c: ComponentInput) -> CmdResult<Shape>
 
 // ---------- Document commands ----------
 
+/// Opens an imported font: it has no file yet and counts as unsaved, so closing asks first.
+pub(crate) fn replace_dirty(state: &AppState, font: Font) -> CmdResult<FontView> {
+    let mut doc = Document::new(font, None);
+    doc.revision = 1;
+    replace(state, doc)
+}
+
 fn replace(state: &AppState, doc: Document) -> CmdResult<FontView> {
     let mut guard = lock(state)?;
     let v = font_view_of(&doc, None)?;

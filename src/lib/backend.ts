@@ -189,6 +189,14 @@ export interface ExportReport {
   problems: string[];
 }
 
+export interface ImportResult {
+  view: FontView;
+  /** What was left out or changed while converting. */
+  warnings: string[];
+  /** The file or package that was imported. */
+  source: string;
+}
+
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export interface Backend {
@@ -224,6 +232,8 @@ export interface Backend {
   compatibility(): Promise<{ glyph: string; issues: string[] }[]>;
   /** Compiles a variable font and/or static fonts (TrueType) into `outDir`. */
   exportFont(variable: boolean, statics: boolean, outDir: string): Promise<ExportReport>;
+  /** Opens a .glyphs, .glyphspackage, .ufo or .designspace source as a new, unsaved font. */
+  importFont(path: string): Promise<ImportResult>;
 }
 
 const tauriBackend: Backend = {
@@ -254,6 +264,7 @@ const tauriBackend: Backend = {
   setInstances: (instances) => invoke("set_instances", { instances }),
   compatibility: () => invoke("compatibility"),
   exportFont: (variable, statics, outDir) => invoke("export_font", { variable, statics, outDir }),
+  importFont: (path) => invoke("import_font", { path }),
 };
 
 // ---------- Browser preview mock ----------
@@ -628,6 +639,9 @@ const mockBackend: Backend = {
   },
   async exportFont() {
     throw "Exporting fonts needs the desktop app (npm run tauri dev).";
+  },
+  async importFont() {
+    throw "Importing fonts needs the desktop app (npm run tauri dev).";
   },
   async compatibility() {
     return [];

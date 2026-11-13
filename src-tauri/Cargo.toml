@@ -12,6 +12,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 kernest-core = { path = "../crates/kernest-core" }
 kernest-export = { path = "../crates/kernest-export" }
+kernest-import = { path = "../crates/kernest-import" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde.workspace = true

@@ -1,0 +1,18 @@
+[package]
+name = "kernest-import"
+description = "Imports Glyphs (.glyphs, .glyphspackage), UFO and designspace sources into Kernest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kernest-core = { path = "../kernest-core" }
+glyphs-reader = "2.0.0"
+norad = "0.19.2"
+ordered-float = "5"
+serde.workspace = true
+
+[dev-dependencies]
+kernest-export = { path = "../kernest-export" }
+tempfile = "3"

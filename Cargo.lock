@@ -1992,6 +1992,7 @@ version = "0.5.0"
 dependencies = [
  "kernest-core",
  "kernest-export",
+ "kernest-import",
  "serde",
  "serde_json",
  "tauri",
@@ -2020,6 +2021,19 @@ dependencies = [
  "serde",
  "tempfile",
  "write-fonts",
+]
+
+[[package]]
+name = "kernest-import"
+version = "0.5.0"
+dependencies = [
+ "glyphs-reader",
+ "kernest-core",
+ "kernest-export",
+ "norad",
+ "ordered-float",
+ "serde",
+ "tempfile",
 ]
 
 [[package]]
