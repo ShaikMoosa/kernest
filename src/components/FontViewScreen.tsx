@@ -31,7 +31,7 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen }: { glyph: GlyphSu
 }
 
 /** S03 · Font View — grid of glyphs with category sidebar and glyph info. */
-export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void }) {
+export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void }) {
   const [category, setCategory] = useState<string>("All");
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -121,6 +121,18 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
             </>
           ) : (
             <p className="k-caption muted">{selectedGlyphs.length > 1 ? `${selectedGlyphs.length} glyphs selected` : "Select a glyph to see its metrics."}</p>
+          )}
+          {selectedGlyphs.length > 0 && onSetExport && (
+            <label className="check-row" title="Glyphs that aren't exported (such as parts used only as components) are left out of fonts">
+              <input
+                type="checkbox"
+                checked={selectedGlyphs.every((g) => g.export)}
+                ref={(el) => { if (el) el.indeterminate = selectedGlyphs.some((g) => g.export) && !selectedGlyphs.every((g) => g.export); }}
+                onChange={(e) => onSetExport(selectedGlyphs.map((g) => g.name), e.target.checked)}
+                aria-label="Export the selected glyphs"
+              />
+              <span className="k-caption">Export {selectedGlyphs.length > 1 ? "these glyphs" : "this glyph"}</span>
+            </label>
           )}
         </section>
       </aside>

@@ -426,10 +426,7 @@ pub fn new_font(
     family_name: String,
     glyph_sets: Vec<String>,
 ) -> CmdResult<FontView> {
-    let family = family_name.trim();
-    if family.is_empty() {
-        return Err("Enter a family name.".into());
-    }
+    let family = kernest_core::structure::check_family(&family_name)?;
     let ids: Vec<&str> = glyph_sets.iter().map(String::as_str).collect();
     replace(
         &state,

@@ -270,6 +270,8 @@ export interface Backend {
   addGlyphs(text: string, glyphSets: string[]): Promise<AddGlyphsResult>;
   /** Removes glyphs; components using them are decomposed. */
   removeGlyphs(names: string[]): Promise<DocStatus>;
+  /** Marks glyphs as exported or not (unexported glyphs are left out of fonts). */
+  setGlyphExport(names: string[], exportGlyph: boolean): Promise<DocStatus>;
   /** Correct Path Direction or Add Extremes on one layer (Add Extremes: only `paths`, if given). */
   pathOperation(glyph: string, masterId: string, operation: PathOperation, paths?: number[]): Promise<LayerView>;
   /** Master, brace and bracket layers of a glyph. */
@@ -327,6 +329,7 @@ const tauriBackend: Backend = {
   importFont: (path) => invoke("import_font", { path }),
   addGlyphs: (text, glyphSets) => invoke("add_glyphs", { text, glyphSets }),
   removeGlyphs: (names) => invoke("remove_glyphs", { names }),
+  setGlyphExport: (names, exportGlyph) => invoke("set_glyph_export", { names, export: exportGlyph }),
   pathOperation: (glyph, masterId, operation, paths) => invoke("path_operation", { glyph, masterId, operation, paths }),
   glyphLayers: (glyph) => invoke("glyph_layers", { glyph }),
   addBraceLayer: (glyph, masterId, location) => invoke("add_brace_layer", { glyph, masterId, location }),
@@ -723,6 +726,9 @@ const mockBackend: Backend = {
   },
   async removeGlyphs() {
     throw "Removing glyphs needs the desktop app (npm run tauri dev).";
+  },
+  async setGlyphExport() {
+    throw "Changing export settings needs the desktop app (npm run tauri dev).";
   },
   async pathOperation() {
     throw "Path operations need the desktop app (npm run tauri dev).";

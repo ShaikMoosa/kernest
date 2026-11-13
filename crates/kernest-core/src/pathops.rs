@@ -66,6 +66,42 @@ fn contains(poly: &[(f64, f64)], (x, y): (f64, f64)) -> bool {
     inside
 }
 
+/// Whether `p` lies on one of the polygon's edges.
+fn on_edge(poly: &[(f64, f64)], (x, y): (f64, f64)) -> bool {
+    let n = poly.len();
+    (0..n).any(|i| {
+        let (x0, y0) = poly[i];
+        let (x1, y1) = poly[(i + 1) % n];
+        let cross = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0);
+        let len = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt().max(1e-12);
+        cross.abs() / len < 1e-6
+            && x >= x0.min(x1) - 1e-6
+            && x <= x0.max(x1) + 1e-6
+            && y >= y0.min(y1) - 1e-6
+            && y <= y0.max(y1) + 1e-6
+    })
+}
+
+/// Whether contour `inner` is nested inside `outer`: smaller, every point inside or on
+/// `outer`, and at least one point strictly inside. Contours that only touch or
+/// partly overlap (like the bars of an H) are not nested.
+fn nested(inner: &[(f64, f64)], outer: &[(f64, f64)]) -> bool {
+    if area(inner).abs() >= area(outer).abs() {
+        return false;
+    }
+    let mut strictly = false;
+    for &p in inner {
+        if on_edge(outer, p) {
+            continue;
+        }
+        if !contains(outer, p) {
+            return false;
+        }
+        strictly = true;
+    }
+    strictly
+}
+
 /// Reverses a path's direction, keeping its start node first when it is on-curve.
 pub fn reverse(p: &Path) -> Path {
     let n = p.nodes.len();
@@ -141,11 +177,10 @@ pub fn direction_plan(layer: &Layer) -> DirectionPlan {
     let mut parent: Vec<Option<usize>> = vec![None; paths.len()];
     for (i, poly) in polys.iter().enumerate() {
         let Some(poly) = poly else { continue };
-        let probe = poly[0];
         let around: Vec<usize> = polys
             .iter()
             .enumerate()
-            .filter(|(j, o)| *j != i && o.as_ref().is_some_and(|o| contains(o, probe)))
+            .filter(|(j, o)| *j != i && o.as_ref().is_some_and(|o| nested(poly, o)))
             .map(|(j, _)| j)
             .collect();
         let depth = around.len();
@@ -584,6 +619,33 @@ mod tests {
         assert_eq!(path(&l.shapes[2]).nodes[0].x, 500.0);
         assert_eq!(path(&l.shapes[3]).nodes[0].x, 600.0);
         assert_eq!(l.shapes[4], open);
+    }
+
+    #[test]
+    fn touching_and_overlapping_contours_are_not_counters() {
+        // The sample H: two stems and a crossbar that starts on the left stem's edge
+        // and overlaps both. All three are solid; none may be reversed.
+        let mut l = Layer::new("m01", 680.0);
+        l.shapes = vec![
+            rect(80.0, 0.0, 170.0, 700.0, true),
+            rect(510.0, 0.0, 600.0, 700.0, true),
+            rect(80.0, 310.0, 600.0, 390.0, true),
+        ];
+        let plan = direction_plan(&l);
+        assert!(plan.reverse.is_empty(), "{plan:?}");
+        assert!(!correct_direction(&mut l) || l.shapes.iter().all(|s| signed(s) > 0.0));
+        assert!(
+            l.shapes.iter().all(|s| signed(s) > 0.0),
+            "all solid, counter-clockwise"
+        );
+        // A counter that touches its outline at a corner is still a counter.
+        let mut o = Layer::new("m01", 600.0);
+        o.shapes = vec![
+            rect(0.0, 0.0, 400.0, 600.0, true),
+            rect(0.0, 100.0, 300.0, 500.0, true),
+        ];
+        assert!(correct_direction(&mut o));
+        assert!(signed(&o.shapes[0]) > 0.0 && signed(&o.shapes[1]) < 0.0);
     }
 
     #[test]

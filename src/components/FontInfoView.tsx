@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { backend, type Axis, type DocStatus, type FontInfo, type Instance, type Location, type MasterView, type Metrics } from "../lib/backend";
 import { AddIcon, CloseIcon } from "./Icons";
 
@@ -11,6 +11,9 @@ const AXIS_PRESETS: Axis[] = [
 
 const num = (s: string) => Number(s.trim().replace("−", "-"));
 
+/** Where number fields report input that isn't a number. */
+const FieldError = createContext<(message: string) => void>(() => {});
+
 /** A text/number input that commits on Enter or blur and reverts on Escape. */
 function Field({ value, onCommit, width = 72, mono = true, label, numeric = true }: {
   value: string | number; onCommit: (v: string) => void; width?: number; mono?: boolean; label: string; numeric?: boolean;
@@ -18,6 +21,16 @@ function Field({ value, onCommit, width = 72, mono = true, label, numeric = true
   const shown = String(value);
   const [text, setText] = useState(shown);
   useEffect(() => setText(shown), [shown]);
+  const report = useContext(FieldError);
+  const commit = (v: string) => {
+    if (v === shown) return;
+    // Number fields only take numbers: say so instead of sending garbage.
+    if (numeric && (v.trim() === "" || !Number.isFinite(num(v)))) {
+      setText(shown);
+      return report(`${label}: enter a number.`);
+    }
+    onCommit(v);
+  };
   return (
     <input
       aria-label={label}
@@ -26,7 +39,7 @@ function Field({ value, onCommit, width = 72, mono = true, label, numeric = true
       value={text}
       inputMode={numeric ? "decimal" : undefined}
       onChange={(e) => setText(e.target.value)}
-      onBlur={(e) => { const v = e.currentTarget.value; if (v !== shown) onCommit(v); }}
+      onBlur={(e) => commit(e.currentTarget.value)}
       onKeyDown={(e) => {
         if (e.key === "Enter") (e.target as HTMLInputElement).blur();
         if (e.key === "Escape") { setText(shown); (e.target as HTMLInputElement).blur(); }
@@ -85,6 +98,7 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
     apply(() => backend.updateMaster(m.id, patch.name ?? m.name, patch.location ?? m.location, patch.metrics ?? m.metrics));
 
   return (
+    <FieldError.Provider value={onError}>
     <div className="fontinfo">
       <div className="fontinfo-scroll">
         {(info.warnings.length > 0 || info.incompatible > 0) && (
@@ -104,7 +118,11 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
                 onCommit={(v) => apply(() => backend.setFontInfo(v, info.unitsPerEm, info.versionMajor, info.versionMinor))} />
             </label>
             <label className="info-field"><span className="k-caption muted">Units per em</span>
-              <Field label="Units per em" value={info.unitsPerEm} onCommit={(v) => apply(() => backend.setFontInfo(info.familyName, num(v), info.versionMajor, info.versionMinor))} />
+              <Field label="Units per em" value={info.unitsPerEm} onCommit={(v) => {
+                const upm = num(v);
+                if (!Number.isInteger(upm) || upm < 16 || upm > 16384) return onError("Units per em must be a whole number between 16 and 16384.");
+                apply(() => backend.setFontInfo(info.familyName, upm, info.versionMajor, info.versionMinor));
+              }} />
             </label>
             <label className="info-field"><span className="k-caption muted">Version</span>
               <Field label="Version" value={`${info.versionMajor}.${String(info.versionMinor).padStart(3, "0")}`} numeric={false}
@@ -157,7 +175,20 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
               <span className="k-caption muted">Axis changes apply to all masters and instances.</span>
               <span className="spacer" />
               <button className="btn btn-secondary btn-sm" onClick={() => setAxes(null)}>Discard</button>
-              <button className="btn btn-primary btn-sm" onClick={async () => { const a = drafts.current.axes; if (a && await apply(() => backend.setAxes(a))) setAxes(null); }}>Apply axes</button>
+              <button className="btn btn-primary btn-sm" onClick={async () => {
+                const a = drafts.current.axes;
+                if (!a) return;
+                // Removing an axis also changes masters, instances and layers: say so first.
+                const removed = info.axes.filter((old) => !a.some((x) => x.tag === old.tag));
+                if (removed.length) {
+                  const names = removed.map((x) => x.name).join(", ");
+                  const ok = window.confirm(
+                    `Remove ${names}?\n\nMasters and instances lose their position on ${removed.length === 1 ? "this axis" : "these axes"}, and intermediate and alternate layers that use ${removed.length === 1 ? "it" : "them"} are deleted. You can undo this with Ctrl+Z.`
+                  );
+                  if (!ok) return;
+                }
+                if (await apply(() => backend.setAxes(a))) setAxes(null);
+              }}>Apply axes</button>
             </div>
           )}
         </section>
@@ -231,6 +262,11 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
                 <Field label="Instance name" value={it.name} width={160} mono={false} numeric={false} onCommit={(v) => setInstances(curInst().map((x, j) => (j === i ? { ...x, name: v } : x)))} />
               </label>
               {locFields(it.location, (loc) => setInstances(curInst().map((x, j) => (j === i ? { ...x, location: loc } : x))), it.name)}
+              <label className="check-row fi-export" title="Export this instance as a static font">
+                <input type="checkbox" checked={it.export !== false} aria-label={`Export ${it.name}`}
+                  onChange={(e) => setInstances(curInst().map((x, j) => (j === i ? { ...x, export: e.target.checked } : x)))} />
+                <span className="k-caption">Export</span>
+              </label>
               <span className="spacer" />
               <button className="icon-btn" aria-label={`Remove ${it.name}`} title="Remove instance" onClick={() => setInstances(curInst().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
             </div>
@@ -245,5 +281,6 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
         </section>
       </div>
     </div>
+    </FieldError.Provider>
   );
 }

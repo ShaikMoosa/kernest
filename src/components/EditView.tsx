@@ -55,7 +55,7 @@ const toEdit = (c: Comp): ComponentEdit => {
 };
 const fromView = (cs: ComponentView[]): Comp[] => cs.map((c) => ({ ...c, dx: 0, dy: 0 }));
 
-function MetricField({ label, value, disabled, onCommit, metricKey, onKey }: { label: string; value: number | null; disabled?: boolean; onCommit: (v: number) => void; metricKey?: string; onKey?: (key: string | null) => void }) {
+function MetricField({ label, value, disabled, onCommit, metricKey, onKey, onInvalid }: { label: string; value: number | null; disabled?: boolean; onCommit: (v: number) => void; metricKey?: string; onKey?: (key: string | null) => void; onInvalid?: (message: string) => void }) {
   const shown = value === null ? "" : String(Math.round(value));
   const [text, setText] = useState(shown);
   useEffect(() => setText(shown), [shown]);
@@ -67,7 +67,11 @@ function MetricField({ label, value, disabled, onCommit, metricKey, onKey }: { l
       return setText(shown);
     }
     const v = Number(t.replace("−", "-"));
-    if (t === "" || !Number.isFinite(v) || raw === shown) return setText(shown);
+    if (t === "" || raw === shown) return setText(shown);
+    if (!Number.isFinite(v)) {
+      setText(shown);
+      return onInvalid?.(onKey ? `${label}: enter a number, or a metrics key such as =n.` : `${label}: enter a number.`);
+    }
     onCommit(v);
   };
   return (
@@ -875,20 +879,20 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             <span className="k-body-strong">{layer.glyph}</span>
             <span className="k-code muted">{layer.unicode ? `U+${layer.unicode}` : ""}</span>
           </div>
-          <MetricField label="LSB" value={layer.lsb} disabled={layer.lsb === null} onCommit={(v) => setMetric("lsb", v)} metricKey={layer.metricsKeys?.left} onKey={(k) => setMetricsKey("lsb", k)} />
-          <MetricField label="Width" value={layer.width} onCommit={(v) => setMetric("width", v)} metricKey={layer.metricsKeys?.width} onKey={(k) => setMetricsKey("width", k)} />
-          <MetricField label="RSB" value={layer.rsb} disabled={layer.rsb === null} onCommit={(v) => setMetric("rsb", v)} metricKey={layer.metricsKeys?.right} onKey={(k) => setMetricsKey("rsb", k)} />
+          <MetricField onInvalid={onError} label="LSB" value={layer.lsb} disabled={layer.lsb === null} onCommit={(v) => setMetric("lsb", v)} metricKey={layer.metricsKeys?.left} onKey={(k) => setMetricsKey("lsb", k)} />
+          <MetricField onInvalid={onError} label="Width" value={layer.width} onCommit={(v) => setMetric("width", v)} metricKey={layer.metricsKeys?.width} onKey={(k) => setMetricsKey("width", k)} />
+          <MetricField onInvalid={onError} label="RSB" value={layer.rsb} disabled={layer.rsb === null} onCommit={(v) => setMetric("rsb", v)} metricKey={layer.metricsKeys?.right} onKey={(k) => setMetricsKey("rsb", k)} />
           <span className="info-sep" />
           {oneNode && one ? (
             <>
-              <MetricField label="X" value={oneNode.x} onCommit={(v) => { const next = moveSelection(paths, selection, v - oneNode.x, 0); setPaths(next); commit(next); }} />
-              <MetricField label="Y" value={oneNode.y} onCommit={(v) => { const next = moveSelection(paths, selection, 0, v - oneNode.y); setPaths(next); commit(next); }} />
+              <MetricField onInvalid={onError} label="X" value={oneNode.x} onCommit={(v) => { const next = moveSelection(paths, selection, v - oneNode.x, 0); setPaths(next); commit(next); }} />
+              <MetricField onInvalid={onError} label="Y" value={oneNode.y} onCommit={(v) => { const next = moveSelection(paths, selection, 0, v - oneNode.y); setPaths(next); commit(next); }} />
             </>
           ) : oneComp ? (
             <>
               <span className="info-comp k-label" title="Selected component">◇ {oneComp.base}</span>
-              <MetricField label="X" value={oneComp.transform[4] + oneComp.dx} onCommit={(v) => moveComp([...compSel][0], v - (oneComp.transform[4] + oneComp.dx), 0)} />
-              <MetricField label="Y" value={oneComp.transform[5] + oneComp.dy} onCommit={(v) => moveComp([...compSel][0], 0, v - (oneComp.transform[5] + oneComp.dy))} />
+              <MetricField onInvalid={onError} label="X" value={oneComp.transform[4] + oneComp.dx} onCommit={(v) => moveComp([...compSel][0], v - (oneComp.transform[4] + oneComp.dx), 0)} />
+              <MetricField onInvalid={onError} label="Y" value={oneComp.transform[5] + oneComp.dy} onCommit={(v) => moveComp([...compSel][0], 0, v - (oneComp.transform[5] + oneComp.dy))} />
             </>
           ) : (
             <span className="k-caption muted info-count">{selectionLabel(selection.size, compSel.size)}</span>

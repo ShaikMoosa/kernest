@@ -57,6 +57,32 @@ pub fn add_glyphs(
     })
 }
 
+/// Sets whether glyphs are exported (unexported glyphs, such as parts used only as
+/// components, are left out of compiled fonts). One undoable step.
+#[tauri::command]
+pub fn set_glyph_export(
+    state: State<AppState>,
+    names: Vec<String>,
+    export: bool,
+) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let mut next = doc.font.clone();
+    for n in &names {
+        next.glyph_mut(n)
+            .ok_or_else(|| format!("There is no glyph named \"{n}\"."))?
+            .export = export;
+    }
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
 /// Removes glyphs; components using them are decomposed in the glyphs that remain.
 #[tauri::command]
 pub fn remove_glyphs(state: State<AppState>, names: Vec<String>) -> CmdResult<DocStatus> {

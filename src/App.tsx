@@ -469,7 +469,7 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
             <button className="btn btn-secondary" onClick={openInfo} title="Font Info (Ctrl+I)">Font Info</button>
             <button className="btn btn-primary" onClick={() => setExporting(true)} title="Export fonts (Ctrl+E)">Export</button>
           </div>
-          {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} onSelectionChange={setFontSelection} onAddGlyphs={showAddGlyphs} />}
+          {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} onSelectionChange={setFontSelection} onAddGlyphs={showAddGlyphs} onSetExport={(names, on) => backend.setGlyphExport(names, on).then(onStructureChanged, fail)} />}
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (

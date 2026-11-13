@@ -53,6 +53,7 @@ fn main() {
             import::import_font,
             glyphs::add_glyphs,
             glyphs::remove_glyphs,
+            glyphs::set_glyph_export,
             commands::path_operation,
             commands::set_metrics_key,
             commands::update_metrics,

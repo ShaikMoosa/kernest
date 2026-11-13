@@ -29,6 +29,13 @@ pub async fn export_font(
     if out_dir.as_os_str().is_empty() {
         return Err("Choose a folder to export to.".into());
     }
+    // A relative path would land wherever the app happens to run from.
+    if !out_dir.is_absolute() {
+        return Err(format!(
+            "\"{}\" isn't a full folder path. Use Browse…, or type a path such as C:\\Fonts.",
+            out_dir.display()
+        ));
+    }
     let font = {
         let mut guard = lock(&state)?;
         doc_mut(&mut guard)?.font.clone()

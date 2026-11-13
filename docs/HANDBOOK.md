@@ -41,6 +41,7 @@ The **Font** tab shows every glyph as a cell.
   - tick glyph sets to add whole ranges at once;
   - glyphs already in the font are skipped;
   - new glyphs get a layer in every master, and a suffixed glyph such as `a.sc` starts with the width of `a`.
+- **Export or not:** with glyphs selected, untick **Export this glyph** in the panel on the left to leave them out of compiled fonts, for example parts used only as components. Font View then shows "not exported".
 - **Remove glyphs** (Glyph › Remove Glyph, Ctrl+Delete): removes the selected glyphs, or the glyph whose tab is open.
   - Components that use a removed glyph are turned into outlines in the other glyphs, so nothing changes shape.
   - Kerning pairs that name a removed glyph are removed too.
@@ -108,8 +109,9 @@ Open **Font Info** (Ctrl+I) to set:
 
 - **Family:** the family name, units per em and version.
 - **Axes:** for example Weight (`wght`) from 100 to 900, with a default value.
+  - Removing an axis takes masters and instances off it (their positions on that axis are dropped) and deletes intermediate and alternate layers that use it. Kernest asks first, and Ctrl+Z undoes it.
 - **Masters:** each master is a full set of outlines at a location on the axes. Add a master by copying an existing one, then edit its outlines.
-- **Instances:** named styles such as SemiBold at a location between masters. They become static fonts on export.
+- **Instances:** named styles such as SemiBold at a location between masters. They become static fonts on export; untick **Export** on an instance to leave it out.
 
 Switch the master you're editing with the buttons at the top right. Previews interpolate live. Kernest checks that every glyph can be interpolated, meaning the same number of paths, nodes and components in each master, and lists the glyphs that can't be in the **Incompatible** category of Font View.
 
@@ -118,7 +120,7 @@ Switch the master you're editing with the buttons at the top right. Previews int
 **File › Export** (Ctrl+E) builds fonts with [fontc](https://github.com/googlefonts/fontc):
 
 - **Variable font** (`Family-VF.ttf`): built from all the masters. It needs at least two masters, an axis, a master at the default location, and glyphs that can be interpolated.
-- **Static fonts** (`Family-Style.ttf`): one per exported instance, or one per master if there are no instances. Instances between masters are interpolated by Kernest first.
+- **Static fonts** (`Family-Style.ttf`): one per exported instance, or one per master if there are no instances. Instances between masters are interpolated by Kernest first. Each static font's weight class (used by apps to sort and match styles) comes from its position on the Weight axis, or from its style name (Thin, Light, Bold…) if there's no Weight axis; its width class comes from a Width axis.
 
 Choose the formats:
 

@@ -106,6 +106,80 @@ pub struct UfoSource<'a> {
     pub kerning: Vec<KernPair>,
     /// Generated glyphs (bracket alternates) and the glyph whose kerning groups they share.
     pub alternates: Vec<(String, String)>,
+    /// Where this source sits in the design space (for the OS/2 weight and width class).
+    pub location: BTreeMap<String, f64>,
+}
+
+/// OS/2 weight class (1–1000) for a style: the `wght` location if the font has that
+/// axis, otherwise from the style name (Thin 100 … Black 900), otherwise 400.
+pub fn weight_class(font: &Font, location: &BTreeMap<String, f64>, style: &str) -> u32 {
+    if let Some(a) = font.axes.iter().find(|a| a.tag == "wght") {
+        let v = location.get("wght").copied().unwrap_or(a.default);
+        return v.round().clamp(1.0, 1000.0) as u32;
+    }
+    let s: String = style
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .collect();
+    const NAMES: [(&str, u32); 14] = [
+        ("hairline", 100),
+        ("thin", 100),
+        ("extralight", 200),
+        ("ultralight", 200),
+        ("semibold", 600),
+        ("demibold", 600),
+        ("extrabold", 800),
+        ("ultrabold", 800),
+        ("light", 300),
+        ("medium", 500),
+        ("bold", 700),
+        ("black", 900),
+        ("heavy", 900),
+        ("regular", 400),
+    ];
+    NAMES
+        .iter()
+        .find(|(n, _)| s.contains(n))
+        .map(|(_, w)| *w)
+        .unwrap_or(400)
+}
+
+/// OS/2 width class (1–9) from the `wdth` location (percent of normal), if the font
+/// has that axis.
+pub fn width_class(font: &Font, location: &BTreeMap<String, f64>) -> Option<u8> {
+    let a = font.axes.iter().find(|a| a.tag == "wdth")?;
+    let v = location.get("wdth").copied().unwrap_or(a.default);
+    const STEPS: [(f64, u8); 9] = [
+        (50.0, 1),
+        (62.5, 2),
+        (75.0, 3),
+        (87.5, 4),
+        (100.0, 5),
+        (112.5, 6),
+        (125.0, 7),
+        (150.0, 8),
+        (200.0, 9),
+    ];
+    STEPS
+        .iter()
+        .min_by(|a, b| (a.0 - v).abs().total_cmp(&(b.0 - v).abs()))
+        .map(|s| s.1)
+}
+
+fn os2_width(class: u8) -> norad::fontinfo::Os2WidthClass {
+    use norad::fontinfo::Os2WidthClass::*;
+    match class {
+        1 => UltraCondensed,
+        2 => ExtraCondensed,
+        3 => Condensed,
+        4 => SemiCondensed,
+        6 => SemiExpanded,
+        7 => Expanded,
+        8 => ExtraExpanded,
+        9 => UltraExpanded,
+        _ => Normal,
+    }
 }
 
 pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
@@ -125,6 +199,8 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     info.copyright = font.info.copyright.clone();
     info.open_type_name_designer = font.info.designer.clone();
     info.open_type_os2_vendor_id = font.info.vendor_id.clone();
+    info.open_type_os2_weight_class = Some(weight_class(font, &src.location, src.style_name));
+    info.open_type_os2_width_class = width_class(font, &src.location).map(os2_width);
 
     let has_notdef = src.layers.iter().any(|(n, _)| n == ".notdef");
     let mut order: Vec<String> = Vec::with_capacity(src.layers.len() + 1);

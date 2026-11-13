@@ -10,6 +10,25 @@ use crate::model::{Axis, Font, Instance, Metrics};
 
 type R<T> = Result<T, String>;
 
+/// The longest family name accepted. Font names can technically be longer, but
+/// many apps truncate long names and PostScript names stop at 63 characters.
+pub const MAX_FAMILY_NAME: usize = 64;
+
+/// A trimmed, non-empty family name of reasonable length.
+pub fn check_family(name: &str) -> R<&str> {
+    let family = name.trim();
+    if family.is_empty() {
+        return Err("Enter a family name.".into());
+    }
+    if family.chars().count() > MAX_FAMILY_NAME {
+        return Err(format!(
+            "A family name can be at most {MAX_FAMILY_NAME} characters ({} entered).",
+            family.chars().count()
+        ));
+    }
+    Ok(family)
+}
+
 pub fn set_info(
     font: &Font,
     family_name: &str,
@@ -17,10 +36,7 @@ pub fn set_info(
     version_major: u16,
     version_minor: u16,
 ) -> R<Font> {
-    let family = family_name.trim();
-    if family.is_empty() {
-        return Err("Enter a family name.".into());
-    }
+    let family = check_family(family_name)?;
     if !(16..=16384).contains(&units_per_em) {
         return Err("Units per em must be between 16 and 16384.".into());
     }

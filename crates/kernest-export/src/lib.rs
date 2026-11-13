@@ -124,6 +124,7 @@ fn master_source<'a>(
             .collect(),
         kerning: font.kerning.get(&master.id).cloned().unwrap_or_default(),
         alternates: Vec::new(),
+        location: master.location.clone(),
     }
 }
 
@@ -230,6 +231,7 @@ fn instance_source<'a>(
         layers,
         kerning,
         alternates: Vec::new(),
+        location: location.clone(),
     })
 }
 
@@ -804,6 +806,55 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(g2.number_of_contours(), 2);
+    }
+
+    #[test]
+    fn os2_weight_and_width_class() {
+        let os2_weight = |bytes: &[u8]| {
+            FontRef::new(bytes)
+                .unwrap()
+                .os2()
+                .unwrap()
+                .us_weight_class()
+        };
+        // With a weight axis: the location.
+        let mut f = two_masters();
+        f.instances.push(Instance {
+            name: "Medium".into(),
+            location: BTreeMap::from([("wght".into(), 550.0)]),
+            export: true,
+        });
+        f.instances.push(Instance {
+            name: "Bold".into(),
+            location: BTreeMap::from([("wght".into(), 700.0)]),
+            export: true,
+        });
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let read = |style: &str| {
+            std::fs::read(&r.files.iter().find(|x| x.style == style).unwrap().path).unwrap()
+        };
+        assert_eq!(os2_weight(&read("Medium")), 550);
+        assert_eq!(os2_weight(&read("Bold")), 700);
+        // Without one: the style name.
+        let mut g = sample_font();
+        g.masters[0].name = "Semi Bold".into();
+        let out2 = tempfile::tempdir().unwrap();
+        let r2 = export(&g, &ExportOptions::ttf(false, true, out2.path())).unwrap();
+        assert_eq!(os2_weight(&std::fs::read(&r2.files[0].path).unwrap()), 600);
+        // Width classes from a wdth axis.
+        let mut h = sample_font();
+        h.axes.push(Axis {
+            name: "Width".into(),
+            tag: "wdth".into(),
+            min: 75.0,
+            default: 100.0,
+            max: 100.0,
+            hidden: false,
+        });
+        let loc = BTreeMap::from([("wdth".to_string(), 75.0)]);
+        assert_eq!(ufo::width_class(&h, &loc), Some(3));
+        assert_eq!(ufo::width_class(&h, &BTreeMap::new()), Some(5));
     }
 
     #[test]
