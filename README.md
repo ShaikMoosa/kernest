@@ -117,7 +117,7 @@ Kernest 1.0 is complete: every milestone above has shipped.
 | Autohinting for TrueType fonts, static and variable (ttfautohint, via tilvisan) | ✅ v1.2 |
 | Colour fonts (COLRv1) | ⏳ planned |
 | Python scripting and plug-ins | ⏳ planned |
-| Dark theme, ARM64 builds, Spanish and Arabic (right-to-left) interface | ✅ next release |
+| Dark theme, ARM64 builds, Spanish and Arabic (right-to-left) interface | ✅ v1.3 |
 | Code-signed installer | ⏳ planned |
 
 ## Licence
