@@ -1,10 +1,33 @@
-# Kernest
+<p align="center">
+  <img src="docs/images/logo.svg" alt="Kernest logo: a purple falcon" width="140">
+</p>
 
-An open-source font editor for Windows. Draw glyphs, space and kern, interpolate masters and export TTF, OTF, WOFF2 and variable fonts (TrueType and CFF2) — offline, no account.
+<h1 align="center">Kernest</h1>
+
+<p align="center">
+  An open-source font editor for Windows. Draw glyphs, space and kern, interpolate masters and export TTF, OTF, WOFF2 and variable fonts (TrueType and CFF2) — offline, no account.
+</p>
+
+<p align="center">
+  <a href="https://github.com/ShaikMoosa/kernest/releases">Download</a> ·
+  <a href="docs/HANDBOOK.md">Handbook</a> ·
+  <a href="#roadmap">Roadmap</a>
+</p>
+
+![Font View: every glyph of the font in a grid, with categories and the selected glyph's metrics](docs/images/font-view.png)
 
 > **Status: early development.** You can create a font from glyph sets, browse, add and remove glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings and metrics keys, path clean-up, intermediate and alternate layers, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static fonts as TTF, OTF and WOFF2 (with overlap removal), import Glyphs (`.glyphs`, `.glyphspackage`), UFO and designspace sources, and save/open `.kernest` fonts.
 
 See the [Handbook](docs/HANDBOOK.md) for how to use Kernest.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Edit View: drawing the letter O, with on-curve points, handles and metric lines](docs/images/edit-view.png) | ![Text tab: sample text set in the font, with metric lines for spacing and kerning](docs/images/text-view.png) |
+| **Edit View:** draw and edit outlines, components, sidebearings and metrics keys, intermediate and alternate layers. | **Text tabs:** set sample text to space and kern, with kerning groups and exceptions. |
+| ![Font Info: the Weight axis, Regular and Bold masters with their metrics, and instances](docs/images/font-info.png) | ![Export dialog: variable and static fonts as TTF, OTF and WOFF2, with overlap removal and metrics keys](docs/images/export.png) |
+| **Font Info:** axes, masters and instances, with live interpolation previews. | **Export:** variable and static fonts as TTF, OTF (CFF/CFF2) and WOFF2. |
 
 ## Install
 
