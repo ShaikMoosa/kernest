@@ -1,16 +1,24 @@
 name: CI
 
+# Checks every change. The installer is built only for releases (release.yml).
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
 
 permissions:
   contents: read
 
+# A newer push to the same branch cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows:
-    name: Test and build installer (Windows x64)
+    name: Test (Windows x64)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,15 +48,3 @@ jobs:
 
       - name: Rust tests
         run: cargo test --workspace
-
-      # Distribution is a setup.exe published on GitHub Releases (no Store, no winget).
-      # CI builds it for every change; release builds are attached to a GitHub release.
-      - name: Build setup installer
-        run: npx tauri build --bundles nsis
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: kernest-setup-windows-x64
-          path: target/release/bundle/nsis/*-setup.exe
-          if-no-files-found: error
-          retention-days: 14
