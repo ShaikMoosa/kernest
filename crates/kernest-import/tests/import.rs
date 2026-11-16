@@ -142,6 +142,10 @@ customParameters = (
 {
 name = vendorID;
 value = KRNS;
+},
+{
+name = "TTFAutohint options";
+value = "-l 9 --hinting-range-max=45 -x0 -c -D latn";
 }
 );
 familyName = "Import Test";
@@ -456,6 +460,16 @@ fn check_glyphs_font(imp: &kernest_import::Imported) {
     assert_eq!(f.info.family_name, "Import Test");
     assert_eq!((f.info.version_major, f.info.version_minor), (2, 3));
     assert_eq!(f.info.vendor_id.as_deref(), Some("KRNS"));
+    assert_eq!(
+        f.info.hinting,
+        Some(kernest_core::Hinting {
+            range_min: 9,
+            range_max: 45,
+            increase_x_height: 0,
+            hint_composites: true,
+        }),
+        "from the TTFAutohint options custom parameter"
+    );
     assert_eq!(f.axes.len(), 1);
     let a = &f.axes[0];
     assert_eq!(

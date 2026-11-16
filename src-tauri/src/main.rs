@@ -43,6 +43,7 @@ fn main() {
             spacing::set_glyph_groups,
             fontinfo::font_info,
             fontinfo::set_font_info,
+            fontinfo::set_hinting,
             fontinfo::set_axes,
             fontinfo::add_master,
             fontinfo::update_master,

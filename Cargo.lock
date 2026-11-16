@@ -1113,7 +1113,7 @@ dependencies = [
  "smol_str",
  "thiserror 2.0.21",
  "tracing-subscriber",
- "write-fonts",
+ "write-fonts 0.55.0",
 ]
 
 [[package]]
@@ -1185,7 +1185,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tinystr",
  "tracing",
- "write-fonts",
+ "write-fonts 0.55.0",
 ]
 
 [[package]]
@@ -1214,7 +1214,7 @@ dependencies = [
  "tracing-subscriber",
  "ufo2fontir",
  "vergen-gitcl",
- "write-fonts",
+ "write-fonts 0.55.0",
 ]
 
 [[package]]
@@ -1232,7 +1232,7 @@ dependencies = [
  "smol_str",
  "thiserror 2.0.21",
  "tinystr",
- "write-fonts",
+ "write-fonts 0.55.0",
 ]
 
 [[package]]
@@ -1254,7 +1254,7 @@ dependencies = [
  "smol_str",
  "thiserror 2.0.21",
  "tracing",
- "write-fonts",
+ "write-fonts 0.55.0",
 ]
 
 [[package]]
@@ -1278,7 +1278,7 @@ dependencies = [
  "smol_str",
  "thiserror 2.0.21",
  "tracing",
- "write-fonts",
+ "write-fonts 0.55.0",
 ]
 
 [[package]]
@@ -1638,7 +1638,7 @@ dependencies = [
  "serde",
  "smol_str",
  "thiserror 2.0.21",
- "write-fonts",
+ "write-fonts 0.55.0",
 ]
 
 [[package]]
@@ -1659,7 +1659,7 @@ dependencies = [
  "smol_str",
  "thiserror 2.0.21",
  "tracing",
- "write-fonts",
+ "write-fonts 0.55.0",
 ]
 
 [[package]]
@@ -2260,7 +2260,8 @@ dependencies = [
  "plist",
  "serde",
  "tempfile",
- "write-fonts",
+ "tilvisan",
+ "write-fonts 0.55.0",
 ]
 
 [[package]]
@@ -3314,6 +3315,17 @@ dependencies = [
 
 [[package]]
 name = "read-fonts"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5a0cf4bb6cbce4c29756270d189a5e400ac05e91192161d83a0bcb6e68492e8"
+dependencies = [
+ "bytemuck",
+ "font-types",
+ "once_cell",
+]
+
+[[package]]
+name = "read-fonts"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bdaa4fffe9ff3ca2c353fa9729792805b9b3e324695ff5a081f860612e81b330"
@@ -3845,6 +3857,16 @@ name = "siphasher"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
+
+[[package]]
+name = "skrifa"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "526e654b303ff4ad73a5a40b25de2b3ce3d039c5e3b6da5f89ae6e57004cb40f"
+dependencies = [
+ "bytemuck",
+ "read-fonts 0.44.0",
+]
 
 [[package]]
 name = "slab"
@@ -4519,6 +4541,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tilvisan"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4decc79dcc9e13f5408a48707dd7c2ae8027c7b01f9bf7231dfe6403e1abdfe"
+dependencies = [
+ "chrono",
+ "indexmap 2.14.2",
+ "log",
+ "skrifa",
+ "thiserror 2.0.21",
+ "write-fonts 0.53.0",
+]
+
+[[package]]
 name = "time"
 version = "0.3.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4886,7 +4922,7 @@ dependencies = [
  "smol_str",
  "thiserror 2.0.21",
  "tracing",
- "write-fonts",
+ "write-fonts 0.55.0",
 ]
 
 [[package]]
@@ -5537,6 +5573,19 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "write-fonts"
+version = "0.53.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c2feba63177f6f6b51d646b78fafd5ff65f0581814155eb36ef620133d245c4"
+dependencies = [
+ "font-types",
+ "indexmap 2.14.2",
+ "kurbo",
+ "log",
+ "read-fonts 0.44.0",
+]
+
+[[package]]
+name = "write-fonts"
 version = "0.55.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e91ad74b39f48f456560ed1ccc75959efa19bf6f0817d1560751bb49db84f6c"
@@ -5545,7 +5594,7 @@ dependencies = [
  "indexmap 2.14.2",
  "kurbo",
  "log",
- "read-fonts",
+ "read-fonts 0.46.0",
  "serde",
 ]
 

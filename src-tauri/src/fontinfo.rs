@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use kernest_core::interpolate::{check_glyph, default_master};
-use kernest_core::{structure, Axis, Font, Instance, Metrics};
+use kernest_core::{structure, Axis, Font, Hinting, Instance, Metrics};
 use serde::Serialize;
 use tauri::State;
 
@@ -28,6 +28,8 @@ pub struct FontInfoView {
     axes: Vec<Axis>,
     masters: Vec<MasterView>,
     instances: Vec<Instance>,
+    /// TrueType autohinting settings (the defaults if the font has none).
+    hinting: Hinting,
     default_master_id: String,
     /// Design-space problems that block interpolation or export.
     warnings: Vec<String>,
@@ -55,6 +57,7 @@ fn info_view(doc: &Document) -> FontInfoView {
             })
             .collect(),
         instances: f.instances.clone(),
+        hinting: f.info.hinting.unwrap_or_default(),
         default_master_id: default_master(f).id.clone(),
         warnings: structure::warnings(f),
         incompatible: f
@@ -101,6 +104,11 @@ pub fn set_font_info(
     edit(&state, |f| {
         structure::set_info(f, &family_name, units_per_em, version_major, version_minor)
     })
+}
+
+#[tauri::command]
+pub fn set_hinting(state: State<AppState>, hinting: Hinting) -> CmdResult<FontInfoView> {
+    edit(&state, |f| structure::set_hinting(f, hinting))
 }
 
 #[tauri::command]

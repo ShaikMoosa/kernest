@@ -22,7 +22,7 @@ function saveDir(dir: string) {
 }
 
 const FORMATS_KEY = "kernest.exportFormats";
-const DEFAULT_FORMATS: ExportFormats = { ttf: true, otf: false, woff2: false, removeOverlaps: true, applyMetricsKeys: true };
+const DEFAULT_FORMATS: ExportFormats = { ttf: true, otf: false, woff2: false, removeOverlaps: true, applyMetricsKeys: true, autohint: true };
 
 function loadFormats(): ExportFormats {
   try {
@@ -137,6 +137,7 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
             <legend className="k-overline muted">Before building</legend>
             <label className="check-row"><input type="checkbox" checked={formats.removeOverlaps} onChange={(e) => setFormat("removeOverlaps", e.target.checked)} /> <span className="k-body">Remove overlaps</span> <span className="k-caption muted">in static fonts (variable fonts keep them)</span></label>
             <label className="check-row"><input type="checkbox" checked={formats.applyMetricsKeys} onChange={(e) => setFormat("applyMetricsKeys", e.target.checked)} /> <span className="k-body">Apply metrics keys</span> <span className="k-caption muted">such as =n on sidebearings</span></label>
+            <label className="check-row"><input type="checkbox" checked={formats.autohint} disabled={!formats.ttf && !formats.woff2} onChange={(e) => setFormat("autohint", e.target.checked)} /> <span className="k-body">Autohint</span> <span className="k-caption muted">sharper TTF and WOFF2 text on Windows (settings in Font Info)</span></label>
           </fieldset>
           <label className="field">
             <span className="k-label">Destination folder</span>

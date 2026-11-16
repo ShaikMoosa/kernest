@@ -8,6 +8,7 @@
 pub mod cff;
 pub mod cff2;
 mod charstring;
+mod hint;
 pub mod ufo;
 pub mod woff2;
 
@@ -39,6 +40,9 @@ pub struct ExportOptions {
     pub remove_overlaps: bool,
     /// Apply metrics keys (such as `=n`) to every glyph before building.
     pub apply_metrics_keys: bool,
+    /// Add TrueType hinting instructions (TTF and WOFF2; OTF is unaffected), with the
+    /// font's hinting settings.
+    pub autohint: bool,
     pub out_dir: PathBuf,
 }
 
@@ -53,6 +57,7 @@ impl ExportOptions {
             woff2: false,
             remove_overlaps: false,
             apply_metrics_keys: true,
+            autohint: false,
             out_dir: out_dir.into(),
         }
     }
@@ -270,6 +275,23 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     } else {
         font
     };
+    let hinting = font.info.hinting.unwrap_or_default();
+    // The TrueType bytes for TTF and WOFF2: hinted if asked (a failure is reported and
+    // the unhinted font is used).
+    let truetype = |report: &mut ExportReport, label: &str, name: &str, bytes: &[u8]| -> Vec<u8> {
+        if !opts.autohint || !(opts.ttf || opts.woff2) {
+            return bytes.to_vec();
+        }
+        match hint::autohint(bytes, &hinting, tmp.path(), name) {
+            Ok(h) => h,
+            Err(e) => {
+                report
+                    .problems
+                    .push(format!("{label}: {e}; exported without hinting."));
+                bytes.to_vec()
+            }
+        }
+    };
     let emit = |report: &mut ExportReport,
                 kind: &'static str,
                 format: &'static str,
@@ -291,6 +313,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     if opts.variable {
         match variable(font, tmp.path()) {
             Ok(bytes) => {
+                let tt = truetype(&mut report, "Variable font", "vf", &bytes);
                 if opts.ttf {
                     emit(
                         &mut report,
@@ -298,11 +321,11 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                         "ttf",
                         "Variable",
                         format!("{family}-VF.ttf"),
-                        &bytes,
+                        &tt,
                     )?;
                 }
                 if opts.woff2 {
-                    match woff2::to_woff2(&bytes) {
+                    match woff2::to_woff2(&tt) {
                         Ok(w) => emit(
                             &mut report,
                             "variable",
@@ -361,6 +384,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
             match built {
                 Ok((bytes, ufo)) => {
                     let stem = format!("{family}-{}", file_stem(style));
+                    let tt = truetype(&mut report, style, &format!("instance{i}"), &bytes);
                     if opts.ttf {
                         emit(
                             &mut report,
@@ -368,7 +392,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                             "ttf",
                             style,
                             format!("{stem}.ttf"),
-                            &bytes,
+                            &tt,
                         )?;
                     }
                     if opts.otf {
@@ -385,7 +409,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                         }
                     }
                     if opts.woff2 {
-                        match woff2::to_woff2(&bytes) {
+                        match woff2::to_woff2(&tt) {
                             Ok(w) => emit(
                                 &mut report,
                                 "static",
@@ -541,7 +565,7 @@ pub fn write_sources(font: &Font, dir: &Path) -> Result<PathBuf, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use kernest_core::sample::sample_font;
     use kernest_core::{structure, Axis, Instance, NodeKind, Shape};
@@ -958,7 +982,7 @@ mod tests {
 
     /// The sample font with a drawn acute and accented O / o made of components, as
     /// imported fonts usually have.
-    fn with_composites(mut f: Font) -> Font {
+    pub(crate) fn with_composites(mut f: Font) -> Font {
         use kernest_core::glyphset::{add_glyphs, parse_glyph_list};
         let list =
             parse_glyph_list("acutecomb gravecomb Oacute Ograve oacute ograve Oslash.alt").unwrap();
@@ -1262,6 +1286,40 @@ mod tests {
         );
         // Both masters still export as statics.
         assert_eq!(r.files.iter().filter(|x| x.kind == "static").count(), 2);
+    }
+
+    #[test]
+    fn autohint_on_export() {
+        use write_fonts::types::Tag;
+        let mut f = two_masters();
+        f.info.hinting = Some(kernest_core::Hinting {
+            range_min: 9,
+            range_max: 40,
+            ..Default::default()
+        });
+        let out = tempfile::tempdir().unwrap();
+        let opts = ExportOptions {
+            otf: true,
+            autohint: true,
+            ..ExportOptions::ttf(true, true, out.path())
+        };
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let fpgm = |path: &str| {
+            let b = std::fs::read(path).unwrap();
+            FontRef::new(&b)
+                .unwrap()
+                .table_data(Tag::new(b"fpgm"))
+                .is_some()
+        };
+        for file in &r.files {
+            assert_eq!(fpgm(&file.path), file.format == "ttf", "{}", file.path);
+        }
+        assert_eq!(r.files.iter().filter(|x| x.format == "ttf").count(), 3);
+        // Without the option nothing is hinted.
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
+        assert!(r.files.iter().all(|x| !fpgm(&x.path)));
     }
 
     #[test]

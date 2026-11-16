@@ -16,7 +16,8 @@ const FieldError = createContext<(message: string) => void>(() => {});
 
 /** A text/number input that commits on Enter or blur and reverts on Escape. */
 function Field({ value, onCommit, width = 72, mono = true, label, numeric = true }: {
-  value: string | number; onCommit: (v: string) => void; width?: number; mono?: boolean; label: string; numeric?: boolean;
+  /** Returning (a promise of) false means the value was refused: the field shows the old one again. */
+  value: string | number; onCommit: (v: string) => unknown; width?: number; mono?: boolean; label: string; numeric?: boolean;
 }) {
   const shown = String(value);
   const [text, setText] = useState(shown);
@@ -29,7 +30,7 @@ function Field({ value, onCommit, width = 72, mono = true, label, numeric = true
       setText(shown);
       return report(`${label}: enter a number.`);
     }
-    onCommit(v);
+    Promise.resolve(onCommit(v)).then((ok) => { if (ok === false) setText(shown); }, () => setText(shown));
   };
   return (
     <input
@@ -120,17 +121,44 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
             <label className="info-field"><span className="k-caption muted">Units per em</span>
               <Field label="Units per em" value={info.unitsPerEm} onCommit={(v) => {
                 const upm = num(v);
-                if (!Number.isInteger(upm) || upm < 16 || upm > 16384) return onError("Units per em must be a whole number between 16 and 16384.");
-                apply(() => backend.setFontInfo(info.familyName, upm, info.versionMajor, info.versionMinor));
+                if (!Number.isInteger(upm) || upm < 16 || upm > 16384) { onError("Units per em must be a whole number between 16 and 16384."); return false; }
+                return apply(() => backend.setFontInfo(info.familyName, upm, info.versionMajor, info.versionMinor));
               }} />
             </label>
             <label className="info-field"><span className="k-caption muted">Version</span>
               <Field label="Version" value={`${info.versionMajor}.${String(info.versionMinor).padStart(3, "0")}`} numeric={false}
                 onCommit={(v) => {
                   const m = v.trim().match(/^(\d+)(?:\.(\d+))?$/);
-                  if (!m) return onError("Write the version as major.minor, e.g. 1.002.");
-                  apply(() => backend.setFontInfo(info.familyName, info.unitsPerEm, Number(m[1]), Number(m[2] ?? 0)));
+                  if (!m) { onError("Write the version as major.minor, e.g. 1.002."); return false; }
+                  return apply(() => backend.setFontInfo(info.familyName, info.unitsPerEm, Number(m[1]), Number(m[2] ?? 0)));
                 }} />
+            </label>
+          </div>
+        </section>
+
+        <section className="fi-section" aria-labelledby="fi-hinting">
+          <div className="fi-head">
+            <h2 id="fi-hinting" className="k-subtitle">Hinting</h2>
+            <span className="k-caption muted">TrueType autohinting on export (TTF and WOFF2). Turn it on in the Export dialog.</span>
+          </div>
+          <div className="fi-row">
+            {([
+              ["rangeMin", "Smallest size (px)", "Hinting starts at this many pixels per em"],
+              ["rangeMax", "Largest size (px)", "Above this size the font isn't hinted"],
+              ["increaseXHeight", "Increase x-height up to (px)", "Rounds the x-height up at small sizes for legibility; 0 is off"],
+            ] as const).map(([key, label, hint]) => (
+              <label key={key} className="info-field" title={hint}><span className="k-caption muted">{label}</span>
+                <Field label={label} value={info.hinting[key]} onCommit={(v) => {
+                  const n = num(v);
+                  if (!Number.isInteger(n)) { onError(`${label}: enter a whole number.`); return false; }
+                  return apply(() => backend.setHinting({ ...info.hinting, [key]: n }));
+                }} />
+              </label>
+            ))}
+            <label className="check-row" title="Hint accented letters and other composites as whole glyphs, not through their components">
+              <input type="checkbox" checked={info.hinting.hintComposites}
+                onChange={(e) => apply(() => backend.setHinting({ ...info.hinting, hintComposites: e.target.checked }))} />
+              <span className="k-body">Hint composites as whole glyphs</span>
             </label>
           </div>
         </section>

@@ -118,6 +118,10 @@ Poles must match the master layer point for point. On export, smart components b
 Open **Font Info** (Ctrl+I) to set:
 
 - **Family:** the family name, units per em and version.
+- **Hinting:** the settings for autohinting on export (see [Export](#export)):
+  - **Smallest size** and **Largest size:** the range of text sizes, in pixels per em, that gets hinting instructions (8 to 50 by default).
+  - **Increase x-height up to:** at sizes up to this one, the x-height is rounded up so lowercase letters stay legible (14 by default; 0 turns it off).
+  - **Hint composites as whole glyphs:** hints accented letters and other composites as one shape, instead of through their components.
 - **Axes:** for example Weight (`wght`) from 100 to 900, with a default value.
   - Removing an axis takes masters and instances off it (their positions on that axis are dropped) and deletes intermediate and alternate layers that use it. Kernest asks first, and Ctrl+Z undoes it.
 - **Masters:** each master is a full set of outlines at a location on the axes. Add a master by copying an existing one, then edit its outlines.
@@ -142,6 +146,7 @@ And what happens before building:
 
 - **Remove overlaps** merges overlapping contours in static fonts. Variable fonts keep them, because their masters must stay compatible.
 - **Apply metrics keys** re-applies every metrics key, so sidebearings are up to date.
+- **Autohint** adds TrueType hinting instructions to TTF and WOFF2 files, static and variable, using the settings in Font Info › Hinting. Hinting makes text crisper at small sizes on Windows. OTF files aren't affected. Kernest hints with [tilvisan](https://github.com/simoncozens/tilvisan), a Rust port of ttfautohint.
 
 Kerning and kerning groups are compiled into GPOS, and your feature code is included. Glyphs that aren't set to export are left out.
 
@@ -154,7 +159,7 @@ Kerning and kerning groups are compiled into GPOS, and your feature code is incl
 
 `.glyphspackage` and `.ufo` sources are folders. Use **File › Import Folder…** to pick the folder, or pick any file inside it with Import….
 
-Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers and, from Glyphs files, metrics keys (glyph-wide and per layer). From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
+Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers and, from Glyphs files, metrics keys (glyph-wide and per layer) and the hinting settings in a **TTFAutohint options** custom parameter. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
 
 ## Keyboard shortcuts
 

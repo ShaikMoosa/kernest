@@ -345,6 +345,7 @@ fn build(
         designer: fi.open_type_name_designer.clone(),
         copyright: fi.copyright.clone(),
         vendor_id: fi.open_type_os2_vendor_id.clone(),
+        hinting: None,
     };
 
     // Masters, with the default one first so it is the reference for empty layers.

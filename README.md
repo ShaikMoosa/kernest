@@ -55,7 +55,7 @@ npm run tauri build      # build the setup installer into target/release/bundle/
 | Path | What it is |
 |---|---|
 | `crates/kernest-core` | Font data model, outline geometry, interpolation (with brace and bracket layers), path tools, overlap removal, metrics keys, glyph data and the `.kernest` file format. No UI dependencies. |
-| `crates/kernest-export` | Export: writes UFOs and a designspace with norad, compiles TrueType and variable fonts with fontc, and writes CFF (OTF) and WOFF2 itself. |
+| `crates/kernest-export` | Export: writes UFOs and a designspace with norad, compiles TrueType and variable fonts with fontc, autohints them with tilvisan, and writes CFF (OTF) and WOFF2 itself. |
 | `crates/kernest-import` | Import: converts Glyphs sources (with glyphs-reader) and UFO/designspace sources (with norad) into the Kernest model. |
 | `src-tauri` | The desktop app shell (Tauri 2): window, file dialogs and the commands the UI calls. |
 | `src` | The UI (React + TypeScript). `src/styles/tokens.css` holds the design tokens. |
@@ -114,7 +114,7 @@ Kernest 1.0 is complete: every milestone above has shipped.
 | Milestone | Status |
 |---|---|
 | Smart components: smart axes, pole layers, per-component values, Glyphs import | ✅ v1.1 |
-| Autohinting for TrueType (ttfautohint) | ⏳ planned |
+| Autohinting for TrueType fonts, static and variable (ttfautohint, via tilvisan) | ✅ next release |
 | Colour fonts (COLRv1) | ⏳ planned |
 | Python scripting and plug-ins | ⏳ planned |
 | Dark theme, ARM64 builds, more languages | ⏳ planned |

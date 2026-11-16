@@ -48,6 +48,22 @@ pub fn set_info(
     Ok(f)
 }
 
+/// Sets the TrueType autohinting settings.
+pub fn set_hinting(font: &Font, hinting: crate::Hinting) -> R<Font> {
+    if !(1..=1000).contains(&hinting.range_min) || !(1..=1000).contains(&hinting.range_max) {
+        return Err("Hinting sizes must be between 1 and 1000 pixels per em.".into());
+    }
+    if hinting.range_min > hinting.range_max {
+        return Err("The smallest hinted size can't be larger than the largest.".into());
+    }
+    if hinting.increase_x_height != 0 && !(6..=1000).contains(&hinting.increase_x_height) {
+        return Err("Increase x-height must be 0 (off) or between 6 and 1000.".into());
+    }
+    let mut f = font.clone();
+    f.info.hinting = (hinting != crate::Hinting::default()).then_some(hinting);
+    Ok(f)
+}
+
 fn check_axes(axes: &[Axis]) -> R<()> {
     let mut tags = HashSet::new();
     for a in axes {
@@ -271,6 +287,39 @@ pub fn warnings(font: &Font) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::sample::sample_font;
+
+    #[test]
+    fn hinting_settings() {
+        use crate::Hinting;
+        let f = sample_font();
+        let h = Hinting {
+            range_min: 10,
+            ..Hinting::default()
+        };
+        let g = set_hinting(&f, h).unwrap();
+        assert_eq!(g.info.hinting, Some(h));
+        assert_eq!(
+            set_hinting(&g, Hinting::default()).unwrap().info.hinting,
+            None,
+            "defaults aren't stored"
+        );
+        let bad = |h: Hinting| set_hinting(&f, h).unwrap_err();
+        assert!(bad(Hinting {
+            range_min: 60,
+            ..Hinting::default()
+        })
+        .contains("larger"));
+        assert!(bad(Hinting {
+            range_max: 0,
+            ..Hinting::default()
+        })
+        .contains("between 1 and 1000"));
+        assert!(bad(Hinting {
+            increase_x_height: 3,
+            ..Hinting::default()
+        })
+        .contains("0 (off)"));
+    }
 
     fn wght() -> Axis {
         Axis {

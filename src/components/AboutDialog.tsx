@@ -25,7 +25,7 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
           <h2 id="about-title" className="k-title">Kernest</h2>
           <p className="k-body">A font editor for Windows. Open source, works offline.</p>
           <p className="k-caption muted">Version {__APP_VERSION__} · Apache License 2.0</p>
-          <p className="k-caption muted">Fonts are compiled with fontc; Glyphs and UFO sources are read with glyphs-reader and norad.</p>
+          <p className="k-caption muted">Fonts are compiled with fontc and autohinted with tilvisan; Glyphs and UFO sources are read with glyphs-reader and norad.</p>
           <p className="about-links">{link(HANDBOOK_URL, "Handbook")} · {link(REPO_URL, "Source code")} · {link(`${REPO_URL}/releases`, "Releases")}</p>
         </div>
       </div>

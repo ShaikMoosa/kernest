@@ -45,6 +45,37 @@ pub struct FontInfo {
     pub copyright: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vendor_id: Option<String>,
+    /// TrueType autohinting settings; `None` means the defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hinting: Option<Hinting>,
+}
+
+/// Settings for TrueType autohinting on export: the ttfautohint options that matter
+/// most. Kernest hints with tilvisan, a Rust port of ttfautohint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hinting {
+    /// Smallest text size, in pixels per em, that gets hinting instructions.
+    pub range_min: u16,
+    /// Largest text size, in pixels per em, that gets hinting instructions.
+    pub range_max: u16,
+    /// Up to this size (pixels per em) the x-height is rounded up for legibility;
+    /// 0 turns this off.
+    pub increase_x_height: u16,
+    /// Hint composite glyphs as a whole rather than through their components.
+    #[serde(default)]
+    pub hint_composites: bool,
+}
+
+impl Default for Hinting {
+    fn default() -> Self {
+        Self {
+            range_min: 8,
+            range_max: 50,
+            increase_x_height: 14,
+            hint_composites: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -597,6 +628,7 @@ impl Font {
                 designer: None,
                 copyright: None,
                 vendor_id: None,
+                hinting: None,
             },
             axes: Vec::new(),
             masters: vec![master],

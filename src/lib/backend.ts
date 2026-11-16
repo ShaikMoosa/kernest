@@ -142,6 +142,19 @@ export interface Instance {
   export?: boolean;
 }
 
+/** TrueType autohinting settings (ttfautohint options). */
+export interface Hinting {
+  /** Smallest and largest text sizes, in pixels per em, that get hinting. */
+  rangeMin: number;
+  rangeMax: number;
+  /** Up to this size the x-height is rounded up; 0 turns it off. */
+  increaseXHeight: number;
+  /** Hint composite glyphs as a whole. */
+  hintComposites: boolean;
+}
+
+export const DEFAULT_HINTING: Hinting = { rangeMin: 8, rangeMax: 50, increaseXHeight: 14, hintComposites: false };
+
 export interface FontInfo {
   familyName: string;
   unitsPerEm: number;
@@ -150,6 +163,8 @@ export interface FontInfo {
   axes: Axis[];
   masters: MasterView[];
   instances: Instance[];
+  /** TrueType autohinting settings. */
+  hinting: Hinting;
   defaultMasterId: string;
   /** Design-space problems that block interpolation or export. */
   warnings: string[];
@@ -265,6 +280,8 @@ export interface Backend {
   fontInfo(): Promise<FontInfo>;
   setFontInfo(familyName: string, unitsPerEm: number, versionMajor: number, versionMinor: number): Promise<FontInfo>;
   setAxes(axes: Axis[]): Promise<FontInfo>;
+  /** Sets the TrueType autohinting settings. */
+  setHinting(hinting: Hinting): Promise<FontInfo>;
   /** Adds a master copied from `copyFrom` (outlines, metrics, kerning). */
   addMaster(copyFrom: string, name: string, location: Location): Promise<FontInfo>;
   updateMaster(id: string, name: string, location: Location, metrics: Metrics): Promise<FontInfo>;
@@ -313,6 +330,8 @@ export interface ExportFormats {
   removeOverlaps: boolean;
   /** Apply metrics keys before building. */
   applyMetricsKeys: boolean;
+  /** Add TrueType hinting to TTF and WOFF2 files. */
+  autohint: boolean;
 }
 
 const tauriBackend: Backend = {
@@ -336,6 +355,7 @@ const tauriBackend: Backend = {
   setGlyphGroups: (glyph, leftGroup, rightGroup) => invoke("set_glyph_groups", { glyph, leftGroup, rightGroup }),
   fontInfo: () => invoke("font_info"),
   setFontInfo: (familyName, unitsPerEm, versionMajor, versionMinor) => invoke("set_font_info", { familyName, unitsPerEm, versionMajor, versionMinor }),
+  setHinting: (hinting) => invoke("set_hinting", { hinting }),
   setAxes: (axes) => invoke("set_axes", { axes }),
   addMaster: (copyFrom, name, location) => invoke("add_master", { copyFrom, name, location }),
   updateMaster: (id, name, location, metrics) => invoke("update_master", { id, name, location, metrics }),
@@ -423,6 +443,7 @@ interface MockMeta {
   axes: Axis[];
   masters: MasterView[];
   instances: Instance[];
+  hinting?: Hinting;
 }
 
 interface MockDoc extends MockMeta {
@@ -601,7 +622,7 @@ function undoStep(d: MockDoc, c: MockChange, forward: boolean): UndoResult {
 
 const metaCopy = (m: MockMeta): MockMeta => JSON.parse(JSON.stringify({
   familyName: m.familyName, unitsPerEm: m.unitsPerEm, versionMajor: m.versionMajor, versionMinor: m.versionMinor,
-  axes: m.axes, masters: m.masters, instances: m.instances,
+  axes: m.axes, masters: m.masters, instances: m.instances, hinting: m.hinting,
 }));
 
 function mockInfo(d: MockDoc): FontInfo {
@@ -610,7 +631,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), defaultMasterId: def.id, warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, defaultMasterId: def.id, warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -674,6 +695,13 @@ const mockBackend: Backend = {
     if (!familyName.trim()) throw "Enter a family name.";
     if (unitsPerEm < 16 || unitsPerEm > 16384) throw "Units per em must be between 16 and 16384.";
     return editMeta(need(), (m) => Object.assign(m, { familyName: familyName.trim(), unitsPerEm, versionMajor, versionMinor }));
+  },
+  async setHinting(h) {
+    const ok = (v: number) => Number.isInteger(v) && v >= 1 && v <= 1000;
+    if (!ok(h.rangeMin) || !ok(h.rangeMax)) throw "Hinting sizes must be between 1 and 1000 pixels per em.";
+    if (h.rangeMin > h.rangeMax) throw "The smallest hinted size can't be larger than the largest.";
+    if (h.increaseXHeight !== 0 && !(ok(h.increaseXHeight) && h.increaseXHeight >= 6)) throw "Increase x-height must be 0 (off) or between 6 and 1000.";
+    return editMeta(need(), (m) => { m.hinting = { ...h }; });
   },
   async setAxes(axes) {
     const tags = new Set<string>();

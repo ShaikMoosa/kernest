@@ -90,6 +90,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             .vendor_id()
             .map(String::from)
             .or_else(|| g.custom_parameters.vendor_id.clone()),
+        hinting: None,
     };
 
     // Glyphs in the file's order, then any the order doesn't mention.
@@ -331,6 +332,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         Ok(keys) => apply_metrics_keys(&mut font, &keys, &master_ids, &mut warnings),
         Err(e) => warnings.push(format!("Metrics keys couldn't be read: {e}")),
     }
+    font.info.hinting = read_hinting(path);
     if font.glyphs.iter().any(|g| g.is_smart()) {
         match read_glyph_dicts(path) {
             Ok(dicts) => restore_smart_components(&mut font, &dicts, &master_ids),
@@ -631,6 +633,60 @@ fn read_metrics_keys(path: &Path) -> Result<HashMap<String, GlyphKeys>, String> 
         }
     }
     Ok(out)
+}
+
+/// Autohinting settings from the "TTFAutohint options" custom parameter (on the font,
+/// or else on the first instance that has it).
+fn read_hinting(path: &Path) -> Option<kernest_core::Hinting> {
+    let file = if path.is_dir() {
+        path.join("fontinfo.plist")
+    } else {
+        path.to_path_buf()
+    };
+    let root = glyphs_reader::Plist::parse(&std::fs::read_to_string(file).ok()?).ok()?;
+    let option = |d: &glyphs_reader::Plist| -> Option<String> {
+        d.get("customParameters")?.as_array()?.iter().find_map(|p| {
+            (p.get("name")?.as_str()? == "TTFAutohint options")
+                .then(|| p.get("value")?.as_str().map(str::to_string))?
+        })
+    };
+    let text =
+        option(&root).or_else(|| root.get("instances")?.as_array()?.iter().find_map(option))?;
+    parse_ttfautohint_options(&text)
+}
+
+/// Reads the ttfautohint options Kernest keeps (`-l`, `-r`, `-x`, `-c` and their long
+/// forms) from a command line such as `-l 8 -r 50 -x 14 -D latn`.
+pub fn parse_ttfautohint_options(text: &str) -> Option<kernest_core::Hinting> {
+    let mut h = kernest_core::Hinting::default();
+    let mut found = false;
+    let mut words = text.split_whitespace().peekable();
+    while let Some(w) = words.next() {
+        let (flag, inline) = match w.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f.to_string(), Some(v.to_string())),
+            _ if w.len() > 2 && w.starts_with('-') && !w.starts_with("--") => {
+                (w[..2].to_string(), Some(w[2..].to_string()))
+            }
+            _ => (w.to_string(), None),
+        };
+        let slot = match flag.as_str() {
+            "-l" | "--hinting-range-min" => &mut h.range_min,
+            "-r" | "--hinting-range-max" => &mut h.range_max,
+            "-x" | "--increase-x-height" => &mut h.increase_x_height,
+            "-c" | "--composites" => {
+                h.hint_composites = true;
+                found = true;
+                continue;
+            }
+            _ => continue,
+        };
+        let value = inline.or_else(|| words.next().map(str::to_string));
+        if let Some(v) = value.and_then(|v| v.trim_matches('"').parse().ok()) {
+            *slot = v;
+            found = true;
+        }
+    }
+    found.then_some(h)
 }
 
 /// Puts metrics keys on the imported layers: glyph-wide keys on every layer, layer keys
