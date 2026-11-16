@@ -60,11 +60,22 @@ export interface FontView {
 export interface ComponentEdit {
   base: string;
   transform: number[];
+  /** Values on the base glyph's smart axes (smart components only). */
+  smart?: Record<string, number>;
+}
+
+/** An axis of a smart glyph, such as Width 0–100. */
+export interface SmartAxis {
+  name: string;
+  min: number;
+  max: number;
 }
 
 export interface ComponentView extends ComponentEdit {
   /** This component's resolved outline, SVG path data in font units. */
   svg: string;
+  /** The base glyph's smart axes, if it is a smart glyph. */
+  smartAxes?: SmartAxis[];
 }
 
 export interface LayerView {
@@ -82,6 +93,8 @@ export interface LayerView {
   anchors: { name: string; x: number; y: number }[];
   /** Metrics keys such as "=n" (left/right sidebearing, width). */
   metricsKeys: { left?: string; right?: string; width?: string };
+  /** This glyph's smart axes, if it is a smart glyph. */
+  smartAxes?: SmartAxis[];
   /** Why this glyph's masters can't be interpolated (empty when they can). */
   issues: string[];
   status: DocStatus;
@@ -99,7 +112,7 @@ export interface AxisRange {
 export interface LayerInfo {
   /** Pass as `masterId` to the layer commands to edit this layer. */
   key: string;
-  kind: "master" | "brace" | "bracket";
+  kind: "master" | "brace" | "bracket" | "smart";
   label: string;
   masterId: string;
   masterName: string;
@@ -280,6 +293,12 @@ export interface Backend {
   addBracketLayers(glyph: string, masterId: string, ranges: AxisRange[]): Promise<{ key: string; status: DocStatus }>;
   updateLayerPosition(glyph: string, key: string, location?: Location, ranges?: AxisRange[]): Promise<{ key: string; status: DocStatus }>;
   removeLayer(glyph: string, key: string): Promise<DocStatus>;
+  /** Gives a glyph smart axes (an empty list makes it ordinary again). */
+  setSmartAxes(glyph: string, axes: SmartAxis[]): Promise<DocStatus>;
+  /** Adds a smart pole layer at a position on the glyph's smart axes. */
+  addSmartPole(glyph: string, masterId: string, pole: Record<string, number>): Promise<{ key: string; status: DocStatus }>;
+  /** Sets a component's smart values (component `index` among the layer's components). */
+  setComponentSmart(glyph: string, masterId: string, index: number, values: Record<string, number>): Promise<LayerView>;
   /** Paths Kernest was started with (Explorer's "Open in Kernest", "Open with"); once. */
   takeLaunchPaths(): Promise<string[]>;
 }
@@ -337,6 +356,9 @@ const tauriBackend: Backend = {
   updateLayerPosition: (glyph, key, location, ranges) => invoke("update_layer_position", { glyph, key, location, ranges }),
   removeLayer: (glyph, key) => invoke("remove_layer", { glyph, key }),
   takeLaunchPaths: () => invoke("take_launch_paths"),
+  setSmartAxes: (glyph, axes) => invoke("set_smart_axes", { glyph, axes }),
+  addSmartPole: (glyph, masterId, pole) => invoke("add_smart_pole", { glyph, masterId, pole }),
+  setComponentSmart: (glyph, masterId, index, values) => invoke("set_component_smart", { glyph, masterId, index, values }),
 };
 
 // ---------- Browser preview mock ----------
@@ -751,6 +773,15 @@ const mockBackend: Backend = {
   },
   async takeLaunchPaths() {
     return [];
+  },
+  async setSmartAxes() {
+    throw "Smart components need the desktop app (npm run tauri dev).";
+  },
+  async addSmartPole() {
+    throw "Smart components need the desktop app (npm run tauri dev).";
+  },
+  async setComponentSmart() {
+    throw "Smart components need the desktop app (npm run tauri dev).";
   },
   async compatibility() {
     return [];

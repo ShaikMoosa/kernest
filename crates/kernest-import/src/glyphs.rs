@@ -6,7 +6,7 @@ use std::path::Path;
 use glyphs_reader::{Font as GFont, InstanceType, NodeType, Shape as GShape};
 use kernest_core::{
     Anchor, Axis, AxisRange, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master,
-    Metrics, Node, NodeKind, Path as KPath, Shape,
+    Metrics, Node, NodeKind, Path as KPath, Shape, SmartAxis,
 };
 use ordered_float::OrderedFloat;
 
@@ -115,6 +115,15 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                 src.unicode.iter().map(|&u| Codepoint(u)).collect(),
             );
             out.export = src.export;
+            out.smart_axes = src
+                .smart_component_axes
+                .iter()
+                .map(|(n, r)| SmartAxis {
+                    name: n.to_string(),
+                    min: *r.start() as f64,
+                    max: *r.end() as f64,
+                })
+                .collect();
             out.left_group = src.left_kern.as_ref().map(|s| s.to_string());
             out.right_group = src.right_kern.as_ref().map(|s| s.to_string());
             let owner = |l: &glyphs_reader::Layer| {
@@ -128,6 +137,16 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                 match ids.get(l.layer_id.as_str()) {
                     Some(id) if out.layer(id).is_none() => out.layers.push(layer(id, l)),
                     Some(_) => extra_layers += 1,
+                    None if !l.smart_component_positions.is_empty()
+                        && !out.smart_axes.is_empty() =>
+                    {
+                        // Smart pole layer: at the minimum or maximum of each smart axis.
+                        let m = owner(l);
+                        let mut k = layer(&m, l);
+                        k.id = Some(out.new_layer_id(&m));
+                        k.smart = Some(pole_position(&out.smart_axes, l));
+                        out.layers.push(k);
+                    }
                     None if !l.attributes.coordinates.is_empty() && !tags.is_empty() => {
                         // Brace layer: its own location on the axes.
                         let loc: BTreeMap<String, f64> = tags
@@ -150,6 +169,46 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                         out.layers.push(k);
                     }
                     None => extra_layers += 1,
+                }
+            }
+            // Kernest's master layer is the pole at every axis' minimum; Glyphs may put
+            // a master layer at another pole, so swap it with the minimum pole.
+            if !out.smart_axes.is_empty() {
+                for l in &src.layers {
+                    let Some(id) = ids.get(l.layer_id.as_str()) else {
+                        continue;
+                    };
+                    let here = pole_position(&out.smart_axes, l);
+                    if out.smart_axes.iter().all(|a| here[&a.name] == a.min) {
+                        continue;
+                    }
+                    let min: BTreeMap<String, f64> = out
+                        .smart_axes
+                        .iter()
+                        .map(|a| (a.name.clone(), a.min))
+                        .collect();
+                    let Some(pi) = out
+                        .layers
+                        .iter()
+                        .position(|p| &p.master_id == id && p.smart.as_ref() == Some(&min))
+                    else {
+                        continue;
+                    };
+                    let mi = out
+                        .layers
+                        .iter()
+                        .position(|p| p.is_master() && &p.master_id == id)
+                        .expect("master layer");
+                    let (shapes, width, anchors) = (
+                        out.layers[pi].shapes.clone(),
+                        out.layers[pi].width,
+                        out.layers[pi].anchors.clone(),
+                    );
+                    out.layers[pi].shapes = std::mem::replace(&mut out.layers[mi].shapes, shapes);
+                    out.layers[pi].width = std::mem::replace(&mut out.layers[mi].width, width);
+                    out.layers[pi].anchors =
+                        std::mem::replace(&mut out.layers[mi].anchors, anchors);
+                    out.layers[pi].smart = Some(here);
                 }
             }
             for l in &src.bracket_layers {
@@ -272,6 +331,12 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         Ok(keys) => apply_metrics_keys(&mut font, &keys, &master_ids, &mut warnings),
         Err(e) => warnings.push(format!("Metrics keys couldn't be read: {e}")),
     }
+    if font.glyphs.iter().any(|g| g.is_smart()) {
+        match read_glyph_dicts(path) {
+            Ok(dicts) => restore_smart_components(&mut font, &dicts, &master_ids),
+            Err(e) => warnings.push(format!("Smart components couldn't be read: {e}")),
+        }
+    }
     Ok(Imported { font, warnings })
 }
 
@@ -327,6 +392,215 @@ fn glyph_keys(d: &glyphs_reader::Plist) -> Option<(String, GlyphKeys)> {
             layers,
         },
     ))
+}
+
+/// A layer's position on a smart glyph's axes (Glyphs stores min or max poles).
+fn pole_position(axes: &[SmartAxis], l: &glyphs_reader::Layer) -> BTreeMap<String, f64> {
+    axes.iter()
+        .map(|a| {
+            let at_max = l
+                .smart_component_positions
+                .get(a.name.as_str())
+                .is_some_and(|p| format!("{p:?}") == "Max");
+            (a.name.clone(), if at_max { a.max } else { a.min })
+        })
+        .collect()
+}
+
+/// Every glyph's dictionary from the source, by name.
+fn read_glyph_dicts(path: &Path) -> Result<HashMap<String, glyphs_reader::Plist>, String> {
+    let parse = |p: &Path| -> Result<glyphs_reader::Plist, String> {
+        let text = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
+        glyphs_reader::Plist::parse(&text).map_err(|e| format!("{}: {e}", p.display()))
+    };
+    let mut out = HashMap::new();
+    let mut add = |d: glyphs_reader::Plist| {
+        if let Some(n) = d.get("glyphname").and_then(|n| n.as_str()) {
+            out.insert(n.to_string(), d.clone());
+        }
+    };
+    if path.is_dir() {
+        let dir = path.join("glyphs");
+        if dir.is_dir() {
+            for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+                let p = entry.map_err(|e| e.to_string())?.path();
+                if p.extension().is_some_and(|e| e == "glyph") {
+                    add(parse(&p)?);
+                }
+            }
+        }
+    } else {
+        let root = parse(path)?;
+        for g in root.get("glyphs").and_then(|g| g.as_array()).unwrap_or(&[]) {
+            add(g.clone());
+        }
+    }
+    Ok(out)
+}
+
+fn num(p: &glyphs_reader::Plist) -> Option<f64> {
+    p.as_f64()
+        .or_else(|| p.as_i64().map(|v| v as f64))
+        .or_else(|| p.as_str()?.trim().parse().ok())
+}
+
+fn piece(d: &glyphs_reader::Plist) -> BTreeMap<String, f64> {
+    d.get("piece")
+        .and_then(|p| p.as_dict())
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| Some((k.to_string(), num(v)?)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A path or component from a Glyphs 3 `shapes` entry.
+fn shape_v3(d: &glyphs_reader::Plist) -> Option<Shape> {
+    if let Some(base) = d.get("ref").and_then(|r| r.as_str()) {
+        let pair = |k: &str, dflt: (f64, f64)| {
+            d.get(k)
+                .and_then(|v| v.as_array())
+                .and_then(|a| Some((num(a.first()?)?, num(a.get(1)?)?)))
+                .unwrap_or(dflt)
+        };
+        let (x, y) = pair("pos", (0.0, 0.0));
+        let (sx, sy) = pair("scale", (1.0, 1.0));
+        let angle = d.get("angle").and_then(num).unwrap_or(0.0).to_radians();
+        let (c, s) = (angle.cos(), angle.sin());
+        return Some(Shape::Component {
+            base: base.to_string(),
+            transform: [sx * c, sx * s, -sy * s, sy * c, x, y],
+            smart: piece(d),
+        });
+    }
+    let nodes = d.get("nodes")?.as_array()?;
+    let nodes = nodes
+        .iter()
+        .filter_map(|n| {
+            let a = n.as_array()?;
+            let (x, y) = (num(a.first()?)?, num(a.get(1)?)?);
+            let (kind, smooth) = match a.get(2)?.as_str()? {
+                "l" => (NodeKind::Line, false),
+                "ls" => (NodeKind::Line, true),
+                "c" => (NodeKind::Curve, false),
+                "cs" => (NodeKind::Curve, true),
+                "q" => (NodeKind::QCurve, false),
+                "qs" => (NodeKind::QCurve, true),
+                _ => (NodeKind::OffCurve, false),
+            };
+            Some(Node { x, y, kind, smooth })
+        })
+        .collect();
+    Some(Shape::Path(KPath {
+        closed: d.get("closed").and_then(|c| c.as_i64()).unwrap_or(1) != 0,
+        nodes,
+    }))
+}
+
+/// Paths and components of a Glyphs 2 layer (`paths`, then `components`).
+fn shapes_v2(d: &glyphs_reader::Plist) -> Vec<Shape> {
+    let mut out = Vec::new();
+    for p in d.get("paths").and_then(|p| p.as_array()).unwrap_or(&[]) {
+        let nodes = p
+            .get("nodes")
+            .and_then(|n| n.as_array())
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|n| {
+                let mut it = n.as_str()?.split_whitespace();
+                let (x, y) = (it.next()?.parse().ok()?, it.next()?.parse().ok()?);
+                let kind = match it.next()? {
+                    "LINE" => NodeKind::Line,
+                    "CURVE" => NodeKind::Curve,
+                    "QCURVE" => NodeKind::QCurve,
+                    _ => NodeKind::OffCurve,
+                };
+                Some(Node {
+                    x,
+                    y,
+                    kind,
+                    smooth: it.next() == Some("SMOOTH"),
+                })
+            })
+            .collect();
+        out.push(Shape::Path(KPath {
+            closed: p.get("closed").and_then(|c| c.as_i64()).unwrap_or(1) != 0,
+            nodes,
+        }));
+    }
+    for c in d
+        .get("components")
+        .and_then(|c| c.as_array())
+        .unwrap_or(&[])
+    {
+        let Some(base) = c.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        let t: Vec<f64> = c
+            .get("transform")
+            .and_then(|t| t.as_str())
+            .map(|s| {
+                s.trim_matches(|ch| ch == '{' || ch == '}')
+                    .split(',')
+                    .filter_map(|v| v.trim().parse().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let transform = if t.len() == 6 {
+            [t[0], t[1], t[2], t[3], t[4], t[5]]
+        } else {
+            kernest_core::IDENTITY
+        };
+        out.push(Shape::Component {
+            base: base.to_string(),
+            transform,
+            smart: piece(c),
+        });
+    }
+    out
+}
+
+/// glyphs-reader turns smart components into outlines; Kernest keeps them smart, so
+/// master layers that use a smart glyph are read again from the source.
+fn restore_smart_components(
+    font: &mut Font,
+    dicts: &HashMap<String, glyphs_reader::Plist>,
+    master_ids: &HashMap<String, String>,
+) {
+    let smart: std::collections::HashSet<String> = font
+        .glyphs
+        .iter()
+        .filter(|g| g.is_smart())
+        .map(|g| g.name.clone())
+        .collect();
+    for g in &mut font.glyphs {
+        let Some(d) = dicts.get(&g.name) else {
+            continue;
+        };
+        for ld in d.get("layers").and_then(|l| l.as_array()).unwrap_or(&[]) {
+            let Some(id) = ld
+                .get("layerId")
+                .and_then(|i| i.as_str())
+                .and_then(|i| master_ids.get(i))
+            else {
+                continue;
+            };
+            let shapes: Vec<Shape> = match ld.get("shapes").and_then(|s| s.as_array()) {
+                Some(list) => list.iter().filter_map(shape_v3).collect(),
+                None => shapes_v2(ld),
+            };
+            let uses_smart = shapes
+                .iter()
+                .any(|s| matches!(s, Shape::Component { base, .. } if smart.contains(base)));
+            if !uses_smart {
+                continue;
+            }
+            if let Some(l) = g.layer_mut(id) {
+                l.shapes = shapes;
+            }
+        }
+    }
 }
 
 /// Reads metrics keys straight from the source (glyphs-reader doesn't keep them).
@@ -444,10 +718,10 @@ fn layer(id: &str, l: &glyphs_reader::Layer) -> Layer {
                     nodes,
                 }));
             }
-            GShape::Component(c) => out.shapes.push(Shape::Component {
-                base: c.name.to_string(),
-                transform: c.transform.as_coeffs(),
-            }),
+            GShape::Component(c) => out.shapes.push(Shape::component(
+                c.name.to_string(),
+                c.transform.as_coeffs(),
+            )),
         }
     }
     for a in &l.anchors {

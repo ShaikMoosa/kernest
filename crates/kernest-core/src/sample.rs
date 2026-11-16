@@ -234,10 +234,7 @@ mod tests {
     fn components_resolve() {
         let mut f = sample_font();
         let g = f.glyph_mut("bar").unwrap();
-        g.layers[0].shapes = vec![Shape::Component {
-            base: "l".into(),
-            transform: [1.0, 0.0, 0.0, 1.0, 10.0, -100.0],
-        }];
+        g.layers[0].shapes = vec![Shape::component("l", [1.0, 0.0, 0.0, 1.0, 10.0, -100.0])];
         let bar = f.glyph("bar").unwrap().layer("m01").unwrap();
         let b = bounds(&f, bar).unwrap();
         assert_eq!((b.min_x, b.min_y, b.max_y), (85.0, -100.0, 660.0));

@@ -4,6 +4,7 @@
 //! views shaped for each screen and sends edits back as whole-layer updates.
 //! Errors are returned as user-facing strings.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -13,6 +14,7 @@ use kernest_core::glyphdata::{codepoints_for, GLYPH_SETS};
 use kernest_core::interpolate::check_glyph;
 use kernest_core::{
     package, pathops, sample, Anchor, Font, Layer, Metrics, Node, NodeKind, Path as KPath, Shape,
+    SmartAxis,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -177,6 +179,12 @@ pub struct PathDto {
 pub struct ComponentDto {
     base: String,
     transform: [f64; 6],
+    /// Values on the base glyph's smart axes (smart components only).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    smart: BTreeMap<String, f64>,
+    /// The base glyph's smart axes, if it is a smart glyph.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    smart_axes: Vec<SmartAxis>,
     /// This component's resolved outline, SVG path data in font units (y up).
     svg: String,
 }
@@ -187,6 +195,8 @@ pub struct ComponentDto {
 pub struct ComponentInput {
     base: String,
     transform: [f64; 6],
+    #[serde(default)]
+    smart: BTreeMap<String, f64>,
 }
 
 #[derive(Serialize)]
@@ -206,6 +216,9 @@ pub struct LayerView {
     anchors: Vec<Anchor>,
     /// Metrics keys of this layer, e.g. `=n` for the left sidebearing.
     metrics_keys: kernest_core::MetricsKeys,
+    /// This glyph's smart axes, if it is a smart glyph.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    smart_axes: Vec<SmartAxis>,
     /// Why this glyph's masters can't be interpolated (empty when they can).
     issues: Vec<String>,
     status: DocStatus,
@@ -289,12 +302,22 @@ fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<Laye
                     })
                     .collect(),
             }),
-            Shape::Component { base, transform } => {
+            Shape::Component {
+                base,
+                transform,
+                smart,
+            } => {
                 let mut single = Layer::new(&layer.master_id, layer.width);
+                single.location = layer.location.clone();
                 single.shapes.push(s.clone());
                 components.push(ComponentDto {
                     base: base.clone(),
                     transform: *transform,
+                    smart: smart.clone(),
+                    smart_axes: font
+                        .glyph(base)
+                        .map(|b| b.smart_axes.clone())
+                        .unwrap_or_default(),
                     svg: svg_path(font, &single),
                 });
                 comp_only.shapes.push(s.clone());
@@ -315,6 +338,7 @@ fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<Laye
         component_svg: svg_path(font, &comp_only),
         anchors: layer.anchors.clone(),
         metrics_keys: layer.metrics_keys.clone(),
+        smart_axes: g.smart_axes.clone(),
         issues: check_glyph(font, glyph),
         status: status(doc),
     })
@@ -389,6 +413,7 @@ fn to_component(font: &Font, glyph: &str, c: ComponentInput) -> CmdResult<Shape>
     Ok(Shape::Component {
         base: c.base,
         transform: c.transform,
+        smart: c.smart,
     })
 }
 
@@ -716,6 +741,29 @@ pub fn set_metrics_key(
     layer_view_of(doc, &glyph, &master_id)
 }
 
+/// Sets the smart values of component `index` (among the layer's components).
+#[tauri::command]
+pub fn set_component_smart(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    index: usize,
+    values: BTreeMap<String, f64>,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let next =
+        kernest_core::smart::set_component_values(&doc.font, &glyph, &master_id, index, &values)?;
+    if doc
+        .history
+        .apply(&mut doc.font, &glyph, &master_id, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    layer_view_of(doc, &glyph, &master_id)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateMetricsResult {
@@ -878,21 +926,25 @@ mod component_tests {
         let ok = ComponentInput {
             base: "H".into(),
             transform: kernest_core::IDENTITY,
+            smart: BTreeMap::new(),
         };
         assert!(to_component(&font, "A", ok).is_ok());
         let missing = ComponentInput {
             base: "nope".into(),
             transform: kernest_core::IDENTITY,
+            smart: BTreeMap::new(),
         };
         assert!(to_component(&font, "A", missing).is_err());
         let selfref = ComponentInput {
             base: "A".into(),
             transform: kernest_core::IDENTITY,
+            smart: BTreeMap::new(),
         };
         assert!(to_component(&font, "A", selfref).is_err());
         let bad = ComponentInput {
             base: "H".into(),
             transform: [1.0, 0.0, 0.0, 1.0, f64::INFINITY, 0.0],
+            smart: BTreeMap::new(),
         };
         assert!(to_component(&font, "A", bad).is_err());
     }
@@ -901,10 +953,8 @@ mod component_tests {
     fn layer_view_lists_components_with_outlines() {
         let mut doc = Document::new(sample::sample_font(), None);
         let mut next = doc.font.glyph("A").unwrap().layer("m01").unwrap().clone();
-        next.shapes.push(Shape::Component {
-            base: "H".into(),
-            transform: kernest_core::IDENTITY,
-        });
+        next.shapes
+            .push(Shape::component("H", kernest_core::IDENTITY));
         doc.history.apply(&mut doc.font, "A", "m01", next).unwrap();
         let v = layer_view_of(&doc, "A", "m01").unwrap();
         assert_eq!(v.components.len(), 1);

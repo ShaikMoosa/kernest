@@ -256,6 +256,9 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     if !opts.ttf && !opts.otf && !opts.woff2 {
         return Err("Choose at least one format: TTF, OTF or WOFF2.".into());
     }
+    // Smart components become outlines; the compiler only sees plain shapes.
+    let flat = kernest_core::smart::flatten_font(font);
+    let font = &flat;
     let keyed;
     let font = if opts.apply_metrics_keys {
         let (f, problems) = kernest_core::metricskeys::apply_all(font);
@@ -997,14 +1000,8 @@ mod tests {
                 let l = f.glyph_mut(g).unwrap().layer_mut(id).unwrap();
                 l.width = width;
                 l.shapes = vec![
-                    Shape::Component {
-                        base: base.into(),
-                        transform: kernest_core::IDENTITY,
-                    },
-                    Shape::Component {
-                        base: mark.into(),
-                        transform: [1.0, 0.0, 0.0, 1.0, 40.0, 0.0],
-                    },
+                    Shape::component(base, kernest_core::IDENTITY),
+                    Shape::component(mark, [1.0, 0.0, 0.0, 1.0, 40.0, 0.0]),
                 ];
             }
         }
@@ -1168,6 +1165,83 @@ mod tests {
             small.len(),
             plain.len()
         );
+    }
+
+    #[test]
+    fn smart_components_export_as_outlines() {
+        use kernest_core::glyphset::{add_glyphs, NewGlyph};
+        use kernest_core::{smart, SmartAxis};
+        let f = sample_font();
+        let f = add_glyphs(
+            &f,
+            &[NewGlyph {
+                name: "_stem".into(),
+                codepoint: None,
+            }],
+        )
+        .unwrap()
+        .font;
+        let axes = vec![SmartAxis {
+            name: "Height".into(),
+            min: 0.0,
+            max: 100.0,
+        }];
+        let mut f = smart::set_smart_axes(&f, "_stem", axes).unwrap();
+        let rect = |h: f64| {
+            Shape::Path(kernest_core::Path {
+                closed: true,
+                nodes: [(0.0, 0.0), (80.0, 0.0), (80.0, h), (0.0, h)]
+                    .into_iter()
+                    .map(|(x, y)| kernest_core::Node::new(x, y, NodeKind::Line))
+                    .collect(),
+            })
+        };
+        f.glyph_mut("_stem")
+            .unwrap()
+            .layer_mut("m01")
+            .unwrap()
+            .shapes = vec![rect(300.0)];
+        let (mut f, pole) = smart::add_pole(
+            &f,
+            "_stem",
+            "m01",
+            &BTreeMap::from([("Height".into(), 100.0)]),
+        )
+        .unwrap();
+        f.glyph_mut("_stem")
+            .unwrap()
+            .layer_mut(&pole)
+            .unwrap()
+            .shapes = vec![rect(700.0)];
+        f.glyph_mut("_stem").unwrap().export = false;
+        for (g, h) in [("I", 100.0), ("l", 50.0)] {
+            f.glyph_mut(g).unwrap().layer_mut("m01").unwrap().shapes = vec![Shape::Component {
+                base: "_stem".into(),
+                transform: [1.0, 0.0, 0.0, 1.0, 80.0, 0.0],
+                smart: BTreeMap::from([("Height".into(), h)]),
+            }];
+        }
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(false, true, out.path());
+        opts.otf = true;
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let ttf = std::fs::read(&r.files.iter().find(|x| x.format == "ttf").unwrap().path).unwrap();
+        let font = FontRef::new(&ttf).unwrap();
+        let (glyf, loca, cmap) = (
+            font.glyf().unwrap(),
+            font.loca(None).unwrap(),
+            font.cmap().unwrap(),
+        );
+        let top = |c: char| {
+            loca.get_glyf(cmap.map_codepoint(c).unwrap(), &glyf)
+                .unwrap()
+                .unwrap()
+                .y_max()
+        };
+        assert_eq!(top('I'), 700, "Height 100: the tall pole");
+        assert_eq!(top('l'), 500, "Height 50: halfway");
+        assert!(r.files.iter().any(|x| x.format == "otf"));
     }
 
     #[test]

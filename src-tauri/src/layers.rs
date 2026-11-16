@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use kernest_core::{layers, AxisRange, Font};
+use kernest_core::{layers, smart, AxisRange, Font, SmartAxis};
 use serde::Serialize;
 use tauri::State;
 
@@ -57,6 +57,8 @@ pub fn glyph_layers(state: State<AppState>, glyph: String) -> CmdResult<Vec<Laye
                 key: l.key().to_string(),
                 kind: if l.location.is_some() {
                     "brace"
+                } else if l.smart.is_some() {
+                    "smart"
                 } else {
                     "bracket"
                 },
@@ -137,6 +139,30 @@ pub fn update_layer_position(
             layers::update_layer_position(f, &glyph, &key, location.as_ref(), ranges.as_deref())?;
         Ok((next, key.clone()))
     })
+}
+
+/// Gives a glyph smart axes (an empty list makes it an ordinary glyph again).
+#[tauri::command]
+pub fn set_smart_axes(
+    state: State<AppState>,
+    glyph: String,
+    axes: Vec<SmartAxis>,
+) -> CmdResult<DocStatus> {
+    let r = apply(&state, |f| {
+        Ok((smart::set_smart_axes(f, &glyph, axes)?, String::new()))
+    })?;
+    Ok(r.status)
+}
+
+/// Adds a smart pole layer for `master_id` at `pole` (axis name → value).
+#[tauri::command]
+pub fn add_smart_pole(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    pole: BTreeMap<String, f64>,
+) -> CmdResult<LayerAdded> {
+    apply(&state, |f| smart::add_pole(f, &glyph, &master_id, &pole))
 }
 
 /// Removes a brace layer, or a whole alternate.

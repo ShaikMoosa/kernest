@@ -22,6 +22,7 @@ pub mod overlap;
 pub mod package;
 pub mod pathops;
 pub mod sample;
+pub mod smart;
 pub mod structure;
 pub mod text;
 

@@ -177,7 +177,9 @@ pub fn remove_glyphs(font: &Font, names: &[String]) -> R<Font> {
             let mut shapes = Vec::new();
             for s in &l.shapes {
                 match s {
-                    Shape::Component { base, transform } if gone.contains(base.as_str()) => {
+                    Shape::Component {
+                        base, transform, ..
+                    } if gone.contains(base.as_str()) => {
                         flatten(font, &l.master_id, base, *transform, &gone, &mut shapes, 0)
                     }
                     other => shapes.push(other.clone()),
@@ -240,6 +242,7 @@ fn flatten(
             Shape::Component {
                 base: inner,
                 transform,
+                smart,
             } => {
                 let ct = compose(t, *transform);
                 if gone.contains(inner.as_str()) {
@@ -248,6 +251,7 @@ fn flatten(
                     out.push(Shape::Component {
                         base: inner.clone(),
                         transform: ct,
+                        smart: smart.clone(),
                     });
                 }
             }
@@ -314,14 +318,8 @@ mod tests {
             .layer_mut(&m)
             .unwrap()
             .shapes = vec![
-            Shape::Component {
-                base: "H".into(),
-                transform: [1.0, 0.0, 0.0, 1.0, 10.0, 20.0],
-            },
-            Shape::Component {
-                base: "o".into(),
-                transform: IDENTITY,
-            },
+            Shape::component("H", [1.0, 0.0, 0.0, 1.0, 10.0, 20.0]),
+            Shape::component("o", IDENTITY),
         ];
         font.kerning.get_mut(&m).unwrap().push(KernPair {
             left: "H".into(),

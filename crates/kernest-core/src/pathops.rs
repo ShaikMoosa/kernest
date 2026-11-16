@@ -595,10 +595,7 @@ mod tests {
                 node(50.0, 900.0, NodeKind::Line),
             ],
         });
-        let component = Shape::Component {
-            base: "acute".into(),
-            transform: crate::model::IDENTITY,
-        };
+        let component = Shape::component("acute", crate::model::IDENTITY);
         l.shapes = vec![
             rect(600.0, 100.0, 800.0, 600.0, false),
             component.clone(),

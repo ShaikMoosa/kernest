@@ -442,10 +442,8 @@ mod tests {
         assert!(component_creates_cycle(&f, "A", "A"));
         assert!(!component_creates_cycle(&f, "A", "H"));
         // bar uses l; adding bar to l would loop l -> bar -> l.
-        f.glyph_mut("bar").unwrap().layers[0].shapes = vec![Shape::Component {
-            base: "l".into(),
-            transform: crate::model::IDENTITY,
-        }];
+        f.glyph_mut("bar").unwrap().layers[0].shapes =
+            vec![Shape::component("l", crate::model::IDENTITY)];
         assert!(component_creates_cycle(&f, "l", "bar"));
         assert!(!component_creates_cycle(&f, "bar", "l"));
     }
@@ -453,10 +451,7 @@ mod tests {
     #[test]
     fn translate_moves_components_and_anchors() {
         let mut l = Layer::new("m01", 500.0);
-        l.shapes.push(Shape::Component {
-            base: "a".into(),
-            transform: crate::model::IDENTITY,
-        });
+        l.shapes.push(Shape::component("a", crate::model::IDENTITY));
         l.anchors.push(crate::model::Anchor {
             name: "top".into(),
             x: 250.0,

@@ -95,6 +95,16 @@ Use the **Layer** menu in the Edit View toolbar to switch between the master's o
   - **Ranges…** changes the ranges for all masters; **Remove** removes the alternate everywhere.
 - **In exported fonts:** static fonts get the right design at their location. Variable fonts get intermediate layers as extra sources and swap alternates in with OpenType feature variations.
 
+### Smart components
+
+A smart glyph is a component that stretches: each glyph that uses it sets its own values on the smart glyph's axes. For example, one `_stem` can be the stems of H, I and L at different heights.
+
+1. Open the part glyph (for example `_stem`), click **Smart…** and add axes such as Height from 0 to 100. The master layer is the shape at every axis' minimum.
+2. Click **+ Pole** to add the shape at another position, for example Height 100. It appears in the **Layer** menu as "Smart Pole Height 100"; edit it point for point to the other extreme.
+3. Use the glyph as a component (**Add Component**). With the component selected, its axis values appear next to X and Y; type a value to reshape it.
+
+Poles must match the master layer point for point. On export, smart components become ordinary outlines. Smart components in Glyphs files import as smart components.
+
 ## Spacing and kerning
 
 - **Text tabs** (Window › New Text Tab, Ctrl+T): type sample text to see your glyphs together.

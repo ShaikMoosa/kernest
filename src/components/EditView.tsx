@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { backend, type Axis, type ComponentEdit, type ComponentView, type DocStatus, type LayerInfo, type LayerView, type MetricName } from "../lib/backend";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
+import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
 import {
   clonePaths, deleteSelection, ellipsePath, handleOwner, isOn, moveSelection, nodeKey, parseKey, pathsToSvg, rectPath,
   type EditNode, type EditPath,
@@ -51,7 +52,7 @@ const toEdit = (c: Comp): ComponentEdit => {
   const t = [...c.transform];
   t[4] += c.dx;
   t[5] += c.dy;
-  return { base: c.base, transform: t };
+  return { base: c.base, transform: t, smart: c.smart };
 };
 const fromView = (cs: ComponentView[]): Comp[] => cs.map((c) => ({ ...c, dx: 0, dy: 0 }));
 
@@ -205,6 +206,26 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     setLayersVersion((n) => n + 1);
     onPickLayer?.(r.key);
   }, [layerDialog, glyph, masterId, master, onCommitted, onPickLayer]);
+  // ---------- Smart glyphs ----------
+  const [smartDialog, setSmartDialog] = useState<SmartDialogMode | null>(null);
+  const saveSmartDialog = useCallback(async (v: { axes?: { name: string; min: number; max: number }[]; pole?: Record<string, number> }) => {
+    if (!smartDialog) return;
+    if (smartDialog.kind === "axes") {
+      const s = await backend.setSmartAxes(glyph, v.axes ?? []);
+      setSmartDialog(null);
+      onCommitted(s);
+      setLayersVersion((n) => n + 1);
+      // The layer view reloads with the new axes.
+      backend.glyphLayer(glyph, masterId).then((l) => { setLayer(l); setPaths(l.paths); setComps(fromView(l.components)); }, onError);
+    } else {
+      const r = await backend.addSmartPole(glyph, master, v.pole ?? {});
+      setSmartDialog(null);
+      onCommitted(r.status);
+      setLayersVersion((n) => n + 1);
+      onPickLayer?.(r.key);
+    }
+  }, [smartDialog, glyph, masterId, master, onCommitted, onPickLayer, onError]);
+
   const removeCurrentLayer = useCallback(async () => {
     try {
       const s = await backend.removeLayer(glyph, masterId);
@@ -267,6 +288,16 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     setComps(fromView(l.components));
     onCommitted(l.status);
   }, [onCommitted]);
+
+  const setComponentSmart = useCallback((index: number, values: Record<string, number>) => {
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await backend.setComponentSmart(glyph, masterId, index, values));
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, accept, onError]);
 
   /** Sends the edited outlines (and components) to the backend as one undoable step. */
   const commit = useCallback((next: EditPath[], nextComps?: Comp[], width?: number) => {
@@ -792,17 +823,23 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               .filter((l) => (l.kind === "master" ? l.key === master : l.kind === "brace" || l.masterId === master))
               .map((l) => (
                 <option key={l.key} value={l.key}>
-                  {l.kind === "master" ? `${l.label} (master)` : l.kind === "brace" ? `Intermediate ${l.label}` : `Alternate ${l.label}`}
+                  {l.kind === "master" ? `${l.label} (master)` : l.kind === "brace" ? `Intermediate ${l.label}` : l.kind === "smart" ? `Smart ${l.label}` : `Alternate ${l.label}`}
                 </option>
               ))}
           </select>
         </label>
         <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("brace", false)} title="Add an intermediate (brace) layer">+ Intermediate</button>
         <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("bracket", false)} title="Add an alternate design (bracket layers)">+ Alternate</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "axes", axes: layer?.smartAxes ?? [] })} title="Make this a smart glyph: components of it get their own axes">Smart…</button>
+        {(layer?.smartAxes?.length ?? 0) > 0 && (
+          <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "pole", axes: layer?.smartAxes ?? [] })} title="Add the shape at another position on the smart axes">+ Pole</button>
+        )}
         {currentLayer && currentLayer.kind !== "master" && (
           <>
-            <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog(currentLayer.kind as "brace" | "bracket", true)}>{currentLayer.kind === "brace" ? "Move…" : "Ranges…"}</button>
-            <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? "Removes this alternate from every master" : "Removes this intermediate layer"}>Remove</button>
+            {(currentLayer.kind === "brace" || currentLayer.kind === "bracket") && (
+              <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog(currentLayer.kind as "brace" | "bracket", true)}>{currentLayer.kind === "brace" ? "Move…" : "Ranges…"}</button>
+            )}
+            <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? "Removes this alternate from every master" : currentLayer.kind === "smart" ? "Removes this pole" : "Removes this intermediate layer"}>Remove</button>
           </>
         )}
         <span className="toolbar-hint k-caption muted">{hint(activeTool)}</span>
@@ -893,6 +930,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               <span className="info-comp k-label" title="Selected component">◇ {oneComp.base}</span>
               <MetricField onInvalid={onError} label="X" value={oneComp.transform[4] + oneComp.dx} onCommit={(v) => moveComp([...compSel][0], v - (oneComp.transform[4] + oneComp.dx), 0)} />
               <MetricField onInvalid={onError} label="Y" value={oneComp.transform[5] + oneComp.dy} onCommit={(v) => moveComp([...compSel][0], 0, v - (oneComp.transform[5] + oneComp.dy))} />
+              {(oneComp.smartAxes ?? []).map((a) => (
+                <MetricField key={a.name} onInvalid={onError} label={a.name} value={oneComp.smart?.[a.name] ?? a.min}
+                  onCommit={(v) => setComponentSmart([...compSel][0], { ...(oneComp.smart ?? {}), [a.name]: v })} />
+              ))}
             </>
           ) : (
             <span className="k-caption muted info-count">{selectionLabel(selection.size, compSel.size)}</span>
@@ -900,6 +941,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         </div>
       </div>
       {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}
+      {smartDialog && <SmartDialog glyph={glyph} mode={smartDialog} onCancel={() => setSmartDialog(null)} onSave={saveSmartDialog} />}
       {layerDialog && <LayerDialog glyph={glyph} axes={layerDialog.axes} mode={layerDialog.mode} onCancel={() => setLayerDialog(null)} onSave={saveLayerDialog} />}
     </div>
   );

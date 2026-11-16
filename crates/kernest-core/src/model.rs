@@ -110,7 +110,11 @@ pub struct Glyph {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
-    /// One layer per master, plus any brace (intermediate) and bracket (alternate) layers.
+    /// For a smart glyph: the axes components of it can be set on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub smart_axes: Vec<SmartAxis>,
+    /// One layer per master, plus any brace (intermediate), bracket (alternate) and
+    /// smart pole layers.
     pub layers: Vec<Layer>,
 }
 
@@ -131,6 +135,7 @@ impl Glyph {
             right_group: None,
             tags: Vec::new(),
             note: None,
+            smart_axes: Vec::new(),
             layers: Vec::new(),
         }
     }
@@ -153,6 +158,16 @@ impl Glyph {
     /// Bracket (alternate) layers.
     pub fn bracket_layers(&self) -> impl Iterator<Item = &Layer> {
         self.layers.iter().filter(|l| !l.bracket.is_empty())
+    }
+
+    /// Smart pole layers.
+    pub fn smart_layers(&self) -> impl Iterator<Item = &Layer> {
+        self.layers.iter().filter(|l| l.smart.is_some())
+    }
+
+    /// Whether components of this glyph can be set on smart axes.
+    pub fn is_smart(&self) -> bool {
+        !self.smart_axes.is_empty()
     }
 
     /// The distinct bracket ranges this glyph has alternates for, in first-seen order.
@@ -201,6 +216,10 @@ pub struct Layer {
     /// inside every one of these ranges.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bracket: Vec<AxisRange>,
+    /// Smart pole layer: its position on the glyph's smart axes (by axis name). The
+    /// glyph's master layer is the pole at every axis' minimum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smart: Option<BTreeMap<String, f64>>,
     pub width: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shapes: Vec<Shape>,
@@ -217,6 +236,7 @@ impl Layer {
             id: None,
             location: None,
             bracket: Vec::new(),
+            smart: None,
             width,
             shapes: Vec::new(),
             anchors: Vec::new(),
@@ -257,6 +277,13 @@ impl Layer {
         if !self.bracket.is_empty() {
             let parts: Vec<String> = self.bracket.iter().map(AxisRange::to_string).collect();
             return Some(format!("[{}]", parts.join(", ")));
+        }
+        if let Some(pole) = &self.smart {
+            let parts: Vec<String> = pole
+                .iter()
+                .map(|(a, v)| format!("{a} {}", fmt_num(*v)))
+                .collect();
+            return Some(format!("Pole {}", parts.join(", ")));
         }
         None
     }
@@ -330,7 +357,31 @@ pub enum Shape {
         /// Affine transform `[xx, xy, yx, yy, dx, dy]`.
         #[serde(default = "identity", skip_serializing_if = "is_identity")]
         transform: [f64; 6],
+        /// For a smart component: its value on each of the base glyph's smart axes
+        /// (axes left out sit at their minimum).
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        smart: BTreeMap<String, f64>,
     },
+}
+
+impl Shape {
+    /// A plain component of `base`.
+    pub fn component(base: impl Into<String>, transform: [f64; 6]) -> Shape {
+        Shape::Component {
+            base: base.into(),
+            transform,
+            smart: BTreeMap::new(),
+        }
+    }
+}
+
+/// An axis of a smart glyph (one used as a smart component), such as "Width" from
+/// 0 to 100. The master layer sits at every axis' minimum; pole layers sit elsewhere.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SmartAxis {
+    pub name: String,
+    pub min: f64,
+    pub max: f64,
 }
 
 pub const IDENTITY: [f64; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -600,11 +651,25 @@ impl Font {
                             g.name
                         ));
                     }
-                    if l.location.is_none() == l.bracket.is_empty() {
+                    let kinds = usize::from(l.location.is_some())
+                        + usize::from(!l.bracket.is_empty())
+                        + usize::from(l.smart.is_some());
+                    if kinds != 1 {
                         return bad(format!(
-                            "layer \"{id}\" of \"{}\" must be either a brace or a bracket layer",
+                            "layer \"{id}\" of \"{}\" must be one of a brace, bracket or smart pole layer",
                             g.name
                         ));
+                    }
+                    if let Some(pole) = &l.smart {
+                        if let Some(a) = pole
+                            .keys()
+                            .find(|a| !g.smart_axes.iter().any(|s| &s.name == *a))
+                        {
+                            return bad(format!(
+                                "layer \"{id}\" of \"{}\" uses unknown smart axis \"{a}\"",
+                                g.name
+                            ));
+                        }
                     }
                     let used: Vec<&str> = match &l.location {
                         Some(loc) => loc.keys().map(String::as_str).collect(),
@@ -616,7 +681,7 @@ impl Font {
                             g.name
                         ));
                     }
-                } else if l.location.is_some() || !l.bracket.is_empty() {
+                } else if l.location.is_some() || !l.bracket.is_empty() || l.smart.is_some() {
                     return bad(format!(
                         "a brace or bracket layer of \"{}\" has no id",
                         g.name

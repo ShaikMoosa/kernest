@@ -508,12 +508,12 @@ fn layer(id: &str, g: &norad::Glyph, skipped: &mut usize) -> Layer {
     }
     for c in &g.components {
         let t = &c.transform;
-        l.shapes.push(Shape::Component {
-            base: c.base.to_string(),
-            transform: [
+        l.shapes.push(Shape::component(
+            c.base.to_string(),
+            [
                 t.x_scale, t.xy_scale, t.yx_scale, t.y_scale, t.x_offset, t.y_offset,
             ],
-        });
+        ));
     }
     for a in &g.anchors {
         if let Some(name) = &a.name {

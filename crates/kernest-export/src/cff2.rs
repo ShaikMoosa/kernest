@@ -73,7 +73,9 @@ fn layer_contours(
                     out.push(c);
                 }
             }
-            Shape::Component { base, transform } => {
+            Shape::Component {
+                base, transform, ..
+            } => {
                 let bl = interp.layer_design(font, base, None)?;
                 layer_contours(font, interp, &bl, compose(&t, transform), depth + 1, out)?;
             }

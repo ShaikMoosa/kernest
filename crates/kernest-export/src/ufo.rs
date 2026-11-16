@@ -45,7 +45,9 @@ pub fn glyph(font: &Font, gname: &str, layer: &Layer) -> Result<Glyph, String> {
                 }
                 out.contours.push(Contour::new(points, None));
             }
-            Shape::Component { base, transform } => {
+            Shape::Component {
+                base, transform, ..
+            } => {
                 let t = AffineTransform {
                     x_scale: transform[0],
                     xy_scale: transform[1],

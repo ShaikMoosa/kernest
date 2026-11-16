@@ -337,10 +337,7 @@ mod tests {
                 ],
             })
         };
-        let comp = Shape::Component {
-            base: "acute".into(),
-            transform: crate::model::IDENTITY,
-        };
+        let comp = Shape::component("acute", crate::model::IDENTITY);
         let mut l = Layer::new("m01", 600.0);
         l.shapes = vec![circle(200.0), comp.clone(), circle(330.0)];
         assert!(remove_overlaps(&mut l));

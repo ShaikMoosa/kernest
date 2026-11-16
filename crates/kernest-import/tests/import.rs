@@ -394,8 +394,45 @@ fn simple_glyph(name: &str, unicode: Option<u32>, export: bool, kern_left: Optio
     s
 }
 
+/// A smart glyph: an 80-unit stem, Height 0 → 300 tall, Height 100 → 700 tall.
+fn smart_stem() -> String {
+    let rect = |h: u32| {
+        format!("{{\nclosed = 1;\nnodes = (\n(0,0,l),\n(80,0,l),\n(80,{h},l),\n(0,{h},l)\n);\n}}")
+    };
+    let layer = |id: &str, master: Option<&str>, pole: u32, h: u32| {
+        let assoc = master
+            .map(|m| format!("associatedMasterId = \"{m}\";\n"))
+            .unwrap_or_default();
+        format!(
+            "{{\n{assoc}layerId = \"{id}\";\nname = \"pole\";\npartSelection = {{\nHeight = {pole};\n}};\nshapes = (\n{}\n);\nwidth = 80;\n}}",
+            rect(h)
+        )
+    };
+    format!(
+        "{{\nexport = 0;\nglyphname = _stem;\nlayers = (\n{},\n{},\n{},\n{}\n);\npartsSettings = (\n{{\nbottomValue = 0;\nname = Height;\ntopValue = 100;\n}}\n);\n}}",
+        layer("M-REG", None, 1, 300),
+        layer("POLE-R", Some("M-REG"), 2, 700),
+        layer("M-BLD", None, 1, 300),
+        layer("POLE-B", Some("M-BLD"), 2, 700),
+    )
+}
+
+/// I: the smart stem at Height 50.
+fn glyph_i() -> String {
+    let layer = |id: &str| {
+        format!("{{\nlayerId = \"{id}\";\nshapes = (\n{{\npiece = {{\nHeight = 50;\n}};\npos = (85,0);\nref = _stem;\n}}\n);\nwidth = 250;\n}}")
+    };
+    format!(
+        "{{\nglyphname = I;\nlayers = (\n{},\n{}\n);\nunicode = 73;\n}}",
+        layer("M-REG"),
+        layer("M-BLD")
+    )
+}
+
 fn glyphs() -> Vec<(&'static str, String)> {
     vec![
+        ("_stem", smart_stem()),
+        ("I", glyph_i()),
         ("A", glyph_a()),
         ("Aacute", glyph_aacute()),
         ("V", simple_glyph("V", Some(86), true, Some("V"))),
@@ -437,7 +474,53 @@ fn check_glyphs_font(imp: &kernest_import::Imported) {
     );
 
     let names: Vec<&str> = f.glyphs.iter().map(|g| g.name.as_str()).collect();
-    assert_eq!(names, ["A", "Aacute", "V", "acutecomb", "A.alt", "_part"]);
+    assert_eq!(
+        names,
+        [
+            "_stem",
+            "I",
+            "A",
+            "Aacute",
+            "V",
+            "acutecomb",
+            "A.alt",
+            "_part"
+        ]
+    );
+    // Smart components stay smart: the stem's axis and poles, and I's value on it.
+    let stem = f.glyph("_stem").unwrap();
+    assert_eq!(stem.smart_axes.len(), 1);
+    assert_eq!(
+        (
+            stem.smart_axes[0].name.as_str(),
+            stem.smart_axes[0].min,
+            stem.smart_axes[0].max
+        ),
+        ("Height", 0.0, 100.0)
+    );
+    assert_eq!(stem.smart_layers().count(), 2, "one tall pole per master");
+    let il = f.glyph("I").unwrap().layer("m01").unwrap();
+    let Shape::Component {
+        base,
+        transform,
+        smart,
+    } = &il.shapes[0]
+    else {
+        panic!(
+            "I should use the smart stem as a component: {:?}",
+            il.shapes
+        )
+    };
+    assert_eq!(
+        (base.as_str(), transform[4], smart.get("Height").copied()),
+        ("_stem", 85.0, Some(50.0))
+    );
+    let b = kernest_core::geometry::bounds(f, il).unwrap();
+    assert_eq!(
+        (b.min_x, b.max_y),
+        (85.0, 500.0),
+        "drawn halfway between the poles"
+    );
     let ga = f.glyph("A").unwrap();
     assert_eq!(ga.unicodes[0].0, 65);
     assert_eq!(ga.right_group.as_deref(), Some("A"));
@@ -475,7 +558,9 @@ fn check_glyphs_font(imp: &kernest_import::Imported) {
     assert_eq!(open.nodes[3].kind, NodeKind::Curve);
     assert!(open.nodes[3].smooth);
 
-    let Shape::Component { base, transform } = &f.glyph("Aacute").unwrap().layers[0].shapes[1]
+    let Shape::Component {
+        base, transform, ..
+    } = &f.glyph("Aacute").unwrap().layers[0].shapes[1]
     else {
         panic!("expected a component")
     };

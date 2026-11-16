@@ -62,6 +62,9 @@ fn main() {
             layers::add_bracket_layers,
             layers::update_layer_position,
             layers::remove_layer,
+            layers::set_smart_axes,
+            layers::add_smart_pole,
+            commands::set_component_smart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kernest");

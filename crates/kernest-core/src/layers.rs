@@ -196,7 +196,7 @@ pub fn remove_layer(font: &Font, glyph: &str, key: &str) -> R<Font> {
         .filter(|l| !l.is_master())
         .ok_or("A master's own layer can't be removed here; remove the master in Font Info.")?
         .clone();
-    if layer.location.is_some() {
+    if layer.location.is_some() || layer.smart.is_some() {
         g.layers.retain(|l| l.key() != key);
     } else {
         g.layers.retain(|l| l.bracket != layer.bracket);

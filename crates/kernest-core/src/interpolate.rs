@@ -23,7 +23,7 @@ fn describe(shape: &Shape) -> String {
 }
 
 /// Why `layer` can't be interpolated with `reference` (empty when compatible).
-fn compare(name: &str, reference: &Layer, ref_name: &str, layer: &Layer) -> Vec<String> {
+pub(crate) fn compare(name: &str, reference: &Layer, ref_name: &str, layer: &Layer) -> Vec<String> {
     let mut issues = Vec::new();
     if layer.shapes.len() != reference.shapes.len() {
         issues.push(format!(
@@ -42,7 +42,18 @@ fn compare(name: &str, reference: &Layer, ref_name: &str, layer: &Layer) -> Vec<
                         (x.kind == NodeKind::OffCurve) == (y.kind == NodeKind::OffCurve)
                     })
             }
-            (Shape::Component { base: ba, .. }, Shape::Component { base: bb, .. }) => ba == bb,
+            (
+                Shape::Component {
+                    base: ba,
+                    smart: sa,
+                    ..
+                },
+                Shape::Component {
+                    base: bb,
+                    smart: sb,
+                    ..
+                },
+            ) => ba == bb && sa.keys().eq(sb.keys()),
             _ => false,
         };
         if !ok {
@@ -82,6 +93,13 @@ pub fn check_glyph(font: &Font, glyph: &str) -> Vec<String> {
         let name = l.label().unwrap_or_default();
         issues.extend(compare(&name, reference, &def.name, l));
     }
+    // Smart poles must match their master's layer point for point.
+    for l in g.smart_layers() {
+        if let (Some(m), Some(master)) = (font.master(&l.master_id), g.layer(&l.master_id)) {
+            let name = format!("{} {}", m.name, l.label().unwrap_or_default());
+            issues.extend(compare(&name, master, &m.name, l));
+        }
+    }
     for ranges in g.bracket_groups() {
         let alt = |m: &Master| {
             g.bracket_layers()
@@ -118,12 +136,17 @@ fn anchor_names(l: &Layer) -> Vec<&str> {
 }
 
 /// The numbers that interpolate: width, every point, component transforms, anchors (by name).
-fn values(layer: &Layer) -> Vec<f64> {
+pub(crate) fn values(layer: &Layer) -> Vec<f64> {
     let mut v = vec![layer.width];
     for s in &layer.shapes {
         match s {
             Shape::Path(p) => p.nodes.iter().for_each(|n| v.extend([n.x, n.y])),
-            Shape::Component { transform, .. } => v.extend(transform.iter()),
+            Shape::Component {
+                transform, smart, ..
+            } => {
+                v.extend(transform.iter());
+                v.extend(smart.values());
+            }
         }
     }
     let mut anchors: Vec<_> = layer.anchors.iter().collect();
@@ -133,7 +156,7 @@ fn values(layer: &Layer) -> Vec<f64> {
 }
 
 /// Writes interpolated numbers back into a copy of the template layer.
-fn rebuild(template: &Layer, vals: &[f64]) -> Layer {
+pub(crate) fn rebuild(template: &Layer, vals: &[f64]) -> Layer {
     let mut out = template.clone();
     let mut it = vals.iter().copied();
     let mut next = || it.next().unwrap_or(0.0);
@@ -144,7 +167,12 @@ fn rebuild(template: &Layer, vals: &[f64]) -> Layer {
                 n.x = next();
                 n.y = next();
             }),
-            Shape::Component { transform, .. } => transform.iter_mut().for_each(|t| *t = next()),
+            Shape::Component {
+                transform, smart, ..
+            } => {
+                transform.iter_mut().for_each(|t| *t = next());
+                smart.values_mut().for_each(|v| *v = next());
+            }
         }
     }
     let mut order: Vec<usize> = (0..out.anchors.len()).collect();

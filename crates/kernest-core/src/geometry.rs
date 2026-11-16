@@ -72,8 +72,18 @@ fn for_each_path(
     for shape in &layer.shapes {
         match shape {
             Shape::Path(p) => f(p, t),
-            Shape::Component { base, transform } => {
-                if let Some(base_layer) = font.glyph(base).and_then(|g| g.layer(&layer.master_id)) {
+            Shape::Component {
+                base,
+                transform,
+                smart,
+            } => {
+                let Some(g) = font.glyph(base) else { continue };
+                if g.is_smart() {
+                    // A smart component: its shape for these axis values.
+                    if let Some(inst) = crate::smart::instance_for(font, base, layer, smart) {
+                        for_each_path(font, &inst, &compose(t, transform), depth + 1, f);
+                    }
+                } else if let Some(base_layer) = g.layer(&layer.master_id) {
                     for_each_path(font, base_layer, &compose(t, transform), depth + 1, f);
                 }
             }

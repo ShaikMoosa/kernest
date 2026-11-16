@@ -16,7 +16,7 @@
 
 ![Font View: every glyph of the font in a grid, with categories and the selected glyph's metrics](docs/images/font-view.png)
 
-> **Status: 1.0.** You can create a font from glyph sets, browse, add and remove glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings and metrics keys, path clean-up, intermediate and alternate layers, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static fonts as TTF, OTF and WOFF2 (with overlap removal), import Glyphs (`.glyphs`, `.glyphspackage`), UFO and designspace sources, and save/open `.kernest` fonts.
+> **Status: 1.0.** You can create a font from glyph sets, browse, add and remove glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings and metrics keys, path clean-up, intermediate and alternate layers, smart components, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static fonts as TTF, OTF and WOFF2 (with overlap removal), import Glyphs (`.glyphs`, `.glyphspackage`), UFO and designspace sources, and save/open `.kernest` fonts.
 
 See the [Handbook](docs/HANDBOOK.md) for how to use Kernest.
 
@@ -113,7 +113,7 @@ Kernest 1.0 is complete: every milestone above has shipped.
 
 | Milestone | Status |
 |---|---|
-| Smart components | ⏳ planned |
+| Smart components: smart axes, pole layers, per-component values, Glyphs import | ✅ next release |
 | Autohinting for TrueType (ttfautohint) | ⏳ planned |
 | Colour fonts (COLRv1) | ⏳ planned |
 | Python scripting and plug-ins | ⏳ planned |
