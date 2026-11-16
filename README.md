@@ -113,7 +113,7 @@ Kernest 1.0 is complete: every milestone above has shipped.
 
 | Milestone | Status |
 |---|---|
-| Smart components: smart axes, pole layers, per-component values, Glyphs import | ✅ next release |
+| Smart components: smart axes, pole layers, per-component values, Glyphs import | ✅ v1.1 |
 | Autohinting for TrueType (ttfautohint) | ⏳ planned |
 | Colour fonts (COLRv1) | ⏳ planned |
 | Python scripting and plug-ins | ⏳ planned |
