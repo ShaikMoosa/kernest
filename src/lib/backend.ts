@@ -89,7 +89,7 @@ export interface LayerView {
 
 export type Location = Record<string, number>;
 
-/** A bracket layer's range on one axis: min ≤ value < max; null = no limit. */
+/** A bracket layer's range on one axis: min ≤ value ≤ max; null = no limit. */
 export interface AxisRange {
   tag: string;
   min?: number | null;

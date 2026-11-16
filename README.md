@@ -16,7 +16,7 @@
 
 ![Font View: every glyph of the font in a grid, with categories and the selected glyph's metrics](docs/images/font-view.png)
 
-> **Status: early development.** You can create a font from glyph sets, browse, add and remove glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings and metrics keys, path clean-up, intermediate and alternate layers, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static fonts as TTF, OTF and WOFF2 (with overlap removal), import Glyphs (`.glyphs`, `.glyphspackage`), UFO and designspace sources, and save/open `.kernest` fonts.
+> **Status: 1.0.** You can create a font from glyph sets, browse, add and remove glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings and metrics keys, path clean-up, intermediate and alternate layers, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static fonts as TTF, OTF and WOFF2 (with overlap removal), import Glyphs (`.glyphs`, `.glyphspackage`), UFO and designspace sources, and save/open `.kernest` fonts.
 
 See the [Handbook](docs/HANDBOOK.md) for how to use Kernest.
 
@@ -93,7 +93,7 @@ Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens liv
 | 5 | Export TTF and variable fonts (via [fontc](https://github.com/googlefonts/fontc)) | ✅ v0.5 |
 | 6 | Import `.glyphs`, `.glyphspackage`, UFO and designspace | ✅ v0.6 |
 
-### 1.0 readiness
+### 1.0: ready for real fonts (done)
 
 | Milestone | Status |
 |---|---|
@@ -103,21 +103,22 @@ Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens liv
 | Export OTF (CFF outlines) and WOFF2 web fonts | ✅ v0.8 |
 | Remove overlaps on export and as Path › Remove Overlap | ✅ v0.8 |
 | Metrics keys (`=n`, `=\|H`, `=o+10`): editing, Glyph › Update Metrics, applied on export | ✅ v0.8 |
-| Code-signed installer (no SmartScreen warning) | ⏳ planned |
 | Open fonts from Windows: Explorer "Open in Kernest", Open with, drag and drop, one window at a time | ✅ v0.9 |
+| Variable OTF (CFF2) export and smaller OTF files (compact charstrings, subroutines) | ✅ v0.9 |
+| Metrics keys imported from Glyphs files; alternate ranges include their maximum; full check of every feature | ✅ v1.0 |
 
-Progress towards 1.0: **7 of 8** milestones done.
+Kernest 1.0 is complete: every milestone above has shipped.
 
 ### After 1.0
 
 | Milestone | Status |
 |---|---|
-| Variable OTF (CFF2) export | ✅ v0.9 |
 | Smart components | ⏳ planned |
 | Autohinting for TrueType (ttfautohint) | ⏳ planned |
 | Colour fonts (COLRv1) | ⏳ planned |
 | Python scripting and plug-ins | ⏳ planned |
 | Dark theme, ARM64 builds, more languages | ⏳ planned |
+| Code-signed installer | ⏳ planned |
 
 ## Licence
 

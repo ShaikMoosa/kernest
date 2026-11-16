@@ -262,7 +262,7 @@ impl Layer {
     }
 }
 
-/// An axis range for bracket layers, in design units: `min <= value < max`, where a
+/// An axis range for bracket layers, in design units: `min <= value <= max`, where a
 /// missing bound is open.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AxisRange {
@@ -275,7 +275,7 @@ pub struct AxisRange {
 
 impl AxisRange {
     pub fn contains(&self, v: f64) -> bool {
-        self.min.is_none_or(|m| v >= m) && self.max.is_none_or(|m| v < m)
+        self.min.is_none_or(|m| v >= m) && self.max.is_none_or(|m| v <= m)
     }
 }
 

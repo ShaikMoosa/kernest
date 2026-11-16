@@ -88,7 +88,7 @@ export function LayerDialog({ glyph, axes, mode, onCancel, onSave }: Props) {
           <p className="k-caption muted">
             {brace
               ? "An intermediate (brace) layer is an extra drawing at its own location between masters. It must match the masters point for point; it starts as the glyph interpolated there."
-              : "An alternate (bracket layers) is a second design used wherever the location is inside these ranges, for example a simpler dollar sign at heavy weights. Every master gets a copy to edit. A range includes its minimum and stops just below its maximum; leave a box empty for no limit."}
+              : "An alternate (bracket layers) is a second design used wherever the location is inside these ranges, for example a simpler dollar sign at heavy weights. Every master gets a copy to edit. A range includes both its minimum and its maximum; leave a box empty for no limit."}
           </p>
           {axes.map((a) => (
             <div key={a.tag} className="field layer-axis">

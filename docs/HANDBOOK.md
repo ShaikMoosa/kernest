@@ -91,7 +91,7 @@ Use the **Layer** menu in the Edit View toolbar to switch between the master's o
   - **Move…** changes its location; **Remove** deletes it.
 - **+ Alternate** adds bracket layers: a second design used wherever the location is inside the axis ranges you give (for example `[wght 600–]` for a simpler `$` at heavy weights).
   - Every master gets a copy to edit, and the alternates must be compatible with each other.
-  - A range includes its minimum and stops just below its maximum; leave a box empty for no limit.
+  - A range includes both its minimum and its maximum; leave a box empty for no limit.
   - **Ranges…** changes the ranges for all masters; **Remove** removes the alternate everywhere.
 - **In exported fonts:** static fonts get the right design at their location. Variable fonts get intermediate layers as extra sources and swap alternates in with OpenType feature variations.
 
@@ -144,7 +144,7 @@ Kerning and kerning groups are compiled into GPOS, and your feature code is incl
 
 `.glyphspackage` and `.ufo` sources are folders. Use **File › Import Folder…** to pick the folder, or pick any file inside it with Import….
 
-Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
+Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers and, from Glyphs files, metrics keys (glyph-wide and per layer). From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
 
 ## Keyboard shortcuts
 

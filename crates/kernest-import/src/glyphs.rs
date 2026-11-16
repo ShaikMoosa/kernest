@@ -255,18 +255,162 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    Ok(Imported {
-        font: Font {
-            info,
-            axes,
-            masters,
-            instances,
-            glyphs,
-            kerning,
-            features,
+    let mut font = Font {
+        info,
+        axes,
+        masters,
+        instances,
+        glyphs,
+        kerning,
+        features,
+    };
+    let master_ids: HashMap<String, String> = ids
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect();
+    match read_metrics_keys(path) {
+        Ok(keys) => apply_metrics_keys(&mut font, &keys, &master_ids, &mut warnings),
+        Err(e) => warnings.push(format!("Metrics keys couldn't be read: {e}")),
+    }
+    Ok(Imported { font, warnings })
+}
+
+/// Metrics keys found in a Glyphs source: per glyph, the glyph-wide keys and the keys
+/// of individual layers (by Glyphs layer id), each as (left, right, width).
+type Keys = [Option<String>; 3];
+struct GlyphKeys {
+    glyph: Keys,
+    layers: Vec<(String, Keys)>,
+}
+
+/// Glyphs 3 writes `metricLeft`, `metricRight`, `metricWidth`; Glyphs 2 writes
+/// `leftMetricsKey`, `rightMetricsKey`, `widthMetricsKey`.
+fn keys_of(d: &glyphs_reader::Plist) -> Keys {
+    let get = |a: &str, b: &str| {
+        d.get(a)
+            .or_else(|| d.get(b))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                if s.starts_with('=') {
+                    s.to_string()
+                } else {
+                    format!("={s}")
+                }
+            })
+    };
+    [
+        get("metricLeft", "leftMetricsKey"),
+        get("metricRight", "rightMetricsKey"),
+        get("metricWidth", "widthMetricsKey"),
+    ]
+}
+
+fn glyph_keys(d: &glyphs_reader::Plist) -> Option<(String, GlyphKeys)> {
+    let name = d.get("glyphname")?.as_str()?.to_string();
+    let layers = d
+        .get("layers")
+        .and_then(|l| l.as_array())
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|l| {
+            let id = l.get("layerId")?.as_str()?.to_string();
+            let k = keys_of(l);
+            k.iter().any(Option::is_some).then_some((id, k))
+        })
+        .collect();
+    Some((
+        name,
+        GlyphKeys {
+            glyph: keys_of(d),
+            layers,
         },
-        warnings,
-    })
+    ))
+}
+
+/// Reads metrics keys straight from the source (glyphs-reader doesn't keep them).
+fn read_metrics_keys(path: &Path) -> Result<HashMap<String, GlyphKeys>, String> {
+    let parse = |p: &Path| -> Result<glyphs_reader::Plist, String> {
+        let text = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
+        glyphs_reader::Plist::parse(&text).map_err(|e| format!("{}: {e}", p.display()))
+    };
+    let mut out = HashMap::new();
+    if path.is_dir() {
+        let dir = path.join("glyphs");
+        if dir.is_dir() {
+            for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+                let p = entry.map_err(|e| e.to_string())?.path();
+                if p.extension().is_some_and(|e| e == "glyph") {
+                    if let Some((n, k)) = glyph_keys(&parse(&p)?) {
+                        out.insert(n, k);
+                    }
+                }
+            }
+        }
+    } else {
+        let root = parse(path)?;
+        for g in root.get("glyphs").and_then(|g| g.as_array()).unwrap_or(&[]) {
+            if let Some((n, k)) = glyph_keys(g) {
+                out.insert(n, k);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Puts metrics keys on the imported layers: glyph-wide keys on every layer, layer keys
+/// on that master's layer. Keys Kernest can't read are left out and counted.
+fn apply_metrics_keys(
+    font: &mut Font,
+    keys: &HashMap<String, GlyphKeys>,
+    master_ids: &HashMap<String, String>,
+    warnings: &mut Vec<String>,
+) {
+    let mut skipped = Vec::new();
+    for g in &mut font.glyphs {
+        let Some(k) = keys.get(&g.name) else { continue };
+        let ok = |s: &Option<String>, skipped: &mut Vec<String>| match s {
+            Some(v) if kernest_core::metricskeys::validate(v).is_ok() => Some(v.clone()),
+            Some(v) => {
+                skipped.push(format!("{} {v}", g.name));
+                None
+            }
+            None => None,
+        };
+        let glyph_wide: Vec<Option<String>> = k.glyph.iter().map(|s| ok(s, &mut skipped)).collect();
+        let per_layer: Vec<(String, Vec<Option<String>>)> = k
+            .layers
+            .iter()
+            .filter_map(|(id, ks)| {
+                let m = master_ids.get(id)?.clone();
+                Some((m, ks.iter().map(|s| ok(s, &mut skipped)).collect()))
+            })
+            .collect();
+        for l in &mut g.layers {
+            let own = per_layer
+                .iter()
+                .find(|(m, _)| l.is_master() && *m == l.master_id)
+                .map(|(_, ks)| ks.clone());
+            let pick = |i: usize| {
+                own.as_ref()
+                    .and_then(|o| o[i].clone())
+                    .or_else(|| glyph_wide[i].clone())
+            };
+            l.metrics_keys.left = pick(0);
+            l.metrics_keys.right = pick(1);
+            l.metrics_keys.width = pick(2);
+        }
+    }
+    if !skipped.is_empty() {
+        warnings.push(format!(
+            "{} metrics key{} couldn't be read and {} left out: {}",
+            skipped.len(),
+            plural(skipped.len()),
+            if skipped.len() == 1 { "was" } else { "were" },
+            crate::list(&skipped)
+        ));
+    }
 }
 
 fn layer(id: &str, l: &glyphs_reader::Layer) -> Layer {

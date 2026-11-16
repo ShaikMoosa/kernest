@@ -287,6 +287,8 @@ fn glyph_a() -> String {
         r#"{{
 glyphname = A;
 kernRight = A;
+metricLeft = "=V";
+metricRight = V;
 layers = (
 {},
 {},
@@ -327,7 +329,7 @@ width = 710;
 unicode = 65;
 }}"#,
         a_layer("M-REG", 600, 300),
-        a_layer("M-BLD", 700, 350),
+        a_layer("M-BLD", 700, 350).replacen("{\n", "{\nmetricRight = \"=|V+10\";\n", 1),
         a_layer("BRACE-1", 650, 320).replacen(
             "{
 ",
@@ -499,6 +501,15 @@ fn check_glyphs_font(imp: &kernest_import::Imported) {
     assert!(!f.instances[1].export);
     assert!(f.features.contains("sub A by A.alt;"), "{}", f.features);
     assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    // Metrics keys: glyph-wide on every master layer (with "=" added where the
+    // file leaves it out), and a layer's own key overriding it.
+    let ka = &f.glyph("A").unwrap().layer("m01").unwrap().metrics_keys;
+    assert_eq!(
+        (ka.left.as_deref(), ka.right.as_deref()),
+        (Some("=V"), Some("=V"))
+    );
+    let kb = &f.glyph("A").unwrap().layer("m02").unwrap().metrics_keys;
+    assert_eq!(kb.right.as_deref(), Some("=|V+10"));
 }
 
 #[test]

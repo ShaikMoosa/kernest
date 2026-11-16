@@ -361,4 +361,16 @@ mod tests {
         assert_eq!(g.bracket_layers().count(), 0);
         assert_eq!(g.brace_layers().count(), 0);
     }
+
+    #[test]
+    fn ranges_include_both_ends() {
+        let r = AxisRange {
+            tag: "wght".into(),
+            min: Some(600.0),
+            max: Some(700.0),
+        };
+        assert!(!r.contains(599.9));
+        assert!(r.contains(600.0) && r.contains(650.0) && r.contains(700.0));
+        assert!(!r.contains(700.1));
+    }
 }
