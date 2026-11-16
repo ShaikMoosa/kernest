@@ -7,6 +7,7 @@ import {
   type EditNode, type EditPath,
 } from "../lib/outline";
 import { CloseIcon, SearchIcon } from "./Icons";
+import { t, tn, translateMessage } from "../lib/i18n";
 
 type Tool = "select" | "pen" | "rect" | "ellipse" | "hand";
 interface Pt { x: number; y: number }
@@ -61,28 +62,28 @@ function MetricField({ label, value, disabled, onCommit, metricKey, onKey, onInv
   const [text, setText] = useState(shown);
   useEffect(() => setText(shown), [shown]);
   const commit = (raw: string) => {
-    const t = raw.trim();
+    const s = raw.trim();
     // A metrics key such as "=n" or "=|H+10" makes this value follow another glyph.
-    if (onKey && t.startsWith("=")) {
-      if (t !== metricKey) onKey(t);
+    if (onKey && s.startsWith("=")) {
+      if (s !== metricKey) onKey(s);
       return setText(shown);
     }
-    const v = Number(t.replace("−", "-"));
-    if (t === "" || raw === shown) return setText(shown);
+    const v = Number(s.replace("−", "-"));
+    if (s === "" || raw === shown) return setText(shown);
     if (!Number.isFinite(v)) {
       setText(shown);
-      return onInvalid?.(onKey ? `${label}: enter a number, or a metrics key such as =n.` : `${label}: enter a number.`);
+      return onInvalid?.(onKey ? t("{name}: enter a number, or a metrics key such as =n.", { name: label }) : t("{name}: enter a number.", { name: label }));
     }
     onCommit(v);
   };
   return (
-    <label className="info-field" title={onKey ? "Type a number, or a metrics key such as =n, =|H or =o+10" : undefined}>
+    <label className="info-field" title={onKey ? t("Type a number, or a metrics key such as =n, =|H or =o+10") : undefined}>
       <span className="k-caption muted">
         {label}
         {metricKey && (
           <span className="metric-key">
             {" "}{metricKey}
-            <button type="button" className="metric-key-clear" aria-label={`Remove the ${label} metrics key`} onClick={(e) => { e.preventDefault(); onKey?.(null); }}>×</button>
+            <button type="button" className="metric-key-clear" aria-label={t("Remove the {name} metrics key", { name: label })} onClick={(e) => { e.preventDefault(); onKey?.(null); }}>×</button>
           </span>
         )}
       </span>
@@ -123,13 +124,13 @@ function ComponentPicker({ names, exclude, onPick, onCancel }: { names: string[]
     <div className="scrim" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
       <div className="dialog dialog-sm" role="dialog" aria-modal="true" aria-labelledby="add-comp-title">
         <header className="dialog-header">
-          <h2 id="add-comp-title" className="k-subtitle">Add Component</h2>
-          <button type="button" className="icon-btn" aria-label="Close" onClick={onCancel}><CloseIcon /></button>
+          <h2 id="add-comp-title" className="k-subtitle">{t("Add Component")}</h2>
+          <button type="button" className="icon-btn" aria-label={t("Close")} onClick={onCancel}><CloseIcon /></button>
         </header>
         <div className="dialog-body">
           <label className="search">
             <SearchIcon />
-            <input autoFocus placeholder="Glyph name" value={q} onChange={(e) => setQ(e.target.value)}
+            <input autoFocus placeholder={t("Glyph name")} value={q} onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "ArrowDown") { setIndex((i) => Math.min(i + 1, shown.length - 1)); e.preventDefault(); }
                 else if (e.key === "ArrowUp") { setIndex((i) => Math.max(i - 1, 0)); e.preventDefault(); }
@@ -137,13 +138,13 @@ function ComponentPicker({ names, exclude, onPick, onCancel }: { names: string[]
                 else if (e.key === "Escape") onCancel();
               }} />
           </label>
-          <ul className="picker-list" role="listbox" aria-label="Glyphs">
+          <ul className="picker-list" role="listbox" aria-label={t("Glyphs")}>
             {shown.map((n, i) => (
               <li key={n} role="option" aria-selected={i === index}>
                 <button className={`list-item${i === index ? " is-selected" : ""}`} onClick={() => onPick(n)} onMouseEnter={() => setIndex(i)}>{n}</button>
               </li>
             ))}
-            {shown.length === 0 && <li className="k-caption muted">No glyph matches “{q}”.</li>}
+            {shown.length === 0 && <li className="k-caption muted">{t("No glyph matches “{query}”.", { query: q })}</li>}
           </ul>
         </div>
       </div>
@@ -183,7 +184,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const openLayerDialog = useCallback(async (kind: "brace" | "bracket", editing: boolean) => {
     try {
       const info = await backend.fontInfo();
-      if (!info.axes.length) return onError("Add an axis in Font Info first: intermediate and alternate layers are positions on the axes.");
+      if (!info.axes.length) return onError(t("Add an axis in Font Info first: intermediate and alternate layers are positions on the axes."));
       const here = info.masters.find((m) => m.id === master)?.location ?? {};
       const mode: LayerDialogMode = kind === "brace"
         ? { kind, editing, initial: editing && currentLayer?.location ? currentLayer.location : here }
@@ -788,7 +789,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   if (!layer) return <div className="editor"><div className="editor-loading k-caption muted">Loading {glyph}…</div></div>;
 
   const { ascender, capHeight, xHeight, descender } = layer.metrics;
-  const lines: [string, number][] = [["Ascender", ascender], ["Cap height", capHeight], ["x-height", xHeight], ["Baseline", 0], ["Descender", descender]];
+  const lines: [string, number][] = [[t("Ascender"), ascender], [t("Cap height"), capHeight], [t("x-height"), xHeight], [t("Baseline"), 0], [t("Descender"), descender]];
   const x0 = toScreen(0, 0).x, x1 = toScreen(layer.width, 0).x;
   const outline = pathsToSvg(paths);
   const one = selection.size === 1 && compSel.size === 0 ? parseKey([...selection][0]) : null;
@@ -806,46 +807,46 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
 
   return (
     <div className="editor">
-      <div className="toolbar" role="toolbar" aria-label="Tools">
-        {TOOLS.map((t) => (
-          <button key={t.id} className={`tool${tool === t.id ? " is-selected" : ""}`} title={t.label} aria-label={t.label} aria-pressed={tool === t.id}
-            onClick={() => { setTool(t.id); pen.current = { path: null, pendingOut: null }; }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">{t.icon}</svg>
+      <div className="toolbar" role="toolbar" aria-label={t("Tools")}>
+        {TOOLS.map((tl) => (
+          <button key={tl.id} className={`tool${tool === tl.id ? " is-selected" : ""}`} title={t(tl.label)} aria-label={t(tl.label)} aria-pressed={tool === tl.id}
+            onClick={() => { setTool(tl.id); pen.current = { path: null, pendingOut: null }; }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">{tl.icon}</svg>
           </button>
         ))}
         <span className="toolbar-sep" />
-        <button className="btn btn-secondary btn-sm" onClick={() => setPicking(true)} title="Add Component (Ctrl+Shift+C)">Add Component</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setPicking(true)} title={t("Add Component (Ctrl+Shift+C)")}>{t("Add Component")}</button>
         <span className="toolbar-sep" />
-        <label className="layer-picker" title="Intermediate (brace) and alternate (bracket) layers of this glyph">
-          <span className="k-caption muted">Layer</span>
-          <select className="text-input layer-select" value={masterId} onChange={(e) => onPickLayer?.(e.target.value)} aria-label="Layer">
+        <label className="layer-picker" title={t("Intermediate (brace) and alternate (bracket) layers of this glyph")}>
+          <span className="k-caption muted">{t("Layer")}</span>
+          <select className="text-input layer-select" value={masterId} onChange={(e) => onPickLayer?.(e.target.value)} aria-label={t("Layer")}>
             {layerList
               .filter((l) => (l.kind === "master" ? l.key === master : l.kind === "brace" || l.masterId === master))
               .map((l) => (
                 <option key={l.key} value={l.key}>
-                  {l.kind === "master" ? `${l.label} (master)` : l.kind === "brace" ? `Intermediate ${l.label}` : l.kind === "smart" ? `Smart ${l.label}` : `Alternate ${l.label}`}
+                  {l.kind === "master" ? t("{name} (master)", { name: l.label }) : l.kind === "brace" ? t("Intermediate {name}", { name: l.label }) : l.kind === "smart" ? t("Smart {name}", { name: l.label }) : t("Alternate {name}", { name: l.label })}
                 </option>
               ))}
           </select>
         </label>
-        <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("brace", false)} title="Add an intermediate (brace) layer">+ Intermediate</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("bracket", false)} title="Add an alternate design (bracket layers)">+ Alternate</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "axes", axes: layer?.smartAxes ?? [] })} title="Make this a smart glyph: components of it get their own axes">Smart…</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("brace", false)} title={t("Add an intermediate (brace) layer")}>{t("+ Intermediate")}</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("bracket", false)} title={t("Add an alternate design (bracket layers)")}>{t("+ Alternate")}</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "axes", axes: layer?.smartAxes ?? [] })} title={t("Make this a smart glyph: components of it get their own axes")}>{t("Smart…")}</button>
         {(layer?.smartAxes?.length ?? 0) > 0 && (
-          <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "pole", axes: layer?.smartAxes ?? [] })} title="Add the shape at another position on the smart axes">+ Pole</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "pole", axes: layer?.smartAxes ?? [] })} title={t("Add the shape at another position on the smart axes")}>{t("+ Pole")}</button>
         )}
         {currentLayer && currentLayer.kind !== "master" && (
           <>
             {(currentLayer.kind === "brace" || currentLayer.kind === "bracket") && (
-              <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog(currentLayer.kind as "brace" | "bracket", true)}>{currentLayer.kind === "brace" ? "Move…" : "Ranges…"}</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog(currentLayer.kind as "brace" | "bracket", true)}>{currentLayer.kind === "brace" ? t("Move…") : t("Ranges…")}</button>
             )}
-            <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? "Removes this alternate from every master" : currentLayer.kind === "smart" ? "Removes this pole" : "Removes this intermediate layer"}>Remove</button>
+            <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? t("Removes this alternate from every master") : currentLayer.kind === "smart" ? t("Removes this pole") : t("Removes this intermediate layer")}>{t("Remove")}</button>
           </>
         )}
         <span className="toolbar-hint k-caption muted">{hint(activeTool)}</span>
         <span className="spacer" />
         <span className="k-caption muted">{cursor ? `${cursor.x}, ${cursor.y}` : ""}</span>
-        <button className="btn btn-secondary btn-sm" onClick={fit} title="Fit glyph (Ctrl+0)">Fit</button>
+        <button className="btn btn-secondary btn-sm" onClick={fit} title={t("Fit glyph (Ctrl+0)")}>{t("Fit")}</button>
         <span className="k-caption muted zoom">{Math.round(view.s * 100)}%</span>
       </div>
       <div className="canvas-wrap" ref={wrapRef}>
@@ -901,24 +902,24 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         </svg>
         {layer.issues.length > 0 && (
           <div className="notice notice-warning issues-banner k-label" role="status">
-            ⚠ This glyph's masters can't be interpolated:
-            <ul>{layer.issues.map((i) => <li key={i}>{i}</li>)}</ul>
+            ⚠ {t("This glyph's masters can't be interpolated:")}
+            <ul>{layer.issues.map((i) => <li key={i}>{translateMessage(i)}</li>)}</ul>
           </div>
         )}
         {paths.length === 0 && comps.length === 0 && !preview && (
           <div className="canvas-empty">
-            <p className="k-subtitle">Empty glyph</p>
-            <p className="k-caption muted">Press P to draw with the pen, F for a rectangle, or Ctrl+Shift+C to add a component.</p>
+            <p className="k-subtitle">{t("Empty glyph")}</p>
+            <p className="k-caption muted">{t("Press P to draw with the pen, F for a rectangle, or Ctrl+Shift+C to add a component.")}</p>
           </div>
         )}
-        <div className="info-box" role="group" aria-label="Glyph info">
+        <div className="info-box" role="group" aria-label={t("Glyph info")}>
           <div className="info-title">
             <span className="k-body-strong">{layer.glyph}</span>
             <span className="k-code muted">{layer.unicode ? `U+${layer.unicode}` : ""}</span>
           </div>
-          <MetricField onInvalid={onError} label="LSB" value={layer.lsb} disabled={layer.lsb === null} onCommit={(v) => setMetric("lsb", v)} metricKey={layer.metricsKeys?.left} onKey={(k) => setMetricsKey("lsb", k)} />
-          <MetricField onInvalid={onError} label="Width" value={layer.width} onCommit={(v) => setMetric("width", v)} metricKey={layer.metricsKeys?.width} onKey={(k) => setMetricsKey("width", k)} />
-          <MetricField onInvalid={onError} label="RSB" value={layer.rsb} disabled={layer.rsb === null} onCommit={(v) => setMetric("rsb", v)} metricKey={layer.metricsKeys?.right} onKey={(k) => setMetricsKey("rsb", k)} />
+          <MetricField onInvalid={onError} label={t("LSB")} value={layer.lsb} disabled={layer.lsb === null} onCommit={(v) => setMetric("lsb", v)} metricKey={layer.metricsKeys?.left} onKey={(k) => setMetricsKey("lsb", k)} />
+          <MetricField onInvalid={onError} label={t("Width")} value={layer.width} onCommit={(v) => setMetric("width", v)} metricKey={layer.metricsKeys?.width} onKey={(k) => setMetricsKey("width", k)} />
+          <MetricField onInvalid={onError} label={t("RSB")} value={layer.rsb} disabled={layer.rsb === null} onCommit={(v) => setMetric("rsb", v)} metricKey={layer.metricsKeys?.right} onKey={(k) => setMetricsKey("rsb", k)} />
           <span className="info-sep" />
           {oneNode && one ? (
             <>
@@ -927,7 +928,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             </>
           ) : oneComp ? (
             <>
-              <span className="info-comp k-label" title="Selected component">◇ {oneComp.base}</span>
+              <span className="info-comp k-label" title={t("Selected component")}>◇ {oneComp.base}</span>
               <MetricField onInvalid={onError} label="X" value={oneComp.transform[4] + oneComp.dx} onCommit={(v) => moveComp([...compSel][0], v - (oneComp.transform[4] + oneComp.dx), 0)} />
               <MetricField onInvalid={onError} label="Y" value={oneComp.transform[5] + oneComp.dy} onCommit={(v) => moveComp([...compSel][0], 0, v - (oneComp.transform[5] + oneComp.dy))} />
               {(oneComp.smartAxes ?? []).map((a) => (
@@ -950,17 +951,19 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
 const off = (p: Pt): EditNode => ({ x: p.x, y: p.y, kind: "offcurve", smooth: false });
 
 function selectionLabel(points: number, components: number): string {
-  const parts = [points && `${points} point${points === 1 ? "" : "s"}`, components && `${components} component${components === 1 ? "" : "s"}`].filter(Boolean);
-  return parts.length ? `${parts.join(", ")} selected` : "No selection";
+  if (points && components) return t("Selected: {points} · {components}", { points: tn(points, "{n} point", "{n} points"), components: tn(components, "{n} component", "{n} components") });
+  if (points) return tn(points, "{n} point selected", "{n} points selected");
+  if (components) return tn(components, "{n} component selected", "{n} components selected");
+  return t("No selection");
 }
 
 function hint(tool: Tool): string {
   switch (tool) {
-    case "select": return "Click or drag to select · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes";
-    case "pen": return "Click for corners, drag for curves · click the first point to close · Esc ends the path";
-    case "rect": return "Drag to draw a rectangle · Shift for a square";
-    case "ellipse": return "Drag to draw an ellipse · Shift for a circle";
-    case "hand": return "Drag to pan · Ctrl+wheel zooms";
+    case "select": return t("Click or drag to select · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes");
+    case "pen": return t("Click for corners, drag for curves · click the first point to close · Esc ends the path");
+    case "rect": return t("Drag to draw a rectangle · Shift for a square");
+    case "ellipse": return t("Drag to draw an ellipse · Shift for a circle");
+    case "hand": return t("Drag to pan · Ctrl+wheel zooms");
   }
 }
 

@@ -9,6 +9,7 @@ Kernest is a font editor for Windows. It works offline, and your fonts are plain
 - [Masters, axes and instances](#masters-axes-and-instances)
 - [Export](#export)
 - [Import](#import)
+- [Theme and language](#theme-and-language)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 
 ## Fonts and files
@@ -160,6 +161,15 @@ Kerning and kerning groups are compiled into GPOS, and your feature code is incl
 `.glyphspackage` and `.ufo` sources are folders. Use **File › Import Folder…** to pick the folder, or pick any file inside it with Import….
 
 Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers and, from Glyphs files, metrics keys (glyph-wide and per layer) and the hinting settings in a **TTFAutohint options** custom parameter. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
+
+## Theme and language
+
+- **Theme:** View › Theme follows Windows (System), or is always Light or Dark.
+- **Language:** View › Language switches the interface between English, Español and العربية (Arabic) straight away, with no restart. The first time, Kernest uses Windows' language if it has it.
+  - In Arabic the interface reads right to left. The glyph canvas, text previews, coordinates and glyph names stay left to right.
+  - Messages from the font engine, such as export problems, are translated too.
+  - The Handbook is in English.
+- The installer can also be run in English, Spanish or Arabic.
 
 ## Keyboard shortcuts
 

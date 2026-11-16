@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { clonePaths, pathsToSvg, pointBounds, rectPath, transformPaths, type EditPath } from "./outline";
+import { translateMessage } from "./i18n";
 
 export interface GlyphSetInfo {
   id: string;
@@ -916,8 +917,9 @@ const mockBackend: Backend = {
 export const backend: Backend = isTauri ? tauriBackend : mockBackend;
 
 /** Turns a rejected command (a string from Rust, or an Error) into a message. */
+/** An error as text in the UI language. */
 export function errorMessage(e: unknown): string {
-  if (typeof e === "string") return e;
-  if (e instanceof Error) return e.message;
+  if (typeof e === "string") return translateMessage(e);
+  if (e instanceof Error) return translateMessage(e.message);
   return String(e);
 }

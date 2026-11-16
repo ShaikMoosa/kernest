@@ -31,9 +31,9 @@ See the [Handbook](docs/HANDBOOK.md) for how to use Kernest.
 
 ## Install
 
-Download the Windows setup program (`Kernest_<version>_x64-setup.exe`) from the [Releases page](https://github.com/ShaikMoosa/kernest/releases). Run it and choose **Install for me only** (no admin rights needed) or **all users**. Kernest is not distributed through the Microsoft Store or winget.
+Download the Windows setup program from the [Releases page](https://github.com/ShaikMoosa/kernest/releases): `Kernest_<version>_x64-setup.exe` for most PCs, or `Kernest_<version>_arm64-setup.exe` for Windows on ARM. Run it and choose **Install for me only** (no admin rights needed) or **all users**. Kernest is not distributed through the Microsoft Store or winget.
 
-Requirements: Windows 10 22H2 or later, x64 (ARM64 builds are planned). The installer downloads Microsoft Edge WebView2 if it is missing (it is built into Windows 11).
+Requirements: Windows 10 22H2 or later, x64 or ARM64. The installer downloads Microsoft Edge WebView2 if it is missing (it is built into Windows 11).
 
 The installer is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC". Choose **More info › Run anyway**, and check the SHA-256 checksum listed on the release first.
 
@@ -117,7 +117,7 @@ Kernest 1.0 is complete: every milestone above has shipped.
 | Autohinting for TrueType fonts, static and variable (ttfautohint, via tilvisan) | ✅ v1.2 |
 | Colour fonts (COLRv1) | ⏳ planned |
 | Python scripting and plug-ins | ⏳ planned |
-| Dark theme, ARM64 builds, more languages | ⏳ planned |
+| Dark theme, ARM64 builds, Spanish and Arabic (right-to-left) interface | ✅ next release |
 | Code-signed installer | ⏳ planned |
 
 ## Licence

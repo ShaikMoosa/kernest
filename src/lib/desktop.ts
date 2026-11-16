@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isTauri } from "./backend";
+import { language, t } from "./i18n";
 
 export const windowControls = {
   minimize: () => (isTauri ? getCurrentWindow().minimize() : Promise.resolve()),
@@ -40,7 +41,7 @@ export function openExternal(url: string): Promise<void> {
 /** A `.kernest` font is a folder, so Open picks a directory. */
 export async function pickFontToOpen(): Promise<string | null> {
   if (!isTauri) return null;
-  const picked = await open({ directory: true, multiple: false, title: "Open a .kernest font" });
+  const picked = await open({ directory: true, multiple: false, title: t("Open a .kernest font") });
   return typeof picked === "string" ? picked : null;
 }
 
@@ -52,13 +53,13 @@ export async function pickFontToOpen(): Promise<string | null> {
 export async function pickSourceToImport(folder = false): Promise<string | null> {
   if (!isTauri) return null;
   const picked = folder
-    ? await open({ directory: true, multiple: false, title: "Import a .glyphspackage or .ufo folder" })
+    ? await open({ directory: true, multiple: false, title: t("Import a .glyphspackage or .ufo folder") })
     : await open({
         multiple: false,
-        title: "Import a font source",
+        title: t("Import a font source"),
         filters: [
-          { name: "Font sources", extensions: ["glyphs", "designspace", "plist"] },
-          { name: "All files", extensions: ["*"] },
+          { name: t("Font sources"), extensions: ["glyphs", "designspace", "plist"] },
+          { name: t("All files"), extensions: ["*"] },
         ],
       });
   return typeof picked === "string" ? picked : null;
@@ -67,9 +68,9 @@ export async function pickSourceToImport(folder = false): Promise<string | null>
 export async function pickSavePath(familyName: string): Promise<string | null> {
   if (!isTauri) return null;
   return save({
-    title: "Save font as",
+    title: t("Save font as"),
     defaultPath: `${familyName}.kernest`,
-    filters: [{ name: "Kernest font", extensions: ["kernest"] }],
+    filters: [{ name: t("Kernest font"), extensions: ["kernest"] }],
   });
 }
 
@@ -116,8 +117,10 @@ export function relativeDate(ts: number): string {
   const d = new Date(ts);
   const now = new Date();
   const days = Math.floor((now.setHours(0, 0, 0, 0) - new Date(ts).setHours(0, 0, 0, 0)) / 86_400_000);
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (days <= 0) return `Today, ${time}`;
-  if (days === 1) return "Yesterday";
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  // Dates in the UI language, with Latin digits (as in the rest of Kernest).
+  const locale = `${language()}-u-nu-latn`;
+  const time = d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  if (days <= 0) return t("Today, {time}", { time });
+  if (days === 1) return t("Yesterday");
+  return d.toLocaleDateString(locale, { month: "short", day: "numeric" });
 }

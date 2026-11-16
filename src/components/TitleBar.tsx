@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { windowControls } from "../lib/desktop";
 import { CaptionIcon } from "./Icons";
 import logoUrl from "../assets/kernest-logo.svg";
+import { t } from "../lib/i18n";
 
 export interface MenuItem {
   label: string;
@@ -45,7 +46,7 @@ export function TitleBar({ title, menus }: { title: string; menus: Menu[] }) {
   return (
     <header className="titlebar" ref={barRef} data-tauri-drag-region onDoubleClick={(e) => e.target === e.currentTarget && windowControls.toggleMaximize()}>
       <img className="titlebar-icon" src={logoUrl} alt="" aria-hidden="true" />
-      <nav className="menubar" aria-label="Main menu">
+      <nav className="menubar" aria-label={t("Main menu")}>
         {menus.map((m, i) => (
           <div key={m.label} className="menubar-entry">
             <button
@@ -87,13 +88,13 @@ export function TitleBar({ title, menus }: { title: string; menus: Menu[] }) {
         {title}
       </div>
       <div className="captions">
-        <button className="caption" aria-label="Minimize" onClick={windowControls.minimize}>
+        <button className="caption" aria-label={t("Minimize")} onClick={windowControls.minimize}>
           <CaptionIcon kind="minimize" />
         </button>
-        <button className="caption" aria-label="Maximize" onClick={windowControls.toggleMaximize}>
+        <button className="caption" aria-label={t("Maximize")} onClick={windowControls.toggleMaximize}>
           <CaptionIcon kind="maximize" />
         </button>
-        <button className="caption caption-close" aria-label="Close" onClick={windowControls.close}>
+        <button className="caption caption-close" aria-label={t("Close")} onClick={windowControls.close}>
           <CaptionIcon kind="close" />
         </button>
       </div>

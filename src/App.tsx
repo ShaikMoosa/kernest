@@ -6,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { backend, errorMessage, isTauri, type DocStatus, type FontView, type GlyphSetInfo } from "./lib/backend";
 import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, loadRecents, openExternal, pickFontToOpen, pickSavePath, pickSourceToImport, rememberRecent, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu } from "./components/TitleBar";
+import { loadTheme, saveTheme, type ThemePref } from "./lib/theme";
 import { StartWindow } from "./components/StartWindow";
 import { NewFontDialog } from "./components/NewFontDialog";
 import { AddGlyphsDialog } from "./components/AddGlyphsDialog";
@@ -18,6 +19,7 @@ import { FontInfoView } from "./components/FontInfoView";
 import { ExportDialog } from "./components/ExportDialog";
 import { ImportNotesDialog } from "./components/ImportNotesDialog";
 import { AboutDialog } from "./components/AboutDialog";
+import { language, LANGUAGES, saveLanguage, t, tn, translateMessage, type Lang } from "./lib/i18n";
 
 const CLEAN: DocStatus = { dirty: false, canUndo: false, canRedo: false };
 
@@ -34,6 +36,11 @@ export default function App() {
   const [fontSelection, setFontSelection] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
   const [about, setAbout] = useState(false);
+  const [theme, setThemeState] = useState<ThemePref>(loadTheme);
+  // The UI language; changing it re-renders everything (t() reads the current one).
+  const [lang, setLangState] = useState<Lang>(language);
+  const setLang = (l: Lang) => { saveLanguage(l); setLangState(l); };
+  const setTheme = (t: ThemePref) => { saveTheme(t); setThemeState(t); };
   const [showMetrics, setShowMetrics] = useState(() => {
     try { return localStorage.getItem("kernest.showMetrics") !== "0"; } catch { return true; }
   });
@@ -71,8 +78,8 @@ export default function App() {
   /** Asks before throwing away unsaved changes. Resolves true when it is OK to continue. */
   const confirmDiscard = useCallback(async () => {
     if (!dirtyRef.current) return true;
-    const msg = "You have unsaved changes. Discard them?";
-    return isTauri ? ask(msg, { title: "Kernest", kind: "warning", okLabel: "Discard", cancelLabel: "Cancel" }) : window.confirm(msg);
+    const msg = t("You have unsaved changes. Discard them?");
+    return isTauri ? ask(msg, { title: "Kernest", kind: "warning", okLabel: t("Discard"), cancelLabel: t("Cancel") }) : window.confirm(msg);
   }, []);
 
   // Closing the window (caption button, Alt+F4) also asks first.
@@ -101,7 +108,7 @@ export default function App() {
   }, [confirmDiscard, loadDocument, fail]);
 
   const open = useCallback(async () => {
-    if (!isTauri) return fail("Opening files needs the desktop app (npm run tauri dev).");
+    if (!isTauri) return fail(t("Opening files needs the desktop app (npm run tauri dev)."));
     if (!(await confirmDiscard())) return;
     const path = await pickFontToOpen();
     if (path) await openPath(path, true);
@@ -109,7 +116,7 @@ export default function App() {
 
   const importPath = useCallback(async (path: string, confirmed = false) => {
     if (!confirmed && !(await confirmDiscard())) return;
-    setToast({ kind: "info", text: "Importing…" });
+    setToast({ kind: "info", text: t("Importing…") });
     try {
       const r = await backend.importFont(path);
       loadDocument(r.view);
@@ -117,7 +124,7 @@ export default function App() {
         setToast(null);
         setImportNotes({ source: r.source, familyName: r.view.familyName, warnings: r.warnings });
       } else {
-        setToast({ kind: "info", text: `Imported ${r.view.familyName}. Use Save As to keep it as a .kernest font.` });
+        setToast({ kind: "info", text: t("Imported {name}. Use Save As to keep it as a .kernest font.", { name: r.view.familyName }) });
       }
     } catch (e) {
       fail(e);
@@ -125,7 +132,7 @@ export default function App() {
   }, [confirmDiscard, loadDocument, fail]);
 
   const importSource = useCallback(async (folder = false) => {
-    if (!isTauri) return fail("Importing fonts needs the desktop app (npm run tauri dev).");
+    if (!isTauri) return fail(t("Importing fonts needs the desktop app (npm run tauri dev)."));
     if (!(await confirmDiscard())) return;
     const path = await pickSourceToImport(folder);
     if (path) await importPath(path, true);
@@ -136,7 +143,7 @@ export default function App() {
     const kind = classifyPath(path);
     if (kind === "kernest") return openPath(kernestRoot(path));
     if (kind === "source") return importPath(path);
-    fail("Kernest opens .kernest fonts and imports .glyphs, .glyphspackage, .ufo and .designspace sources.");
+    fail(t("Kernest opens .kernest fonts and imports .glyphs, .glyphspackage, .ufo and .designspace sources."));
   }, [openPath, importPath, fail]);
 
   // Fonts from outside: the paths Kernest was started with, paths from a second launch
@@ -180,7 +187,7 @@ export default function App() {
       const saved = await backend.saveFont(path);
       setRecents(rememberRecent(saved, font.familyName));
       await refreshStatusAfterSave();
-      setToast({ kind: "info", text: `Saved to ${saved}` });
+      setToast({ kind: "info", text: t("Saved to {path}", { path: saved }) });
     } catch (e) {
       fail(e);
     }
@@ -193,7 +200,7 @@ export default function App() {
       const saved = await backend.saveFont();
       setRecents(rememberRecent(saved, font.familyName));
       await refreshStatusAfterSave();
-      setToast({ kind: "info", text: `Saved ${font.familyName}` });
+      setToast({ kind: "info", text: t("Saved {name}", { name: font.familyName }) });
     } catch (e) {
       fail(e);
     }
@@ -288,17 +295,17 @@ export default function App() {
 
   const removeGlyphs = useCallback(async (names: string[]) => {
     if (!font || names.length === 0) return;
-    const shown = names.slice(0, 6).join(", ") + (names.length > 6 ? ` and ${names.length - 6} more` : "");
-    const msg = `Remove ${names.length === 1 ? "the glyph" : `${names.length} glyphs`} ${shown}?
-
-Components that use ${names.length === 1 ? "it" : "them"} are turned into outlines in other glyphs. You can undo this with Ctrl+Z.`;
-    const ok = isTauri ? await ask(msg, { title: "Remove Glyph", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" }) : window.confirm(msg);
+    const shown = names.slice(0, 6).join(", ") + (names.length > 6 ? ` ${tn(names.length - 6, "and {n} more", "and {n} more")}` : "");
+    const msg = names.length === 1
+      ? t("Remove the glyph {names}?\n\nComponents that use it are turned into outlines in other glyphs. You can undo this with Ctrl+Z.", { names: shown })
+      : tn(names.length, "Remove {n} glyph: {names}?\n\nComponents that use them are turned into outlines in other glyphs. You can undo this with Ctrl+Z.", "Remove {n} glyphs: {names}?\n\nComponents that use them are turned into outlines in other glyphs. You can undo this with Ctrl+Z.", { names: shown });
+    const ok = isTauri ? await ask(msg, { title: t("Remove Glyph"), kind: "warning", okLabel: t("Remove"), cancelLabel: t("Cancel") }) : window.confirm(msg);
     if (!ok) return;
     try {
       const s = await backend.removeGlyphs(names);
       setFontSelection([]);
       onStructureChanged(s);
-      setToast({ kind: "info", text: names.length === 1 ? `Removed ${names[0]}` : `Removed ${names.length} glyphs` });
+      setToast({ kind: "info", text: names.length === 1 ? t("Removed {name}", { name: names[0] }) : tn(names.length, "Removed {n} glyph", "Removed {n} glyphs") });
     } catch (e) {
       fail(e);
     }
@@ -310,8 +317,8 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
       const r = await backend.updateMetrics();
       onStructureChanged(r.status);
       setToast(r.problems.length
-        ? { kind: "danger", text: `Metrics updated; ${r.problems.length} key${r.problems.length === 1 ? "" : "s"} couldn't be applied: ${r.problems.slice(0, 3).join("; ")}` }
-        : { kind: "info", text: "Metrics updated" });
+        ? { kind: "danger", text: tn(r.problems.length, "Metrics updated; {n} key couldn't be applied: {problems}", "Metrics updated; {n} keys couldn't be applied: {problems}", { problems: r.problems.slice(0, 3).map((p) => translateMessage(p)).join("; ") }) }
+        : { kind: "info", text: t("Metrics updated") });
     } catch (e) {
       fail(e);
     }
@@ -372,70 +379,76 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
   }, [showNewFont, open, importSource, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font, showAddGlyphs, removeGlyphs, removalTargets, toggleMetrics, openHandbook]);
 
   const inGlyph = font !== null && active !== null && active.startsWith("g:");
-  const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? "Kerning" : id === "info" ? "Font Info" : `Text ${id.slice(5)}`);
+  const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? t("Kerning") : id === "info" ? t("Font Info") : t("Text {n}", { n: id.slice(5) }));
   const glyphList = useMemo(() => (font ? font.glyphs.map((g) => ({ name: g.name, width: g.width })) : []), [font]);
 
   const menus: Menu[] = [
     {
-      label: "File",
+      label: t("File"),
       items: [
-        { label: "New…", shortcut: "Ctrl+N", onSelect: showNewFont },
-        { label: "Open…", shortcut: "Ctrl+O", onSelect: open },
-        { label: "Open Sample Font", onSelect: openSample },
-        { label: "Import…", shortcut: "Ctrl+Shift+O", onSelect: () => importSource(false), separatorBefore: true },
-        { label: "Import Folder…", onSelect: () => importSource(true) },
-        { label: "Save", shortcut: "Ctrl+S", onSelect: font ? save : undefined, separatorBefore: true },
-        { label: "Save As…", shortcut: "Ctrl+Shift+S", onSelect: font ? saveAs : undefined },
-        { label: "Close Font", onSelect: font ? closeFont : undefined },
-        { label: "Export…", shortcut: "Ctrl+E", onSelect: font ? () => setExporting(true) : undefined, separatorBefore: true },
-        { label: "Font Info…", shortcut: "Ctrl+I", onSelect: font ? openInfo : undefined },
+        { label: t("New…"), shortcut: "Ctrl+N", onSelect: showNewFont },
+        { label: t("Open…"), shortcut: "Ctrl+O", onSelect: open },
+        { label: t("Open Sample Font"), onSelect: openSample },
+        { label: t("Import…"), shortcut: "Ctrl+Shift+O", onSelect: () => importSource(false), separatorBefore: true },
+        { label: t("Import Folder…"), onSelect: () => importSource(true) },
+        { label: t("Save"), shortcut: "Ctrl+S", onSelect: font ? save : undefined, separatorBefore: true },
+        { label: t("Save As…"), shortcut: "Ctrl+Shift+S", onSelect: font ? saveAs : undefined },
+        { label: t("Close Font"), onSelect: font ? closeFont : undefined },
+        { label: t("Export…"), shortcut: "Ctrl+E", onSelect: font ? () => setExporting(true) : undefined, separatorBefore: true },
+        { label: t("Font Info…"), shortcut: "Ctrl+I", onSelect: font ? openInfo : undefined },
       ],
     },
     {
-      label: "Edit",
+      label: t("Edit"),
       items: [
-        { label: "Undo", shortcut: "Ctrl+Z", onSelect: status.canUndo ? () => undoRedo(false) : undefined },
-        { label: "Redo", shortcut: "Ctrl+Y", onSelect: status.canRedo ? () => undoRedo(true) : undefined },
-        { label: "Cut", shortcut: "Ctrl+X", onSelect: inGlyph ? () => sendEditCommand("cut") : undefined, separatorBefore: true },
-        { label: "Copy", shortcut: "Ctrl+C", onSelect: inGlyph ? () => sendEditCommand("copy") : undefined },
-        { label: "Paste", shortcut: "Ctrl+V", onSelect: inGlyph ? () => sendEditCommand("paste") : undefined },
+        { label: t("Undo"), shortcut: "Ctrl+Z", onSelect: status.canUndo ? () => undoRedo(false) : undefined },
+        { label: t("Redo"), shortcut: "Ctrl+Y", onSelect: status.canRedo ? () => undoRedo(true) : undefined },
+        { label: t("Cut"), shortcut: "Ctrl+X", onSelect: inGlyph ? () => sendEditCommand("cut") : undefined, separatorBefore: true },
+        { label: t("Copy"), shortcut: "Ctrl+C", onSelect: inGlyph ? () => sendEditCommand("copy") : undefined },
+        { label: t("Paste"), shortcut: "Ctrl+V", onSelect: inGlyph ? () => sendEditCommand("paste") : undefined },
       ],
     },
     {
-      label: "Glyph",
+      label: t("Glyph"),
       items: [
-        { label: "Add Glyphs…", shortcut: "Ctrl+Shift+G", onSelect: font ? showAddGlyphs : undefined },
-        { label: removalTargets.length > 1 ? `Remove ${removalTargets.length} Glyphs` : "Remove Glyph", shortcut: "Ctrl+Del", onSelect: font && removalTargets.length ? () => removeGlyphs(removalTargets) : undefined },
-        { label: "Add Component…", shortcut: "Ctrl+Shift+C", onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
-        { label: "Update Metrics", onSelect: font ? updateMetrics : undefined, separatorBefore: true },
+        { label: t("Add Glyphs…"), shortcut: "Ctrl+Shift+G", onSelect: font ? showAddGlyphs : undefined },
+        { label: removalTargets.length > 1 ? tn(removalTargets.length, "Remove {n} Glyph", "Remove {n} Glyphs") : t("Remove Glyph"), shortcut: "Ctrl+Del", onSelect: font && removalTargets.length ? () => removeGlyphs(removalTargets) : undefined },
+        { label: t("Add Component…"), shortcut: "Ctrl+Shift+C", onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
+        { label: t("Update Metrics"), onSelect: font ? updateMetrics : undefined, separatorBefore: true },
       ],
     },
     {
-      label: "Path",
+      label: t("Path"),
       items: [
-        { label: "Correct Path Direction", shortcut: "Ctrl+Shift+R", onSelect: inGlyph ? () => sendEditCommand("correct-direction") : undefined },
-        { label: "Add Extremes", onSelect: inGlyph ? () => sendEditCommand("add-extremes") : undefined },
-        { label: "Remove Overlap", onSelect: inGlyph ? () => sendEditCommand("remove-overlap") : undefined, separatorBefore: true },
+        { label: t("Correct Path Direction"), shortcut: "Ctrl+Shift+R", onSelect: inGlyph ? () => sendEditCommand("correct-direction") : undefined },
+        { label: t("Add Extremes"), onSelect: inGlyph ? () => sendEditCommand("add-extremes") : undefined },
+        { label: t("Remove Overlap"), onSelect: inGlyph ? () => sendEditCommand("remove-overlap") : undefined, separatorBefore: true },
       ],
     },
-    { label: "View", items: [{ label: "Show Metrics", shortcut: "Ctrl+Shift+M", onSelect: toggleMetrics, checked: showMetrics }] },
+    { label: t("View"), items: [
+      { label: t("Show Metrics"), shortcut: "Ctrl+Shift+M", onSelect: toggleMetrics, checked: showMetrics },
+      { label: t("Theme: System"), onSelect: () => setTheme("system"), checked: theme === "system", separatorBefore: true },
+      { label: t("Theme: Light"), onSelect: () => setTheme("light"), checked: theme === "light" },
+      { label: t("Theme: Dark"), onSelect: () => setTheme("dark"), checked: theme === "dark" },
+      ...LANGUAGES.map((l, i) => ({ label: `${t("Language")}: ${l.name}`, onSelect: () => setLang(l.id), checked: lang === l.id, separatorBefore: i === 0 })),
+    ] },
     {
-      label: "Window",
+      label: t("Window"),
       items: [
-        { label: "New Text Tab", shortcut: "Ctrl+T", onSelect: font ? newTextTab : undefined },
-        { label: "Kerning", shortcut: "Ctrl+Shift+K", onSelect: font ? openKerning : undefined },
+        { label: t("New Text Tab"), shortcut: "Ctrl+T", onSelect: font ? newTextTab : undefined },
+        { label: t("Kerning"), shortcut: "Ctrl+Shift+K", onSelect: font ? openKerning : undefined },
       ],
     },
     {
-      label: "Help",
+      label: t("Help"),
       items: [
-        { label: "Kernest Handbook", shortcut: "F1", onSelect: openHandbook },
-        { label: "About Kernest", onSelect: () => setAbout(true), separatorBefore: true },
+        { label: t("Kernest Handbook"), shortcut: "F1", onSelect: openHandbook },
+        { label: t("About Kernest"), onSelect: () => setAbout(true), separatorBefore: true },
       ],
     },
   ];
 
-  const title = font ? `${font.familyName}${font.path ? ".kernest" : ""}${status.dirty ? " • Edited" : ""} — Kernest` : "Kernest";
+  const title = font ? `${font.familyName}${font.path ? ".kernest" : ""}${status.dirty ? ` • ${t("Edited")}` : ""} — Kernest` : "Kernest";
 
   return (
     <div className="app">
@@ -443,22 +456,22 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
       {font ? (
         <>
           <div className="commandbar">
-            <div className="doc-tabs" role="tablist" aria-label="Open tabs">
+            <div className="doc-tabs" role="tablist" aria-label={t("Open tabs")}>
               <button role="tab" aria-selected={active === null} className={`doc-tab${active === null ? " is-selected" : ""}`} onClick={() => setActive(null)}>
-                <span className="k-label">Font</span>
+                <span className="k-label">{t("Font")}</span>
               </button>
               {tabs.map((id) => (
                 <div key={id} role="tab" aria-selected={active === id} className={`doc-tab${active === id ? " is-selected" : ""}${id.startsWith("g:") ? "" : " is-tool"}`} onClick={() => setActive(id)}>
                   <span className="k-label">{tabLabel(id)}</span>
-                  <button className="tab-close" aria-label={`Close ${tabLabel(id)}`} onClick={(e) => { e.stopPropagation(); closeTab(id); }}>
+                  <button className="tab-close" aria-label={t("Close {name}", { name: tabLabel(id) })} onClick={(e) => { e.stopPropagation(); closeTab(id); }}>
                     <CloseIcon size={12} />
                   </button>
                 </div>
               ))}
-              <button className="icon-btn" title="New Text Tab (Ctrl+T)" aria-label="New Text Tab" onClick={newTextTab}><AddIcon size={14} /></button>
+              <button className="icon-btn" title={t("New Text Tab (Ctrl+T)")} aria-label={t("New Text Tab")} onClick={newTextTab}><AddIcon size={14} /></button>
             </div>
             <span className="spacer" />
-            <div className="segmented" role="radiogroup" aria-label="Master">
+            <div className="segmented" role="radiogroup" aria-label={t("Master")}>
               {font.masters.map((m) => (
                 <button key={m.id} role="radio" aria-checked={m.id === font.masterId} className={`segment${m.id === font.masterId ? " is-selected" : ""}`}
                   onClick={() => backend.fontView(m.id).then(show, fail)}>
@@ -466,8 +479,8 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
                 </button>
               ))}
             </div>
-            <button className="btn btn-secondary" onClick={openInfo} title="Font Info (Ctrl+I)">Font Info</button>
-            <button className="btn btn-primary" onClick={() => setExporting(true)} title="Export fonts (Ctrl+E)">Export</button>
+            <button className="btn btn-secondary" onClick={openInfo} title={t("Font Info (Ctrl+I)")}>{t("Font Info")}</button>
+            <button className="btn btn-primary" onClick={() => setExporting(true)} title={t("Export fonts (Ctrl+E)")}>{t("Export")}</button>
           </div>
           {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} onSelectionChange={setFontSelection} onAddGlyphs={showAddGlyphs} onSetExport={(names, on) => backend.setGlyphExport(names, on).then(onStructureChanged, fail)} />}
           {tabs.map((id) => (
@@ -498,7 +511,7 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
       {about && <AboutDialog onClose={() => setAbout(false)} />}
       {dropping && (
         <div className="drop-overlay" aria-hidden="true">
-          <div className="drop-card k-subtitle">Drop to open a .kernest font, or import .glyphs, .ufo or .designspace</div>
+          <div className="drop-card k-subtitle">{t("Drop to open a .kernest font, or import .glyphs, .ufo or .designspace")}</div>
         </div>
       )}
       {importNotes && <ImportNotesDialog {...importNotes} onClose={() => setImportNotes(null)} />}
@@ -521,8 +534,8 @@ Components that use ${names.length === 1 ? "it" : "them"} are turned into outlin
             const r = await backend.addGlyphs(text, sets);
             setAddGlyphSets(null);
             onStructureChanged(r.status);
-            const skipped = r.skipped.length ? ` · ${r.skipped.length} already in the font` : "";
-            setToast({ kind: "info", text: r.added.length ? `Added ${r.added.length} glyph${r.added.length === 1 ? "" : "s"}${skipped}` : `Nothing added: all ${r.skipped.length} already in the font` });
+            const skipped = r.skipped.length ? ` · ${tn(r.skipped.length, "{n} already in the font", "{n} already in the font")}` : "";
+            setToast({ kind: "info", text: r.added.length ? `${tn(r.added.length, "Added {n} glyph", "Added {n} glyphs")}${skipped}` : tn(r.skipped.length, "Nothing added: all {n} already in the font", "Nothing added: all {n} already in the font") });
           }}
         />
       )}

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { openExternal, relativeDate, REPO_URL, type RecentFont } from "../lib/desktop";
 import { ExternalIcon, SearchIcon, CloseIcon } from "./Icons";
 import logoUrl from "../assets/kernest-logo.svg";
+import { t } from "../lib/i18n";
 
 interface Props {
   recents: RecentFont[];
@@ -25,16 +26,16 @@ export function StartWindow({ recents, onNew, onOpen, onOpenRecent, onForgetRece
     <div className="start">
       <section className="start-main">
         <div className="row">
-          <h1 className="k-title">Recent fonts</h1>
+          <h1 className="k-title">{t("Recent fonts")}</h1>
           <span className="spacer" />
-          <button className="btn btn-secondary" onClick={onImport} title="Import a .glyphs, .glyphspackage, .ufo or .designspace source">Import…</button>
-          <button className="btn btn-secondary" onClick={onOpen}>Open…</button>
-          <button className="btn btn-primary" onClick={onNew}>New Font</button>
+          <button className="btn btn-secondary" onClick={onImport} title={t("Import a .glyphs, .glyphspackage, .ufo or .designspace source")}>{t("Import…")}</button>
+          <button className="btn btn-secondary" onClick={onOpen}>{t("Open…")}</button>
+          <button className="btn btn-primary" onClick={onNew}>{t("New Font")}</button>
         </div>
         {recents.length > 0 && (
           <label className="search">
             <SearchIcon />
-            <input placeholder="Search recent fonts" value={query} onChange={(e) => setQuery(e.target.value)} />
+            <input placeholder={t("Search recent fonts")} value={query} onChange={(e) => setQuery(e.target.value)} />
           </label>
         )}
         <ul className="recent-list">
@@ -48,7 +49,7 @@ export function StartWindow({ recents, onNew, onOpen, onOpenRecent, onForgetRece
                 </span>
                 <span className="k-caption muted">{relativeDate(r.openedAt)}</span>
               </button>
-              <button className="icon-btn recent-forget" aria-label={`Remove ${r.familyName} from recent fonts`} onClick={() => onForgetRecent(r.path)}>
+              <button className="icon-btn recent-forget" aria-label={t("Remove {name} from recent fonts", { name: r.familyName })} onClick={() => onForgetRecent(r.path)}>
                 <CloseIcon size={14} />
               </button>
             </li>
@@ -57,21 +58,21 @@ export function StartWindow({ recents, onNew, onOpen, onOpenRecent, onForgetRece
         {recents.length === 0 && (
           <div className="empty">
             <div className="empty-art">Aa</div>
-            <p className="k-subtitle">No recent fonts</p>
-            <p className="k-body muted">Create your first font or open an existing .kernest font.</p>
-            <button className="btn btn-link" onClick={onSample}>Explore the sample font</button>
+            <p className="k-subtitle">{t("No recent fonts")}</p>
+            <p className="k-body muted">{t("Create your first font or open an existing .kernest font.")}</p>
+            <button className="btn btn-link" onClick={onSample}>{t("Explore the sample font")}</button>
           </div>
         )}
-        {recents.length > 0 && shown.length === 0 && <p className="k-body muted">No recent fonts match “{query}”.</p>}
+        {recents.length > 0 && shown.length === 0 && <p className="k-body muted">{t("No recent fonts match “{query}”.", { query })}</p>}
       </section>
       <aside className="start-side">
-        <img className="logo" src={logoUrl} alt="Kernest logo" />
+        <img className="logo" src={logoUrl} alt={t("Kernest logo")} />
         <h2 className="k-title">Kernest</h2>
-        <p className="k-caption muted">Version {__APP_VERSION__} · open source · offline</p>
+        <p className="k-caption muted">{t("Version {version} · open source · offline", { version: __APP_VERSION__ })}</p>
         <div className="divider" />
-        <button className="link" onClick={onSample}>Explore the sample font</button>
+        <button className="link" onClick={onSample}>{t("Explore the sample font")}</button>
         <a className="link" href={REPO_URL} onClick={(e) => { e.preventDefault(); openExternal(REPO_URL); }}>
-          Project on GitHub <ExternalIcon />
+          {t("Project on GitHub")} <ExternalIcon />
         </a>
       </aside>
     </div>

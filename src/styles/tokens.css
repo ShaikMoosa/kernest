@@ -3,9 +3,11 @@
  * Source of truth: Figma file "Kernest", collections "Kernest / Color" and
  * "Kernest / Size", text styles "Kernest/*" (built on SegmentUI Kit 3.0).
  * Exported 2026-11-12. Change values in Figma first, then update this file.
- * Light theme only for now (dark mode is out of scope).
+ * Light and dark themes. Dark follows Windows unless View › Theme picks one
+ * (data-theme on <html>).
  */
 :root {
+  color-scheme: light;
   /* Background */
   --k-bg-app: #f8fafc;
   --k-bg-surface: #ffffff;
@@ -53,6 +55,7 @@
   --k-editor-guide: #7072ff;
   --k-editor-background-layer: #ff9087;
   --k-editor-selection: #594fee;
+  --k-scrim: rgb(2 6 23 / 0.35);
 
   /* Space */
   --k-space-2: 2px;
@@ -86,6 +89,112 @@
   --k-font-ui: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, sans-serif;
   --k-font-display: "Segoe UI Variable Display", "Segoe UI", Inter, system-ui, sans-serif;
   --k-font-code: "Cascadia Mono", Consolas, monospace;
+}
+
+/* Dark theme: when Windows is dark (and no light theme is picked), or when picked. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --k-bg-app: #0b1120;
+    --k-bg-surface: #141c2b;
+    --k-bg-subtle: #1c2638;
+    --k-bg-hover: #222e43;
+    --k-bg-selected: #29285a;
+    --k-bg-inverse: #f1f5f9;
+
+    --k-text-primary: #e5eaf2;
+    --k-text-secondary: #b0bccd;
+    --k-text-muted: #8a98ad;
+    --k-text-on-accent: #ffffff;
+    --k-text-accent: #aaa5ff;
+    --k-text-warning: #fbc263;
+    --k-text-danger: #ff9b9b;
+    --k-text-success: #b0e36a;
+
+    --k-border-default: #253046;
+    --k-border-strong: #36445c;
+    --k-border-focus: #8a83ff;
+    --k-accent-default: #5f56f0;
+    --k-accent-hover: #7068f5;
+    --k-accent-subtle: #29285a;
+
+    --k-status-danger: #f87171;
+    --k-status-danger-subtle: #3a171b;
+    --k-status-warning: #f5a524;
+    --k-status-warning-subtle: #382810;
+    --k-status-success: #84cc16;
+    --k-status-success-subtle: #1f2f11;
+
+    --k-editor-canvas: #0f1726;
+    --k-editor-outline: #e5eaf2;
+    --k-editor-glyph-fill: #2a3650;
+    --k-editor-metric-line: #3a4862;
+    --k-editor-zone: #2e2414;
+    --k-editor-node-corner: #8a83ff;
+    --k-editor-node-smooth: #8fd42a;
+    --k-editor-handle: #8a98ad;
+    --k-editor-anchor: #f5a524;
+    --k-editor-guide: #9496ff;
+    --k-editor-background-layer: #ff9087;
+    --k-editor-selection: #8a83ff;
+    --k-scrim: rgb(0 0 0 / 0.6);
+
+    --k-shadow-s: 0 1px 3px 0 #00000040;
+    --k-shadow-m: 0 1px 4px 0 #00000059;
+    --k-shadow-l: 0 6px 16px -2px #00000073, 0 1px 3px -1px #00000059;
+    --k-shadow-xl: 0 8px 24px -2px #00000080, 0 1px 2px 0 #00000040;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --k-bg-app: #0b1120;
+  --k-bg-surface: #141c2b;
+  --k-bg-subtle: #1c2638;
+  --k-bg-hover: #222e43;
+  --k-bg-selected: #29285a;
+  --k-bg-inverse: #f1f5f9;
+
+  --k-text-primary: #e5eaf2;
+  --k-text-secondary: #b0bccd;
+  --k-text-muted: #8a98ad;
+  --k-text-on-accent: #ffffff;
+  --k-text-accent: #aaa5ff;
+  --k-text-warning: #fbc263;
+  --k-text-danger: #ff9b9b;
+  --k-text-success: #b0e36a;
+
+  --k-border-default: #253046;
+  --k-border-strong: #36445c;
+  --k-border-focus: #8a83ff;
+  --k-accent-default: #5f56f0;
+  --k-accent-hover: #7068f5;
+  --k-accent-subtle: #29285a;
+
+  --k-status-danger: #f87171;
+  --k-status-danger-subtle: #3a171b;
+  --k-status-warning: #f5a524;
+  --k-status-warning-subtle: #382810;
+  --k-status-success: #84cc16;
+  --k-status-success-subtle: #1f2f11;
+
+  --k-editor-canvas: #0f1726;
+  --k-editor-outline: #e5eaf2;
+  --k-editor-glyph-fill: #2a3650;
+  --k-editor-metric-line: #3a4862;
+  --k-editor-zone: #2e2414;
+  --k-editor-node-corner: #8a83ff;
+  --k-editor-node-smooth: #8fd42a;
+  --k-editor-handle: #8a98ad;
+  --k-editor-anchor: #f5a524;
+  --k-editor-guide: #9496ff;
+  --k-editor-background-layer: #ff9087;
+  --k-editor-selection: #8a83ff;
+  --k-scrim: rgb(0 0 0 / 0.6);
+
+  --k-shadow-s: 0 1px 3px 0 #00000040;
+  --k-shadow-m: 0 1px 4px 0 #00000059;
+  --k-shadow-l: 0 6px 16px -2px #00000073, 0 1px 3px -1px #00000059;
+  --k-shadow-xl: 0 8px 24px -2px #00000080, 0 1px 2px 0 #00000040;
 }
 
 /* Text styles (Kernest/*) */

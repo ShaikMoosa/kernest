@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { backend, type DocStatus, type KerningList } from "../lib/backend";
 import { AddIcon, CloseIcon, SearchIcon } from "./Icons";
+import { t } from "../lib/i18n";
 
 function ValueField({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
   const shown = String(value);
   const [text, setText] = useState(shown);
   useEffect(() => setText(shown), [shown]);
   return (
-    <input className="metric-input kern-value" value={text} aria-label="Kerning value" onChange={(e) => setText(e.target.value)}
+    <input className="metric-input kern-value" value={text} aria-label={t("Kerning value")} onChange={(e) => setText(e.target.value)}
       onBlur={(e) => {
         const raw = e.currentTarget.value;
         const v = Number(raw.trim().replace("−", "-") || "0");
@@ -59,29 +60,29 @@ export function KerningView({ masterId, masterName, version, onChanged, onError 
   return (
     <div className="kerningview">
       <div className="toolbar">
-        <h2 className="k-subtitle">Kerning — {masterName}</h2>
+        <h2 className="k-subtitle">{t("Kerning — {master}", { master: masterName })}</h2>
         <span className="spacer" />
         <label className="search kern-search">
           <SearchIcon />
-          <input placeholder="Filter glyphs or @groups" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input placeholder={t("Filter glyphs or @groups")} value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
       </div>
       <div className="kern-table-wrap">
         <table className="kern-table">
           <thead>
-            <tr><th>Left</th><th>Right</th><th className="num">Value</th><th>Type</th><th aria-label="Actions" /></tr>
+            <tr><th>{t("Left")}</th><th>{t("Right")}</th><th className="num">{t("Value")}</th><th>{t("Type")}</th><th aria-label={t("Actions")} /></tr>
           </thead>
           <tbody>
             <tr className="add-row">
-              <td><input className="metric-input side-input" placeholder="glyph or @group" value={draft.left} onChange={(e) => setDraft({ ...draft, left: e.target.value })} list="kern-groups" /></td>
-              <td><input className="metric-input side-input" placeholder="glyph or @group" value={draft.right} onChange={(e) => setDraft({ ...draft, right: e.target.value })} list="kern-groups" /></td>
+              <td><input className="metric-input side-input" placeholder={t("glyph or @group")} value={draft.left} onChange={(e) => setDraft({ ...draft, left: e.target.value })} list="kern-groups" /></td>
+              <td><input className="metric-input side-input" placeholder={t("glyph or @group")} value={draft.right} onChange={(e) => setDraft({ ...draft, right: e.target.value })} list="kern-groups" /></td>
               <td className="num"><input className="metric-input kern-value" placeholder="0" value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} /></td>
               <td colSpan={2}>
                 <button className="btn btn-secondary btn-sm" onClick={async () => {
                   const v = Number(draft.value.replace("−", "-"));
-                  if (!Number.isFinite(v) || v === 0) return onError("Enter a non-zero kerning value.");
+                  if (!Number.isFinite(v) || v === 0) return onError(t("Enter a non-zero kerning value."));
                   if (await set(draft.left, draft.right, v)) setDraft({ left: "", right: "", value: "" });
-                }}><AddIcon size={14} /> Add pair</button>
+                }}><AddIcon size={14} /> {t("Add pair")}</button>
               </td>
             </tr>
             {shown.map((p) => {
@@ -91,8 +92,8 @@ export function KerningView({ masterId, masterName, version, onChanged, onError 
                   <td className={p.left.startsWith("@") ? "side group" : "side"}>{p.left}</td>
                   <td className={p.right.startsWith("@") ? "side group" : "side"}>{p.right}</td>
                   <td className="num"><ValueField value={p.value} onCommit={(v) => set(p.left, p.right, v)} /></td>
-                  <td><span className={`pill ${group ? "pill-group" : "pill-exception"}`}>{group ? "group" : "exception"}</span></td>
-                  <td><button className="icon-btn" aria-label={`Delete ${p.left} ${p.right}`} title="Delete pair" onClick={() => set(p.left, p.right, 0)}><CloseIcon size={14} /></button></td>
+                  <td><span className={`pill ${group ? "pill-group" : "pill-exception"}`}>{group ? t("group") : t("exception")}</span></td>
+                  <td><button className="icon-btn" aria-label={t("Delete {left} {right}", { left: p.left, right: p.right })} title={t("Delete pair")} onClick={() => set(p.left, p.right, 0)}><CloseIcon size={14} /></button></td>
                 </tr>
               );
             })}
@@ -100,16 +101,16 @@ export function KerningView({ masterId, masterName, version, onChanged, onError 
         </table>
         {data && shown.length === 0 && (
           <div className="empty">
-            <p className="k-subtitle">{data.pairs.length ? `No pairs match “${query}”` : `No kerning pairs in ${masterName}`}</p>
-            <p className="k-caption muted">Open a text tab (Ctrl+T), put the cursor between two glyphs and press Alt+←/→, or add a pair above.</p>
+            <p className="k-subtitle">{data.pairs.length ? t("No pairs match “{query}”", { query }) : t("No kerning pairs in {master}", { master: masterName })}</p>
+            <p className="k-caption muted">{t("Open a text tab (Ctrl+T), put the cursor between two glyphs and press Alt+←/→, or add a pair above.")}</p>
           </div>
         )}
         <datalist id="kern-groups">{data?.groups.map((g) => <option key={g} value={`@${g}`} />)}</datalist>
       </div>
       <footer className="statusbar k-caption">
-        <span>{shown.length} shown · {data?.pairs.length ?? 0} pairs ({groupPairs} group, {(data?.pairs.length ?? 0) - groupPairs} exceptions)</span>
+        <span>{t("Shown: {shown} · Pairs: {pairs} (group: {groups}, exceptions: {exceptions})", { shown: shown.length, pairs: data?.pairs.length ?? 0, groups: groupPairs, exceptions: (data?.pairs.length ?? 0) - groupPairs })}</span>
         <span className="spacer" />
-        <span>A value of 0 deletes a pair</span>
+        <span>{t("A value of 0 deletes a pair")}</span>
       </footer>
     </div>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { GlyphSetInfo } from "../lib/backend";
+import { errorMessage, type GlyphSetInfo } from "../lib/backend";
 import { CloseIcon } from "./Icons";
+import { t, tn } from "../lib/i18n";
 
 interface Props {
   sets: GlyphSetInfo[];
@@ -27,12 +28,12 @@ export function AddGlyphsDialog({ sets, onCancel, onAdd }: Props) {
 
   async function submit(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!text.trim() && chosen.length === 0) return setError("Type glyph names or characters, or choose a glyph set.");
+    if (!text.trim() && chosen.length === 0) return setError(t("Type glyph names or characters, or choose a glyph set."));
     setBusy(true);
     try {
       await onAdd(text, chosen);
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
       setBusy(false);
     }
   }
@@ -41,12 +42,12 @@ export function AddGlyphsDialog({ sets, onCancel, onAdd }: Props) {
     <div className="scrim" role="presentation">
       <form className="dialog add-glyphs-dialog" role="dialog" aria-modal="true" aria-labelledby="add-glyphs-title" onSubmit={submit}>
         <header className="dialog-header">
-          <h2 id="add-glyphs-title" className="k-subtitle">Add Glyphs</h2>
-          <button type="button" className="icon-btn" aria-label="Close" onClick={onCancel}><CloseIcon /></button>
+          <h2 id="add-glyphs-title" className="k-subtitle">{t("Add Glyphs")}</h2>
+          <button type="button" className="icon-btn" aria-label={t("Close")} onClick={onCancel}><CloseIcon /></button>
         </header>
         <div className="dialog-body">
           <label className="field">
-            <span className="k-label">Glyph names, characters or code points</span>
+            <span className="k-label">{t("Glyph names, characters or code points")}</span>
             <textarea
               ref={ref}
               className="text-input add-glyphs-text"
@@ -57,26 +58,26 @@ export function AddGlyphsDialog({ sets, onCancel, onAdd }: Props) {
               onChange={(e) => { setText(e.target.value); setError(null); }}
               onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) submit(); }}
             />
-            <span className="k-caption muted">Separate with spaces, commas or new lines. Glyphs already in the font are skipped.</span>
+            <span className="k-caption muted">{t("Separate with spaces, commas or new lines. Glyphs already in the font are skipped.")}</span>
           </label>
           <fieldset className="field">
-            <legend className="k-overline muted">Add glyph sets</legend>
+            <legend className="k-overline muted">{t("Add glyph sets")}</legend>
             {sets.map((s) => (
               <label key={s.id} className="check-row">
                 <input type="checkbox" checked={chosen.includes(s.id)} onChange={() => { toggle(s.id); setError(null); }} />
-                <span className="k-body">{s.name}</span>
+                <span className="k-body">{t(s.name)}</span>
                 <span className="spacer" />
-                <span className="k-caption muted">{s.count} glyphs</span>
+                <span className="k-caption muted">{tn(s.count, "{n} glyph", "{n} glyphs")}</span>
               </label>
             ))}
           </fieldset>
           {error && <p className="notice notice-danger k-label">{error}</p>}
         </div>
         <footer className="dialog-footer">
-          <span className="k-caption muted">New glyphs get a layer in every master.</span>
+          <span className="k-caption muted">{t("New glyphs get a layer in every master.")}</span>
           <span className="spacer" />
-          <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy}>Add Glyphs</button>
+          <button type="button" className="btn btn-secondary" onClick={onCancel}>{t("Cancel")}</button>
+          <button type="submit" className="btn btn-primary" disabled={busy}>{t("Add Glyphs")}</button>
         </footer>
       </form>
     </div>

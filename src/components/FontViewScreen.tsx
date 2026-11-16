@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FontView, GlyphSummary } from "../lib/backend";
 import { SearchIcon } from "./Icons";
+import { t, tn } from "../lib/i18n";
 
 const CATEGORY_ORDER = ["Uppercase", "Lowercase", "Letter", "Number", "Punctuation", "Symbol", "Separator", "Mark", "Other"];
 
@@ -11,7 +12,7 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen }: { glyph: GlyphSu
   const x0 = glyph.width / 2 - h / 2;
   const empty = !glyph.svg;
   return (
-    <button className={`glyph-cell${selected ? " is-selected" : ""}${empty ? " is-empty" : ""}`} onClick={onSelect} onDoubleClick={onOpen} title={`${glyph.name} — double-click to edit`}>
+    <button className={`glyph-cell${selected ? " is-selected" : ""}${empty ? " is-empty" : ""}`} onClick={onSelect} onDoubleClick={onOpen} title={t("{name} — double-click to edit", { name: glyph.name })}>
       <span className="glyph-art">
         {empty ? (
           <span className="glyph-placeholder">{glyph.character?.trim() ? glyph.character : ""}</span>
@@ -21,7 +22,7 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen }: { glyph: GlyphSu
           </svg>
         )}
       </span>
-      {!glyph.compatible && <span className="glyph-incompatible" title="Masters can't be interpolated (open the glyph to see why)" aria-label="Incompatible masters" />}
+      {!glyph.compatible && <span className="glyph-incompatible" title={t("Masters can't be interpolated (open the glyph to see why)")} aria-label={t("Incompatible masters")} />}
       <span className="glyph-label">
         <span className="glyph-name">{glyph.name}</span>
         <span className="glyph-unicode">{glyph.unicode ?? ""}</span>
@@ -90,58 +91,58 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
       <aside className="sidebar">
         <label className="search">
           <SearchIcon />
-          <input placeholder="Search name, Unicode, character" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input placeholder={t("Search name, Unicode, character")} value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
-        <p className="k-overline muted sidebar-heading">Categories</p>
+        <p className="k-overline muted sidebar-heading">{t("Categories")}</p>
         <ul className="list">
           {[["All", font.glyphs.length] as const, ...counts, ...(incompatibleCount ? [["Incompatible", incompatibleCount] as const] : [])].map(([c, n]) => (
             <li key={c}>
               <button className={`list-item${category === c ? " is-selected" : ""}`} onClick={() => setCategory(c)}>
-                <span>{c}</span>
+                <span>{t(c)}</span>
                 <span className="list-meta">{n}</span>
               </button>
             </li>
           ))}
         </ul>
         <span className="spacer" />
-        <section className="glyph-info" aria-label="Glyph info">
+        <section className="glyph-info" aria-label={t("Glyph info")}>
           {one ? (
             <>
               <div className="row">
                 <span className="k-body-strong">{one.name}</span>
                 <span className="spacer" />
-                <span className="k-code muted">{one.unicode ? `U+${one.unicode}` : "unencoded"}</span>
+                <span className="k-code muted">{one.unicode ? `U+${one.unicode}` : t("unencoded")}</span>
               </div>
               <div className="metric-row">
-                <label><span className="k-caption muted">LSB</span><output className="metric">{fmt(one.lsb)}</output></label>
-                <label><span className="k-caption muted">Width</span><output className="metric">{fmt(one.width)}</output></label>
-                <label><span className="k-caption muted">RSB</span><output className="metric">{fmt(one.rsb)}</output></label>
+                <label><span className="k-caption muted">{t("LSB")}</span><output className="metric">{fmt(one.lsb)}</output></label>
+                <label><span className="k-caption muted">{t("Width")}</span><output className="metric">{fmt(one.width)}</output></label>
+                <label><span className="k-caption muted">{t("RSB")}</span><output className="metric">{fmt(one.rsb)}</output></label>
               </div>
-              <p className="k-caption muted">{one.category}{one.export ? "" : " · not exported"}</p>
+              <p className="k-caption muted">{t(one.category)}{one.export ? "" : ` · ${t("not exported")}`}</p>
             </>
           ) : (
-            <p className="k-caption muted">{selectedGlyphs.length > 1 ? `${selectedGlyphs.length} glyphs selected` : "Select a glyph to see its metrics."}</p>
+            <p className="k-caption muted">{selectedGlyphs.length > 1 ? tn(selectedGlyphs.length, "{n} glyph selected", "{n} glyphs selected") : t("Select a glyph to see its metrics.")}</p>
           )}
           {selectedGlyphs.length > 0 && onSetExport && (
-            <label className="check-row" title="Glyphs that aren't exported (such as parts used only as components) are left out of fonts">
+            <label className="check-row" title={t("Glyphs that aren't exported (such as parts used only as components) are left out of fonts")}>
               <input
                 type="checkbox"
                 checked={selectedGlyphs.every((g) => g.export)}
                 ref={(el) => { if (el) el.indeterminate = selectedGlyphs.some((g) => g.export) && !selectedGlyphs.every((g) => g.export); }}
                 onChange={(e) => onSetExport(selectedGlyphs.map((g) => g.name), e.target.checked)}
-                aria-label="Export the selected glyphs"
+                aria-label={t("Export the selected glyphs")}
               />
-              <span className="k-caption">Export {selectedGlyphs.length > 1 ? "these glyphs" : "this glyph"}</span>
+              <span className="k-caption">{selectedGlyphs.length > 1 ? t("Export these glyphs") : t("Export this glyph")}</span>
             </label>
           )}
         </section>
       </aside>
       <main className="grid-area">
         <div className="grid-header">
-          <h2 className="k-subtitle">{category === "All" ? "All glyphs" : category}</h2>
-          <span className="k-caption muted">{shown.length} glyphs</span>
+          <h2 className="k-subtitle">{category === "All" ? t("All glyphs") : t(category)}</h2>
+          <span className="k-caption muted">{tn(shown.length, "{n} glyph", "{n} glyphs")}</span>
           <span className="spacer" />
-          {onAddGlyphs && <button type="button" className="btn btn-secondary btn-sm" onClick={onAddGlyphs}>Add Glyphs…</button>}
+          {onAddGlyphs && <button type="button" className="btn btn-secondary btn-sm" onClick={onAddGlyphs}>{t("Add Glyphs…")}</button>}
         </div>
         {shown.length ? (
           <div className="glyph-grid" role="list" onKeyDown={(e) => {
@@ -157,15 +158,15 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
           </div>
         ) : (
           <div className="empty">
-            <p className="k-subtitle">No glyphs match “{query}”</p>
-            <button className="btn btn-secondary" onClick={() => { setQuery(""); setCategory("All"); }}>Clear search & filters</button>
+            <p className="k-subtitle">{t("No glyphs match “{query}”", { query })}</p>
+            <button className="btn btn-secondary" onClick={() => { setQuery(""); setCategory("All"); }}>{t("Clear search & filters")}</button>
           </div>
         )}
       </main>
       <footer className="statusbar k-caption">
-        <span>{selection.size} selected · {shown.length} shown · {font.glyphs.length} total · {drawn} drawn</span>
+        <span>{t("Selected: {selected} · Shown: {shown} · Total: {total} · Drawn: {drawn}", { selected: selection.size, shown: shown.length, total: font.glyphs.length, drawn })}</span>
         <span className="spacer" />
-        <span>Master: {font.masters.find((m) => m.id === font.masterId)?.name} · {font.path ?? "Not saved yet"}</span>
+        <span>{t("Master: {master}", { master: font.masters.find((m) => m.id === font.masterId)?.name ?? "" })} · {font.path ?? t("Not saved yet")}</span>
       </footer>
     </div>
   );

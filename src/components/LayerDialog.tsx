@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { Axis, AxisRange, Location } from "../lib/backend";
+import { errorMessage, type Axis, type AxisRange, type Location } from "../lib/backend";
 import { CloseIcon } from "./Icons";
+import { t } from "../lib/i18n";
 
 export type LayerDialogMode =
   | { kind: "brace"; initial: Location; editing: boolean }
@@ -51,7 +52,7 @@ export function LayerDialog({ glyph, axes, mode, onCancel, onSave }: Props) {
       const location: Location = {};
       for (const a of axes) {
         const v = num(loc[a.tag]);
-        if (v === undefined || Number.isNaN(v)) return setError(`Enter a value for ${a.name}.`);
+        if (v === undefined || Number.isNaN(v)) return setError(t("Enter a value for {name}.", { name: a.name }));
         location[a.tag] = v;
       }
       value = { location };
@@ -59,47 +60,47 @@ export function LayerDialog({ glyph, axes, mode, onCancel, onSave }: Props) {
       const out: AxisRange[] = [];
       for (const a of axes) {
         const min = num(ranges[a.tag].min), max = num(ranges[a.tag].max);
-        if (Number.isNaN(min) || Number.isNaN(max)) return setError(`${a.name}: enter numbers.`);
+        if (Number.isNaN(min) || Number.isNaN(max)) return setError(t("{name}: enter numbers.", { name: a.name }));
         if (min !== undefined || max !== undefined) out.push({ tag: a.tag, min: min ?? null, max: max ?? null });
       }
-      if (!out.length) return setError("Give a minimum or a maximum on at least one axis.");
+      if (!out.length) return setError(t("Give a minimum or a maximum on at least one axis."));
       value = { ranges: out };
     }
     setBusy(true);
     try {
       await onSave(value);
     } catch (err) {
-      setError(String(err));
+      setError(errorMessage(err));
       setBusy(false);
     }
   }
 
   const title = brace
-    ? `${mode.editing ? "Move" : "Add"} intermediate layer`
-    : `${mode.editing ? "Edit" : "Add"} alternate`;
+    ? (mode.editing ? t("Move intermediate layer") : t("Add intermediate layer"))
+    : (mode.editing ? t("Edit alternate") : t("Add alternate"));
   return (
     <div className="scrim" role="presentation">
       <form className="dialog layer-dialog" role="dialog" aria-modal="true" aria-labelledby="layer-title" onSubmit={submit}>
         <header className="dialog-header">
           <h2 id="layer-title" className="k-subtitle">{title} · {glyph}</h2>
-          <button type="button" className="icon-btn" aria-label="Close" onClick={onCancel}><CloseIcon /></button>
+          <button type="button" className="icon-btn" aria-label={t("Close")} onClick={onCancel}><CloseIcon /></button>
         </header>
         <div className="dialog-body">
           <p className="k-caption muted">
             {brace
-              ? "An intermediate (brace) layer is an extra drawing at its own location between masters. It must match the masters point for point; it starts as the glyph interpolated there."
-              : "An alternate (bracket layers) is a second design used wherever the location is inside these ranges, for example a simpler dollar sign at heavy weights. Every master gets a copy to edit. A range includes both its minimum and its maximum; leave a box empty for no limit."}
+              ? t("An intermediate (brace) layer is an extra drawing at its own location between masters. It must match the masters point for point; it starts as the glyph interpolated there.")
+              : t("An alternate (bracket layers) is a second design used wherever the location is inside these ranges, for example a simpler dollar sign at heavy weights. Every master gets a copy to edit. A range includes both its minimum and its maximum; leave a box empty for no limit.")}
           </p>
           {axes.map((a) => (
             <div key={a.tag} className="field layer-axis">
               <span className="k-label">{a.name} <span className="muted">({a.tag}, {a.min}–{a.max})</span></span>
               {brace ? (
-                <input className="text-input" inputMode="decimal" value={loc[a.tag]} onChange={(e) => setLoc({ ...loc, [a.tag]: e.target.value })} aria-label={`${a.name} location`} />
+                <input className="text-input" inputMode="decimal" value={loc[a.tag]} onChange={(e) => setLoc({ ...loc, [a.tag]: e.target.value })} aria-label={t("{name} location", { name: a.name })} />
               ) : (
                 <span className="row">
-                  <input className="text-input" inputMode="decimal" placeholder="from (no limit)" value={ranges[a.tag].min} onChange={(e) => setRanges({ ...ranges, [a.tag]: { ...ranges[a.tag], min: e.target.value } })} aria-label={`${a.name} minimum`} />
-                  <span className="muted">to</span>
-                  <input className="text-input" inputMode="decimal" placeholder="to (no limit)" value={ranges[a.tag].max} onChange={(e) => setRanges({ ...ranges, [a.tag]: { ...ranges[a.tag], max: e.target.value } })} aria-label={`${a.name} maximum`} />
+                  <input className="text-input" inputMode="decimal" placeholder={t("from (no limit)")} value={ranges[a.tag].min} onChange={(e) => setRanges({ ...ranges, [a.tag]: { ...ranges[a.tag], min: e.target.value } })} aria-label={t("{name} minimum", { name: a.name })} />
+                  <span className="muted">{t("to")}</span>
+                  <input className="text-input" inputMode="decimal" placeholder={t("to (no limit)")} value={ranges[a.tag].max} onChange={(e) => setRanges({ ...ranges, [a.tag]: { ...ranges[a.tag], max: e.target.value } })} aria-label={t("{name} maximum", { name: a.name })} />
                 </span>
               )}
             </div>
@@ -108,8 +109,8 @@ export function LayerDialog({ glyph, axes, mode, onCancel, onSave }: Props) {
         </div>
         <footer className="dialog-footer">
           <span className="spacer" />
-          <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy}>{mode.editing ? "Save" : "Add"}</button>
+          <button type="button" className="btn btn-secondary" onClick={onCancel}>{t("Cancel")}</button>
+          <button type="submit" className="btn btn-primary" disabled={busy}>{mode.editing ? t("Save") : t("Add")}</button>
         </footer>
       </form>
     </div>

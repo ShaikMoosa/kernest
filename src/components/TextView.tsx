@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { backend, type DocStatus, type FontInfo, type KernMode, type Location, type MetricName, type TextItem, type TextLayout } from "../lib/backend";
+import { t } from "../lib/i18n";
 
 const PRESETS = ["HOHOHAVATAR To LT", "nnonnoonon HHOHHOOHOH", "Hamburgefontsiv", "/H/O/H/n/o/n LTLTLT ToTo"];
 const MISSING_WIDTH = 500;
@@ -41,7 +42,7 @@ function GroupField({ label, value, disabled, onCommit }: { label: string; value
   return (
     <label className="info-field">
       <span className="k-caption muted">{label}</span>
-      <input className="metric-input group-input" value={text} disabled={disabled} placeholder="none" onChange={(e) => setText(e.target.value)}
+      <input className="metric-input group-input" value={text} disabled={disabled} placeholder={t("none")} onChange={(e) => setText(e.target.value)}
         onBlur={(e) => { const v = e.currentTarget.value.trim(); if (v !== shown) onCommit(v || null); }}
         onKeyDown={(e) => {
           if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -105,7 +106,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   }, [layout]);
 
   const run = useCallback((task: () => Promise<DocStatus>) => {
-    if (latest.current.previewing) return onError("Spacing edits apply to a master. Set the preview back to \"Current master\" to edit.");
+    if (latest.current.previewing) return onError(t("Spacing edits apply to a master. Set the preview back to “Current master” to edit."));
     chain.current = chain.current.then(async () => {
       try {
         onChanged(await task());
@@ -217,32 +218,32 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   const ci = current ? line.indexOf(current) : -1;
   const prev = ci > 0 && line[ci - 1].type === "glyph" ? (line[ci - 1] as Glyph) : undefined;
   const next = ci >= 0 && line[ci + 1]?.type === "glyph" ? (line[ci + 1] as Glyph) : undefined;
-  const pairLabel = (g?: Glyph) => (g?.kernLeft ? `${g.kernLeft} | ${g.kernRight}` : "no kerning");
+  const pairLabel = (g?: Glyph) => (g?.kernLeft ? `${g.kernLeft} | ${g.kernRight}` : t("no kerning"));
 
   return (
     <div className="textview">
-      <div className="toolbar" role="toolbar" aria-label="Text tools">
-        <input className="text-input" value={text} onChange={(e) => setText(e.target.value)} aria-label="Sample text" placeholder="Type text, or /glyphname" spellCheck={false} />
-        <select className="select" aria-label="Sample strings" value="" onChange={(e) => e.target.value && setText(e.target.value)}>
-          <option value="">Samples…</option>
+      <div className="toolbar" role="toolbar" aria-label={t("Text tools")}>
+        <input className="text-input" value={text} onChange={(e) => setText(e.target.value)} aria-label={t("Sample text")} placeholder={t("Type text, or /glyphname")} spellCheck={false} />
+        <select className="select" aria-label={t("Sample strings")} value="" onChange={(e) => e.target.value && setText(e.target.value)}>
+          <option value="">{t("Samples…")}</option>
           {PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
         <span className="toolbar-sep" />
-        <div className="segmented" role="radiogroup" aria-label="Kerning mode">
+        <div className="segmented" role="radiogroup" aria-label={t("Kerning mode")}>
           {MODES.map((m) => (
-            <button key={m.id} role="radio" aria-checked={mode === m.id} title={m.title} className={`segment${mode === m.id ? " is-selected" : ""}`} onClick={() => setMode(m.id)}>{m.label}</button>
+            <button key={m.id} role="radio" aria-checked={mode === m.id} title={t(m.title)} className={`segment${mode === m.id ? " is-selected" : ""}`} onClick={() => setMode(m.id)}>{t(m.label)}</button>
           ))}
         </div>
         <span className="toolbar-sep" />
         <div className="location-picker">
-          <select className="select" aria-label="Preview location" value={preview} onChange={(e) => {
+          <select className="select" aria-label={t("Preview location")} value={preview} onChange={(e) => {
             const v = e.target.value;
             if (v === "custom" && info) setCustom(Object.fromEntries(info.axes.map((a) => [a.tag, custom[a.tag] ?? a.default])));
             setPreview(v);
           }}>
-            <option value="">Current master</option>
-            {info?.instances.map((i) => <option key={i.name} value={`i:${i.name}`}>Instance: {i.name}</option>)}
-            {info && info.axes.length > 0 && info.masters.length > 1 && <option value="custom">Custom location…</option>}
+            <option value="">{t("Current master")}</option>
+            {info?.instances.map((i) => <option key={i.name} value={`i:${i.name}`}>{t("Instance: {name}", { name: i.name })}</option>)}
+            {info && info.axes.length > 0 && info.masters.length > 1 && <option value="custom">{t("Custom location…")}</option>}
           </select>
           {preview === "custom" && info?.axes.map((a) => (
             <label key={a.tag} className="axis-slider k-caption" title={a.name}>
@@ -253,8 +254,8 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
           ))}
         </div>
         <span className="spacer" />
-        <label className="check-row k-caption"><input type="checkbox" checked={showMetrics} onChange={(e) => setShowMetrics(e.target.checked)} /> Metrics</label>
-        <input type="range" min={24} max={320} value={size} onChange={(e) => setSize(Number(e.target.value))} aria-label="Text size" className="size-slider" />
+        <label className="check-row k-caption"><input type="checkbox" checked={showMetrics} onChange={(e) => setShowMetrics(e.target.checked)} /> {t("Metrics")}</label>
+        <input type="range" min={24} max={320} value={size} onChange={(e) => setSize(Number(e.target.value))} aria-label={t("Text size")} className="size-slider" />
         <span className="k-caption muted zoom">{size} px</span>
       </div>
       <div className="text-canvas">
@@ -303,24 +304,24 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
         </svg>
       </div>
       {current && (
-        <div className="info-box text-info" role="group" aria-label="Spacing">
+        <div className="info-box text-info" role="group" aria-label={t("Spacing")}>
           <div className="info-title">
             <span className="k-body-strong">{current.name}</span>
             <span className="k-code muted">{current.unicode ? `U+${current.unicode}` : ""}</span>
           </div>
-          <NumField label={prev ? `◂ ${prev.name}` : "◂ kern"} value={prev ? prev.kern : null} disabled={!prev || previewing} title={prev ? pairLabel(prev) : undefined}
+          <NumField label={prev ? `◂ ${prev.name}` : `◂ ${t("kern")}`} value={prev ? prev.kern : null} disabled={!prev || previewing} title={prev ? pairLabel(prev) : undefined}
             onCommit={(v) => prev && kern(prev, current, () => v)} />
-          <NumField label="LSB" value={current.lsb} disabled={current.lsb === null || previewing} onCommit={(v) => setMetric(current.name, "lsb", v)} />
-          <NumField label="Width" value={current.width} disabled={previewing} onCommit={(v) => setMetric(current.name, "width", v)} />
-          <NumField label="RSB" value={current.rsb} disabled={current.rsb === null || previewing} onCommit={(v) => setMetric(current.name, "rsb", v)} />
-          <NumField label={next ? `${next.name} ▸` : "kern ▸"} value={next ? current.kern : null} disabled={!next || previewing} title={next ? pairLabel(current) : undefined}
+          <NumField label={t("LSB")} value={current.lsb} disabled={current.lsb === null || previewing} onCommit={(v) => setMetric(current.name, "lsb", v)} />
+          <NumField label={t("Width")} value={current.width} disabled={previewing} onCommit={(v) => setMetric(current.name, "width", v)} />
+          <NumField label={t("RSB")} value={current.rsb} disabled={current.rsb === null || previewing} onCommit={(v) => setMetric(current.name, "rsb", v)} />
+          <NumField label={next ? `${next.name} ▸` : `${t("kern")} ▸`} value={next ? current.kern : null} disabled={!next || previewing} title={next ? pairLabel(current) : undefined}
             onCommit={(v) => next && kern(current, next, () => v)} />
           <span className="info-sep" />
-          <GroupField label="Left group" value={current.leftGroup} disabled={previewing} onCommit={(v) => setGroups(current.name, v, current.rightGroup)} />
-          <GroupField label="Right group" value={current.rightGroup} disabled={previewing} onCommit={(v) => setGroups(current.name, current.leftGroup, v)} />
+          <GroupField label={t("Left group")} value={current.leftGroup} disabled={previewing} onCommit={(v) => setGroups(current.name, v, current.rightGroup)} />
+          <GroupField label={t("Right group")} value={current.rightGroup} disabled={previewing} onCommit={(v) => setGroups(current.name, current.leftGroup, v)} />
         </div>
       )}
-      <div className="text-hint k-caption muted">{previewing ? "Previewing an interpolated location · spacing edits are paused: choose \"Current master\" to edit" : "Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it"}</div>
+      <div className="text-hint k-caption muted">{previewing ? t("Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit") : t("Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it")}</div>
     </div>
   );
 }

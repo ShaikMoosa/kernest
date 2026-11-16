@@ -40,6 +40,9 @@ jobs:
       - name: Typecheck and build frontend
         run: npm run build
 
+      - name: Translations complete (Spanish, Arabic)
+        run: npm run check:i18n
+
       - name: Rust format check
         run: cargo fmt --all -- --check
 
