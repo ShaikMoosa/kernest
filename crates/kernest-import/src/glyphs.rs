@@ -6,7 +6,7 @@ use std::path::Path;
 use glyphs_reader::{Font as GFont, InstanceType, NodeType, Shape as GShape};
 use kernest_core::{
     Anchor, Axis, AxisRange, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master,
-    Metrics, Node, NodeKind, Path as KPath, Shape, SmartAxis,
+    Metrics, Node, NodeKind, Path as KPath, Shape, SmartAxis, StyleLink,
 };
 use ordered_float::OrderedFloat;
 
@@ -90,6 +90,14 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             .vendor_id()
             .map(String::from)
             .or_else(|| g.custom_parameters.vendor_id.clone()),
+        designer_url: g.get_default_name("designerURL").map(String::from),
+        manufacturer: g.get_default_name("manufacturers").map(String::from),
+        manufacturer_url: g.get_default_name("manufacturerURL").map(String::from),
+        license: g.get_default_name("licenses").map(String::from),
+        license_url: g.get_default_name("licenseURL").map(String::from),
+        description: g.get_default_name("descriptions").map(String::from),
+        trademark: g.get_default_name("trademarks").map(String::from),
+        sample_text: g.get_default_name("sampleTexts").map(String::from),
         hinting: None,
     };
 
@@ -302,6 +310,17 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             name: i.name.clone(),
             location: location(&i.axes_values),
             export: i.active,
+            weight_class: i.weight_class,
+            width_class: i.width_class,
+            style_link: if i.is_bold || i.is_italic || i.link_style.is_some() {
+                Some(StyleLink {
+                    bold: i.is_bold,
+                    italic: i.is_italic,
+                    base: i.link_style.clone().unwrap_or_default(),
+                })
+            } else {
+                None
+            },
         })
         .collect();
     if variable_settings > 0 {
@@ -323,6 +342,8 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         glyphs,
         kerning,
         features,
+        notes: String::new(),
+        feature_settings: Default::default(),
         palettes: Vec::new(),
     };
     let master_ids: HashMap<String, String> = ids

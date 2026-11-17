@@ -176,7 +176,40 @@ export interface Instance {
   name: string;
   location: Location;
   export?: boolean;
+  /** OS/2 weight class (100–900); unset means automatic from the location. */
+  weightClass?: number;
+  /** OS/2 width class (1–9); unset means automatic from the location. */
+  widthClass?: number;
+  /** Style linking: this instance is the bold/italic of the `base` instance. */
+  styleLink?: StyleLink;
 }
+
+export interface StyleLink {
+  bold: boolean;
+  italic: boolean;
+  /** The instance this one is the bold/italic of (empty for a regular family). */
+  base: string;
+}
+
+/** The naming fields on Font Info › General. Empty strings clear a field. */
+export interface FontNames {
+  designer: string;
+  designerUrl: string;
+  manufacturer: string;
+  manufacturerUrl: string;
+  copyright: string;
+  vendorId: string;
+  license: string;
+  licenseUrl: string;
+  description: string;
+  trademark: string;
+  sampleText: string;
+}
+
+export const EMPTY_NAMES: FontNames = {
+  designer: "", designerUrl: "", manufacturer: "", manufacturerUrl: "", copyright: "",
+  vendorId: "", license: "", licenseUrl: "", description: "", trademark: "", sampleText: "",
+};
 
 /** TrueType autohinting settings (ttfautohint options). */
 export interface Hinting {
@@ -196,6 +229,9 @@ export interface FontInfo {
   unitsPerEm: number;
   versionMajor: number;
   versionMinor: number;
+  names: FontNames;
+  /** Designer notes, saved with the font but never exported. */
+  notes: string;
   axes: Axis[];
   masters: MasterView[];
   instances: Instance[];
@@ -263,6 +299,46 @@ export interface KernPair {
 export interface KerningList {
   pairs: KernPair[];
   groups: string[];
+  status: DocStatus;
+}
+
+/** A problem in the hand-written feature text, at a 1-based line and column. */
+export interface FeatureDiagnostic {
+  line: number;
+  column: number;
+  message: string;
+}
+
+export interface FeaturesView {
+  /** The designer's hand-written feature code. */
+  text: string;
+  /** The code generated from the automatic features that are switched on. */
+  generated: string;
+  automatic: string[];
+  /** Every feature Kernest could generate from the glyph names. */
+  available: string[];
+  /** Features the designer wrote by hand (never generated). */
+  handwritten: string[];
+  diagnostics: FeatureDiagnostic[];
+  status: DocStatus;
+}
+
+/** One shaped glyph in the text view's feature preview. */
+export interface ShapedGlyph {
+  name: string;
+  svg: string;
+  color?: ColorLayerView[];
+  advance: number;
+  xOffset: number;
+  yOffset: number;
+  /** Byte offset in the line's text, for caret placement. */
+  cluster: number;
+}
+
+export interface ShapedView {
+  lines: ShapedGlyph[][];
+  metrics: Metrics;
+  palette?: string[];
   status: DocStatus;
 }
 
@@ -341,6 +417,16 @@ export interface Backend {
   setGlyphGroups(glyph: string, leftGroup: string | null, rightGroup: string | null): Promise<DocStatus>;
   fontInfo(): Promise<FontInfo>;
   setFontInfo(familyName: string, unitsPerEm: number, versionMajor: number, versionMinor: number): Promise<FontInfo>;
+  /** Sets the naming fields (Font Info › General). */
+  setFontNames(names: FontNames): Promise<FontInfo>;
+  /** Sets the designer notes (saved, never exported). */
+  setNotes(text: string): Promise<FontInfo>;
+  /** The Features editor: hand-written text, generated code and diagnostics. */
+  features(): Promise<FeaturesView>;
+  setFeatures(text: string): Promise<FeaturesView>;
+  setAutomaticFeatures(automatic: string[]): Promise<FeaturesView>;
+  /** Shapes text with feature settings like "ss01=1" against a compiled preview. */
+  shapeText(text: string, masterId: string, location?: Location, features?: string[]): Promise<ShapedView>;
   setAxes(axes: Axis[]): Promise<FontInfo>;
   /** Sets the TrueType autohinting settings. */
   setHinting(hinting: Hinting): Promise<FontInfo>;
@@ -433,6 +519,12 @@ const tauriBackend: Backend = {
   setGlyphGroups: (glyph, leftGroup, rightGroup) => invoke("set_glyph_groups", { glyph, leftGroup, rightGroup }),
   fontInfo: () => invoke("font_info"),
   setFontInfo: (familyName, unitsPerEm, versionMajor, versionMinor) => invoke("set_font_info", { familyName, unitsPerEm, versionMajor, versionMinor }),
+  setFontNames: (names) => invoke("set_font_names", { names }),
+  setNotes: (text) => invoke("set_notes", { text }),
+  features: () => invoke("features"),
+  setFeatures: (text) => invoke("set_features", { text }),
+  setAutomaticFeatures: (automatic) => invoke("set_automatic_features", { automatic }),
+  shapeText: (text, masterId, location, features) => invoke("shape_text", { text, masterId, location: location ?? null, features: features ?? [] }),
   setHinting: (hinting) => invoke("set_hinting", { hinting }),
   setPalettes: (palettes) => invoke("set_palettes", { palettes }),
   addColorLayer: (glyph, masterId) => invoke("add_color_layer", { glyph, masterId }),
@@ -529,6 +621,8 @@ interface MockMeta {
   unitsPerEm: number;
   versionMajor: number;
   versionMinor: number;
+  names: FontNames;
+  notes: string;
   axes: Axis[];
   masters: MasterView[];
   instances: Instance[];
@@ -568,7 +662,7 @@ function mockDoc(familyName: string, codepoints: number[], withOutlines: boolean
   });
   const kerning = withOutlines ? [{ left: "T", right: "o", value: -60 }, { left: "L", right: "T", value: -80 }] : [];
   return {
-    familyName, unitsPerEm: 1000, versionMajor: 1, versionMinor: 0, axes: [], instances: [],
+    familyName, unitsPerEm: 1000, versionMajor: 1, versionMinor: 0, names: { ...EMPTY_NAMES }, notes: "", axes: [], instances: [],
     masters: [{ id: "m01", name: "Regular", location: {}, metrics: { ...METRICS } }],
     glyphs, kerning, undo: [], redo: [], revision: 0, savedRevision: 0,
   };
@@ -711,7 +805,7 @@ function undoStep(d: MockDoc, c: MockChange, forward: boolean): UndoResult {
 
 const metaCopy = (m: MockMeta): MockMeta => JSON.parse(JSON.stringify({
   familyName: m.familyName, unitsPerEm: m.unitsPerEm, versionMajor: m.versionMajor, versionMinor: m.versionMinor,
-  axes: m.axes, masters: m.masters, instances: m.instances, hinting: m.hinting,
+  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, hinting: m.hinting,
 }));
 
 function mockInfo(d: MockDoc): FontInfo {
@@ -785,6 +879,25 @@ const mockBackend: Backend = {
     if (unitsPerEm < 16 || unitsPerEm > 16384) throw "Units per em must be between 16 and 16384.";
     return editMeta(need(), (m) => Object.assign(m, { familyName: familyName.trim(), unitsPerEm, versionMajor, versionMinor }));
   },
+  async setFontNames(names) {
+    const trim = Object.fromEntries(Object.entries(names).map(([k, v]) => [k, v.trim()])) as unknown as FontNames;
+    return editMeta(need(), (m) => { m.names = trim; });
+  },
+  async setNotes(text) {
+    return editMeta(need(), (m) => { m.notes = text; });
+  },
+  async features() {
+    throw "The Features editor needs the desktop app (npm run tauri dev).";
+  },
+  async setFeatures() {
+    throw "The Features editor needs the desktop app (npm run tauri dev).";
+  },
+  async setAutomaticFeatures() {
+    throw "The Features editor needs the desktop app (npm run tauri dev).";
+  },
+  async shapeText() {
+    throw "The feature preview needs the desktop app (npm run tauri dev).";
+  },
   async setHinting(h) {
     const ok = (v: number) => Number.isInteger(v) && v >= 1 && v <= 1000;
     if (!ok(h.rangeMin) || !ok(h.rangeMax)) throw "Hinting sizes must be between 1 and 1000 pixels per em.";
@@ -844,7 +957,7 @@ const mockBackend: Backend = {
       if (!name) throw "Every instance needs a name.";
       if (names.has(name)) throw `Instance name "${name}" is used twice.`;
       names.add(name);
-      return { name, location: checkLocation(d, i.location), export: i.export ?? true };
+      return { name, location: checkLocation(d, i.location), export: i.export ?? true, weightClass: i.weightClass, widthClass: i.widthClass, styleLink: i.styleLink };
     });
     return editMeta(d, (m) => { m.instances = clean; });
   },

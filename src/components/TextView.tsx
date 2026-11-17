@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { backend, type DocStatus, type FontInfo, type KernMode, type Location, type MetricName, type TextItem, type TextLayout } from "../lib/backend";
+import { backend, type DocStatus, type FeaturesView, type FontInfo, type KernMode, type Location, type MetricName, type ShapedView, type TextItem, type TextLayout } from "../lib/backend";
 import { t } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
 
@@ -73,8 +73,8 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   const [showMetrics, setShowMetrics] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
   const chain = useRef(Promise.resolve());
-  const latest = useRef({ layout, cursor, mode, previewing: false });
-  latest.current = { layout, cursor, mode, previewing: latest.current?.previewing ?? false };
+  const latest = useRef({ layout, cursor, mode, previewing: false, shapeOn: false });
+  latest.current = { layout, cursor, mode, previewing: latest.current?.previewing ?? false, shapeOn: latest.current?.shapeOn ?? false };
 
   const [info, setInfo] = useState<FontInfo | null>(null);
   // "" = the current master; "i:<name>" = an instance; "custom" = the sliders below.
@@ -94,8 +94,38 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   }, [info, preview]);
   const previewing = location !== undefined;
   latest.current.previewing = previewing;
+
+  // ---------- Feature preview ----------
+  const [featView, setFeatView] = useState<FeaturesView | null>(null);
+  const [featOpen, setFeatOpen] = useState(false);
+  const [shapeOn, setShapeOn] = useState(false);
+  // Only the tags the user flipped; the rest follow what's in the font.
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [shaped, setShaped] = useState<ShapedView | null>(null);
+  latest.current.shapeOn = shapeOn;
+  const featRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { backend.features().then(setFeatView, () => setFeatView(null)); }, [version]);
+  useEffect(() => {
+    if (!featOpen) return;
+    const close = (e: MouseEvent) => { if (!featRef.current?.contains(e.target as Node)) setFeatOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setFeatOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [featOpen]);
+  const featTags = useMemo(() => featView ? [...new Set([...featView.available, ...featView.handwritten])].sort() : [], [featView]);
+  const featChecked = (tag: string) => overrides[tag] ?? (featView?.automatic.includes(tag) || featView?.handwritten.includes(tag) || false);
+  // Explicit on/off per tag so default-on features like liga can be switched off too.
+  const featSettings = useMemo(() => featTags.map((tag) => `${tag}=${featChecked(tag) ? 1 : 0}`), [featTags, overrides, featView]);
+
   const reload = useCallback(() => backend.textLayout(text, masterId, location).then(setLayout, onError), [text, masterId, location, onError]);
-  useEffect(() => { reload(); }, [reload, version]);
+  const reloadShaped = useCallback(() => backend.shapeText(text, masterId, location, featSettings).then(setShaped, onError), [text, masterId, location, featSettings, onError]);
+  useEffect(() => {
+    if (!shapeOn) { reload(); return; }
+    // Shaping compiles a preview font; don't do it on every keystroke.
+    const id = setTimeout(reloadShaped, 250);
+    return () => clearTimeout(id);
+  }, [reload, reloadShaped, version, shapeOn]);
 
   // Keep the cursor inside the text.
   useEffect(() => {
@@ -149,11 +179,31 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
     }
     return xs;
   }), [layout, scale]);
-  const width = Math.max(800, ...positions.map((xs) => xs[xs.length - 1] + pad));
-  const height = layout ? baseline(layout.lines.length - 1) + (-(metrics?.descender ?? -200) * 1.2) * scale + pad : 400;
+
+  // Shaped preview geometry: advances and offsets come from the shaper, not kerning.
+  const showShaped = shapeOn && shaped !== null;
+  const sMetrics = shaped?.metrics;
+  const sLineH = sMetrics ? (sMetrics.ascender - sMetrics.descender) * 1.25 : 1250;
+  const sBaseline = (line: number) => pad + (line * sLineH + (sMetrics?.ascender ?? 800) * 1.1) * scale;
+  const sPositions = useMemo(() => (shaped?.lines ?? []).map((line) => {
+    const xs = [pad];
+    let x = pad;
+    for (const g of line) {
+      x += g.advance * scale;
+      xs.push(x);
+    }
+    return xs;
+  }), [shaped, scale]);
+
+  const activePositions = showShaped ? sPositions : positions;
+  const width = Math.max(800, ...activePositions.map((xs) => xs[xs.length - 1] + pad));
+  const activeLines = showShaped ? shaped.lines.length : layout?.lines.length;
+  const activeBaseline = showShaped ? sBaseline : baseline;
+  const activeDescender = (showShaped ? sMetrics : metrics)?.descender ?? -200;
+  const height = activeLines ? activeBaseline(activeLines - 1) + (-activeDescender * 1.2) * scale + pad : 400;
 
   function placeCursor(e: React.MouseEvent) {
-    if (!layout) return;
+    if (!layout || shapeOn) return;
     const r = svgRef.current!.getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
     let line = 0;
@@ -165,9 +215,19 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   }
 
   function glyphAt(e: React.MouseEvent): string | null {
-    if (!layout) return null;
     const r = svgRef.current!.getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
+    if (showShaped) {
+      for (let li = 0; li < shaped.lines.length; li++) {
+        if (Math.abs(y - (sBaseline(li) - 300 * scale)) > sLineH * scale * 0.6) continue;
+        const xs = sPositions[li];
+        for (let i = 0; i < shaped.lines[li].length; i++) {
+          if (x >= xs[i] && x < xs[i + 1]) return shaped.lines[li][i].name;
+        }
+      }
+      return null;
+    }
+    if (!layout) return null;
     for (let li = 0; li < layout.lines.length; li++) {
       if (Math.abs(y - (baseline(li) - 300 * scale)) > lineH * scale * 0.6) continue;
       const xs = positions[li];
@@ -185,6 +245,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (latest.current.shapeOn) return;
       const { layout, cursor } = latest.current;
       if (!layout) return;
       const line = layout.lines[cursor.line] ?? [];
@@ -254,6 +315,31 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
             </label>
           ))}
         </div>
+        <div className="feat-picker" ref={featRef}>
+          <button className={`btn btn-secondary btn-sm${shapeOn ? " is-on" : ""}`} aria-expanded={featOpen} aria-haspopup="true" onClick={() => setFeatOpen(!featOpen)}>{t("Features")}</button>
+          {featOpen && (
+            <div className="feat-pop" role="group" aria-label={t("Feature preview")}>
+              {!featView ? (
+                <p className="k-caption muted">{t("Feature preview needs the desktop app.")}</p>
+              ) : (
+                <>
+                  <label className="check-row" title={t("Shape the sample text with the font's OpenType features")}>
+                    <input type="checkbox" checked={shapeOn} onChange={(e) => setShapeOn(e.target.checked)} />
+                    <span className="k-body">{t("Shape preview")}</span>
+                  </label>
+                  {featTags.length === 0 ? (
+                    <p className="k-caption muted">{t("No features in this font yet. Add them in Font Info.")}</p>
+                  ) : featTags.map((tag) => (
+                    <label key={tag} className="check-row">
+                      <input type="checkbox" checked={featChecked(tag)} onChange={(e) => setOverrides({ ...overrides, [tag]: e.target.checked })} />
+                      <span className="k-body fea-tag">{tag}</span>
+                    </label>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+        </div>
         <span className="spacer" />
         <label className="check-row k-caption"><input type="checkbox" checked={showMetrics} onChange={(e) => setShowMetrics(e.target.checked)} /> {t("Metrics")}</label>
         <input type="range" min={24} max={320} value={size} onChange={(e) => setSize(Number(e.target.value))} aria-label={t("Text size")} className="size-slider" />
@@ -261,7 +347,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
       </div>
       <div className="text-canvas">
         <svg ref={svgRef} width={width} height={height} style={{ minWidth: "100%" }} onMouseDown={placeCursor} onDoubleClick={(e) => { const n = glyphAt(e); if (n) onOpenGlyph(n); }}>
-          {layout?.lines.map((ln, li) => {
+          {!showShaped && layout?.lines.map((ln, li) => {
             const by = baseline(li);
             const xs = positions[li];
             const pairKern = cursor.line === li ? (ln[cursor.pos - 1]?.type === "glyph" ? (ln[cursor.pos - 1] as Glyph) : undefined) : undefined;
@@ -306,9 +392,30 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
               </g>
             );
           })}
+          {showShaped && shaped.lines.map((ln, li) => {
+            const by = sBaseline(li);
+            const xs = sPositions[li];
+            return (
+              <g key={li}>
+                {showMetrics && sMetrics && [sMetrics.ascender, sMetrics.xHeight, 0, sMetrics.descender].map((m) => (
+                  <line key={m} x1={0} x2={Math.max(width, 6000)} y1={by - m * scale} y2={by - m * scale} className={m === 0 ? "metric-line baseline" : "metric-line"} />
+                ))}
+                {ln.map((g, i) => (
+                  <g key={i} transform={`translate(${xs[i] + g.xOffset * scale} ${by - g.yOffset * scale})`}>
+                    <title>{g.name}</title>
+                    {g.color?.length ? (
+                      <g transform={`scale(${scale} ${scale})`}><ColorGlyph layers={g.color} palette={shaped.palette ?? []} /></g>
+                    ) : g.svg ? (
+                      <path d={g.svg} transform={`scale(${scale} ${-scale})`} className="text-glyph" />
+                    ) : null}
+                  </g>
+                ))}
+              </g>
+            );
+          })}
         </svg>
       </div>
-      {current && (
+      {!shapeOn && current && (
         <div className="info-box text-info" role="group" aria-label={t("Spacing")}>
           <div className="info-title">
             <span className="k-body-strong">{current.name}</span>
@@ -326,7 +433,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
           <GroupField label={t("Right group")} value={current.rightGroup} disabled={previewing} onCommit={(v) => setGroups(current.name, current.leftGroup, v)} />
         </div>
       )}
-      <div className="text-hint k-caption muted">{previewing ? t("Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit") : t("Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it")}</div>
+      <div className="text-hint k-caption muted">{shapeOn ? t("Feature preview · spacing edits are paused: turn off Shape preview to edit") : previewing ? t("Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit") : t("Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it")}</div>
     </div>
   );
 }

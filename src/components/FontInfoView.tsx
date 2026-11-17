@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { backend, type Axis, type DocStatus, type FontInfo, type Instance, type Location, type MasterView, type Metrics } from "../lib/backend";
 import { AddIcon, CloseIcon } from "./Icons";
+import { FeaturesSection } from "./FeaturesSection";
 import { t, tn, translateMessage } from "../lib/i18n";
 
 const AXIS_PRESETS: Axis[] = [
@@ -42,9 +43,11 @@ let report: (label: string) => void = () => {};
 const FieldError = createContext<(message: string) => void>(() => {});
 
 /** A text/number input that commits on Enter or blur and reverts on Escape. */
-function Field({ value, onCommit, width = 72, mono = true, label, numeric = true }: {
+function Field({ value, onCommit, width = 72, mono = true, label, numeric = true, placeholder }: {
   /** Returning (a promise of) false means the value was refused: the field shows the old one again. */
   value: string | number; onCommit: (v: string) => unknown; width?: number; mono?: boolean; label: string; numeric?: boolean;
+  /** Shown when empty; a numeric field with a placeholder accepts empty (meaning automatic). */
+  placeholder?: string;
 }) {
   const shown = String(value);
   const [text, setText] = useState(shown);
@@ -53,7 +56,11 @@ function Field({ value, onCommit, width = 72, mono = true, label, numeric = true
   const commit = (v: string) => {
     if (v === shown) return;
     // Number fields only take numbers: say so instead of sending garbage.
-    if (numeric && (v.trim() === "" || !Number.isFinite(num(v)))) {
+    if (numeric && v.trim() !== "" && !Number.isFinite(num(v))) {
+      setText(shown);
+      return report(t("{name}: enter a number.", { name: label }));
+    }
+    if (numeric && v.trim() === "" && placeholder === undefined) {
       setText(shown);
       return report(t("{name}: enter a number.", { name: label }));
     }
@@ -65,6 +72,7 @@ function Field({ value, onCommit, width = 72, mono = true, label, numeric = true
       className={`metric-input${mono ? "" : " text-field"}`}
       style={{ width }}
       value={text}
+      placeholder={placeholder}
       inputMode={numeric ? "decimal" : undefined}
       onChange={(e) => setText(e.target.value)}
       onBlur={(e) => commit(e.currentTarget.value)}
@@ -162,87 +170,27 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
                 }} />
             </label>
           </div>
-        </section>
-
-        <section className="fi-section" aria-labelledby="fi-hinting">
-          <div className="fi-head">
-            <h2 id="fi-hinting" className="k-subtitle">{t("Hinting")}</h2>
-            <span className="k-caption muted">{t("TrueType autohinting on export (TTF and WOFF2). Turn it on in the Export dialog.")}</span>
-          </div>
           <div className="fi-row">
             {([
-              ["rangeMin", "Smallest size (px)", "Hinting starts at this many pixels per em"],
-              ["rangeMax", "Largest size (px)", "Above this size the font isn't hinted"],
-              ["increaseXHeight", "Increase x-height up to (px)", "Rounds the x-height up at small sizes for legibility; 0 is off"],
-            ] as const).map(([key, en, hintEn]) => { const label = t(en), hint = t(hintEn); return (
-              <label key={key} className="info-field" title={hint}><span className="k-caption muted">{label}</span>
-                <Field label={label} value={info.hinting[key]} onCommit={(v) => {
-                  const n = num(v);
-                  if (!Number.isInteger(n)) { onError(t("{name}: enter a whole number.", { name: label })); return false; }
-                  return apply(() => backend.setHinting({ ...info.hinting, [key]: n }));
-                }} />
+              ["designer", "Designer", 200],
+              ["designerUrl", "Designer URL", 240],
+              ["manufacturer", "Manufacturer", 200],
+              ["manufacturerUrl", "Manufacturer URL", 240],
+              ["copyright", "Copyright", 280],
+              ["vendorId", "Vendor ID", 96],
+              ["license", "License", 280],
+              ["licenseUrl", "License URL", 240],
+              ["trademark", "Trademark", 240],
+              ["description", "Description", 320],
+              ["sampleText", "Sample text", 320],
+            ] as const).map(([key, en, width]) => { const label = t(en); return (
+              <label key={key} className="info-field"><span className="k-caption muted">{label}</span>
+                <Field label={label} value={info.names[key]} width={width} mono={false} numeric={false}
+                  onCommit={(v) => apply(() => backend.setFontNames({ ...info.names, [key]: v }))} />
               </label>
             ); })}
-            <label className="check-row" title={t("Hint accented letters and other composites as whole glyphs, not through their components")}>
-              <input type="checkbox" checked={info.hinting.hintComposites}
-                onChange={(e) => apply(() => backend.setHinting({ ...info.hinting, hintComposites: e.target.checked }))} />
-              <span className="k-body">{t("Hint composites as whole glyphs")}</span>
-            </label>
           </div>
-        </section>
-
-        <section className="fi-section" aria-labelledby="fi-palettes">
-          <div className="fi-head">
-            <h2 id="fi-palettes" className="k-subtitle">{t("Colour palettes")}</h2>
-            <span className="k-caption muted">{t("Colours for colour layers (COLR and CPAL). Palette 1 is the default; others, such as one for dark backgrounds, have the same number of colours.")}</span>
-            <span className="spacer" />
-            {info.palettes.length > 0 && (
-              <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setPalettes(info.palettes.map((p) => [...p, "#000000ff"])))}>
-                <AddIcon size={14} /> {t("Add colour")}
-              </button>
-            )}
-            <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setPalettes(
-              info.palettes.length ? [...info.palettes, [...info.palettes[0]]] : [["#e63946ff", "#1d3557ff"]],
-            ))}>
-              <AddIcon size={14} /> {t("Add palette")}
-            </button>
-          </div>
-          {info.palettes.length === 0 ? (
-            <p className="k-caption muted">{t("No palettes. Add one to draw colour glyphs: then use + Colour in the glyph editor.")}</p>
-          ) : (
-            <table className="fi-table">
-              <thead><tr>
-                <th>{t("Colour")}</th>
-                {info.palettes.map((_, p) => (
-                  <th key={p}>
-                    {t("Palette {n}", { n: p + 1 })}
-                    {p > 0 && (
-                      <button className="icon-btn" aria-label={t("Remove palette {n}", { n: p + 1 })} title={t("Remove palette {n}", { n: p + 1 })}
-                        onClick={() => apply(() => backend.setPalettes(info.palettes.filter((_, j) => j !== p)))}><CloseIcon size={12} /></button>
-                    )}
-                  </th>
-                ))}
-                <th aria-label={t("Actions")} />
-              </tr></thead>
-              <tbody>
-                {info.palettes[0].map((_, c) => (
-                  <tr key={c}>
-                    <td className="k-caption muted">{c + 1}</td>
-                    {info.palettes.map((pal, p) => (
-                      <td key={p}>
-                        <ColorCell value={pal[c]} label={t("Palette {p}, colour {c}", { p: p + 1, c: c + 1 })}
-                          onCommit={(v) => apply(() => backend.setPalettes(info.palettes.map((q, j) => (j === p ? q.map((x, k) => (k === c ? v : x)) : q))))} />
-                      </td>
-                    ))}
-                    <td>
-                      <button className="icon-btn" aria-label={t("Remove colour {n}", { n: c + 1 })} title={t("Remove colour {n}", { n: c + 1 })} disabled={info.palettes[0].length === 1}
-                        onClick={() => apply(() => backend.setPalettes(info.palettes.map((q) => q.filter((_, k) => k !== c))))}><CloseIcon size={14} /></button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <p className="k-caption muted">{t("These names go into the exported font's name table. Leave a field empty to leave it out.")}</p>
         </section>
 
         <section className="fi-section" aria-labelledby="fi-axes">
@@ -368,27 +316,166 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
           </div>
           {instDraft.length === 0 ? (
             <p className="k-caption muted">{t("No instances. Instances are the named styles (e.g. SemiBold) that get exported.")}</p>
-          ) : instDraft.map((it, i) => (
+          ) : instDraft.map((it, i) => {
+            const patch = (p: Partial<Instance>) => setInstances(curInst().map((x, j) => (j === i ? { ...x, ...p } : x)));
+            const link = it.styleLink;
+            const kind = link ? (link.bold && link.italic ? "boldItalic" : link.bold ? "bold" : "italic") : "";
+            const setKind = (k: string) => patch({
+              styleLink: k === "" ? undefined : { bold: k === "bold" || k === "boldItalic", italic: k === "italic" || k === "boldItalic", base: link?.base ?? "" },
+            });
+            return (
             <div key={i} className="fi-row fi-instance">
               <label className="info-field"><span className="k-caption muted">{t("Name")}</span>
-                <Field label={t("Instance name")} value={it.name} width={160} mono={false} numeric={false} onCommit={(v) => setInstances(curInst().map((x, j) => (j === i ? { ...x, name: v } : x)))} />
+                <Field label={t("Instance name")} value={it.name} width={160} mono={false} numeric={false} onCommit={(v) => patch({ name: v })} />
               </label>
-              {locFields(it.location, (loc) => setInstances(curInst().map((x, j) => (j === i ? { ...x, location: loc } : x))), it.name)}
+              {locFields(it.location, (loc) => patch({ location: loc }), it.name)}
+              <label className="info-field" title={t("OS/2 weight class, 100 (Thin) to 900 (Black). Empty picks it from the weight axis.")}><span className="k-caption muted">{t("Weight class")}</span>
+                <Field label={t("Weight class")} value={it.weightClass ?? ""} width={88} placeholder={t("Automatic")} onCommit={(v) => {
+                  if (v.trim() === "") return patch({ weightClass: undefined });
+                  const n = num(v);
+                  if (!Number.isInteger(n) || n < 1 || n > 1000) { onError(t("Weight class must be a whole number from 1 to 1000.")); return false; }
+                  patch({ weightClass: n });
+                }} />
+              </label>
+              <label className="info-field" title={t("OS/2 width class, 1 (ultra-condensed) to 9 (ultra-expanded). Empty picks it from the width axis.")}><span className="k-caption muted">{t("Width class")}</span>
+                <Field label={t("Width class")} value={it.widthClass ?? ""} width={88} placeholder={t("Automatic")} onCommit={(v) => {
+                  if (v.trim() === "") return patch({ widthClass: undefined });
+                  const n = num(v);
+                  if (!Number.isInteger(n) || n < 1 || n > 9) { onError(t("Width class must be a whole number from 1 to 9.")); return false; }
+                  patch({ widthClass: n });
+                }} />
+              </label>
+              <label className="info-field" title={t("Links this instance as the bold or italic of another, so apps group them into one family.")}><span className="k-caption muted">{t("Style link")}</span>
+                <select className="select" value={kind} aria-label={t("Style link")} onChange={(e) => setKind(e.target.value)}>
+                  <option value="">{t("None")}</option>
+                  <option value="bold">{t("Bold")}</option>
+                  <option value="italic">{t("Italic")}</option>
+                  <option value="boldItalic">{t("Bold Italic")}</option>
+                </select>
+              </label>
+              {kind !== "" && (
+                <label className="info-field"><span className="k-caption muted">{t("Style of")}</span>
+                  <select className="select" value={link?.base ?? ""} aria-label={t("Style of")} onChange={(e) => patch({ styleLink: { bold: link?.bold ?? false, italic: link?.italic ?? false, base: e.target.value } })}>
+                    <option value="">{t("This family")}</option>
+                    {instDraft.filter((_, j) => j !== i).map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}
+                  </select>
+                </label>
+              )}
               <label className="check-row fi-export" title={t("Export this instance as a static font")}>
                 <input type="checkbox" checked={it.export !== false} aria-label={t("Export {name}", { name: it.name })}
-                  onChange={(e) => setInstances(curInst().map((x, j) => (j === i ? { ...x, export: e.target.checked } : x)))} />
+                  onChange={(e) => patch({ export: e.target.checked })} />
                 <span className="k-caption">{t("Export")}</span>
               </label>
               <span className="spacer" />
               <button className="icon-btn" aria-label={t("Remove {name}", { name: it.name })} title={t("Remove instance")} onClick={() => setInstances(curInst().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
             </div>
-          ))}
+            );
+          })}
           {instances && (
             <div className="fi-actions">
               <span className="spacer" />
               <button className="btn btn-secondary btn-sm" onClick={() => setInstances(null)}>{t("Discard")}</button>
               <button className="btn btn-primary btn-sm" onClick={async () => { const list = drafts.current.instances; if (list && await apply(() => backend.setInstances(list))) setInstances(null); }}>{t("Apply instances")}</button>
             </div>
+          )}
+        </section>
+
+        <FeaturesSection version={version} onChanged={onChanged} onError={onError} />
+
+        <section className="fi-section" aria-labelledby="fi-notes">
+          <div className="fi-head">
+            <h2 id="fi-notes" className="k-subtitle">{t("Notes")}</h2>
+            <span className="k-caption muted">{t("Saved with the font, never exported.")}</span>
+          </div>
+          <textarea
+            className="notes-area"
+            aria-label={t("Notes")}
+            defaultValue={info.notes}
+            key={info.notes}
+            placeholder={t("Notes to yourself about this font.")}
+            onBlur={(e) => { const v = e.currentTarget.value; if (v !== info.notes) apply(() => backend.setNotes(v)); }}
+            onKeyDown={(e) => { if (e.key === "Escape") { e.currentTarget.value = info.notes; e.currentTarget.blur(); } }}
+          />
+        </section>
+
+        <section className="fi-section" aria-labelledby="fi-hinting">
+          <div className="fi-head">
+            <h2 id="fi-hinting" className="k-subtitle">{t("Hinting")}</h2>
+            <span className="k-caption muted">{t("TrueType autohinting on export (TTF and WOFF2). Turn it on in the Export dialog.")}</span>
+          </div>
+          <div className="fi-row">
+            {([
+              ["rangeMin", "Smallest size (px)", "Hinting starts at this many pixels per em"],
+              ["rangeMax", "Largest size (px)", "Above this size the font isn't hinted"],
+              ["increaseXHeight", "Increase x-height up to (px)", "Rounds the x-height up at small sizes for legibility; 0 is off"],
+            ] as const).map(([key, en, hintEn]) => { const label = t(en), hint = t(hintEn); return (
+              <label key={key} className="info-field" title={hint}><span className="k-caption muted">{label}</span>
+                <Field label={label} value={info.hinting[key]} onCommit={(v) => {
+                  const n = num(v);
+                  if (!Number.isInteger(n)) { onError(t("{name}: enter a whole number.", { name: label })); return false; }
+                  return apply(() => backend.setHinting({ ...info.hinting, [key]: n }));
+                }} />
+              </label>
+            ); })}
+            <label className="check-row" title={t("Hint accented letters and other composites as whole glyphs, not through their components")}>
+              <input type="checkbox" checked={info.hinting.hintComposites}
+                onChange={(e) => apply(() => backend.setHinting({ ...info.hinting, hintComposites: e.target.checked }))} />
+              <span className="k-body">{t("Hint composites as whole glyphs")}</span>
+            </label>
+          </div>
+        </section>
+
+        <section className="fi-section" aria-labelledby="fi-palettes">
+          <div className="fi-head">
+            <h2 id="fi-palettes" className="k-subtitle">{t("Colour palettes")}</h2>
+            <span className="k-caption muted">{t("Colours for colour layers (COLR and CPAL). Palette 1 is the default; others, such as one for dark backgrounds, have the same number of colours.")}</span>
+            <span className="spacer" />
+            {info.palettes.length > 0 && (
+              <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setPalettes(info.palettes.map((p) => [...p, "#000000ff"])))}>
+                <AddIcon size={14} /> {t("Add colour")}
+              </button>
+            )}
+            <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setPalettes(
+              info.palettes.length ? [...info.palettes, [...info.palettes[0]]] : [["#e63946ff", "#1d3557ff"]],
+            ))}>
+              <AddIcon size={14} /> {t("Add palette")}
+            </button>
+          </div>
+          {info.palettes.length === 0 ? (
+            <p className="k-caption muted">{t("No palettes. Add one to draw colour glyphs: then use + Colour in the glyph editor.")}</p>
+          ) : (
+            <table className="fi-table">
+              <thead><tr>
+                <th>{t("Colour")}</th>
+                {info.palettes.map((_, p) => (
+                  <th key={p}>
+                    {t("Palette {n}", { n: p + 1 })}
+                    {p > 0 && (
+                      <button className="icon-btn" aria-label={t("Remove palette {n}", { n: p + 1 })} title={t("Remove palette {n}", { n: p + 1 })}
+                        onClick={() => apply(() => backend.setPalettes(info.palettes.filter((_, j) => j !== p)))}><CloseIcon size={12} /></button>
+                    )}
+                  </th>
+                ))}
+                <th aria-label={t("Actions")} />
+              </tr></thead>
+              <tbody>
+                {info.palettes[0].map((_, c) => (
+                  <tr key={c}>
+                    <td className="k-caption muted">{c + 1}</td>
+                    {info.palettes.map((pal, p) => (
+                      <td key={p}>
+                        <ColorCell value={pal[c]} label={t("Palette {p}, colour {c}", { p: p + 1, c: c + 1 })}
+                          onCommit={(v) => apply(() => backend.setPalettes(info.palettes.map((q, j) => (j === p ? q.map((x, k) => (k === c ? v : x)) : q))))} />
+                      </td>
+                    ))}
+                    <td>
+                      <button className="icon-btn" aria-label={t("Remove colour {n}", { n: c + 1 })} title={t("Remove colour {n}", { n: c + 1 })} disabled={info.palettes[0].length === 1}
+                        onClick={() => apply(() => backend.setPalettes(info.palettes.map((q) => q.filter((_, k) => k !== c))))}><CloseIcon size={14} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </section>
       </div>

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use kernest_core::designspace::{normalize, Location};
 use kernest_core::interpolate::{check_glyph, Interpolator};
-use kernest_core::{structure, Font, KernPair, Layer, Master, Metrics};
+use kernest_core::{structure, Font, Instance, KernPair, Layer, Master, Metrics};
 use serde::Serialize;
 
 use ufo::{designspace, to_ufo, DsRule, DsSource, UfoSource};
@@ -101,8 +101,46 @@ fn compile(input: &Path) -> Result<Vec<u8>, String> {
     let source = fontc::Input::new(input)
         .and_then(|i| i.create_source(&fontc::SourceOptions::default()))
         .map_err(|e| format!("could not read the generated sources: {e}"))?;
-    fontc::generate_font(source, fontc::Options::default())
-        .map_err(|e| format!("the font compiler failed: {e}"))
+    fontc::generate_font(source, fontc::Options::default()).map_err(|e| {
+        // fontc's own message only counts FEA errors; the verbose compiler error
+        // names the offending lines. Transparent wrappers hide it from source(),
+        // so match the variants directly.
+        if let fontc::Error::Backend(fontbe::error::Error::FeaCompileError(fea)) = &e {
+            return format!("the font compiler failed: {}", fea.display_verbose());
+        }
+        format!("the font compiler failed: {}", e.display_with_causes())
+    })
+}
+
+/// A quick TrueType compile of the default master (or an interpolated location) for
+/// the text view's feature preview, with the generated and hand-written features and
+/// the kerning baked in. Returns the bytes and the glyph order they were built with,
+/// so a shaper's glyph ids can be mapped back to names.
+pub fn preview_ttf(
+    font: &Font,
+    master_id: &str,
+    location: Option<&Location>,
+) -> Result<(Vec<u8>, Vec<String>), String> {
+    let src = match location {
+        Some(l) => instance_source(font, "Preview", l)?,
+        None => {
+            let m = font
+                .master(master_id)
+                .ok_or_else(|| format!("No master with id \"{master_id}\""))?;
+            master_source(font, m, &m.name, true)
+        }
+    };
+    let mut order: Vec<String> = src.layers.iter().map(|(n, _)| n.clone()).collect();
+    if !order.iter().any(|n| n == ".notdef") {
+        order.insert(0, ".notdef".into());
+    }
+    let dir =
+        tempfile::tempdir().map_err(|e| format!("could not create a temporary folder: {e}"))?;
+    let path = dir.path().join("preview.ufo");
+    let ufo = to_ufo(&src)?;
+    ufo.save(&path)
+        .map_err(|e| format!("could not write a UFO: {e}"))?;
+    Ok((compile(&path)?, order))
 }
 
 /// One master as a UFO source. For a static font (`for_static`) each glyph uses the
@@ -133,6 +171,7 @@ fn master_source<'a>(
         kerning: font.kerning.get(&master.id).cloned().unwrap_or_default(),
         alternates: Vec::new(),
         location: master.location.clone(),
+        instance: None,
     }
 }
 
@@ -240,6 +279,7 @@ fn instance_source<'a>(
         kerning,
         alternates: Vec::new(),
         location: location.clone(),
+        instance: None,
     })
 }
 
@@ -383,20 +423,22 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     }
 
     if opts.statics {
-        let targets: Vec<(String, Location)> = if font.instances.iter().any(|i| i.export) {
-            font.instances
-                .iter()
-                .filter(|i| i.export)
-                .map(|i| (i.name.clone(), i.location.clone()))
-                .collect()
-        } else {
-            font.masters
-                .iter()
-                .map(|m| (m.name.clone(), m.location.clone()))
-                .collect()
-        };
-        for (i, (style, location)) in targets.iter().enumerate() {
+        let targets: Vec<(String, Location, Option<&Instance>)> =
+            if font.instances.iter().any(|i| i.export) {
+                font.instances
+                    .iter()
+                    .filter(|i| i.export)
+                    .map(|i| (i.name.clone(), i.location.clone(), Some(i)))
+                    .collect()
+            } else {
+                font.masters
+                    .iter()
+                    .map(|m| (m.name.clone(), m.location.clone(), None))
+                    .collect()
+            };
+        for (i, (style, location, inst)) in targets.iter().enumerate() {
             let built = instance_source(font, style, location).and_then(|mut src| {
+                src.instance = *inst;
                 if opts.remove_overlaps {
                     for (_, layer) in &mut src.layers {
                         kernest_core::overlap::remove_overlaps(layer);
@@ -654,6 +696,9 @@ pub(crate) mod tests {
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
             export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
         });
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
@@ -726,6 +771,9 @@ pub(crate) mod tests {
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
             export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
         });
         let out2 = tempfile::tempdir().unwrap();
         let r2 = export(&f2, &ExportOptions::ttf(false, true, out2.path())).unwrap();
@@ -910,11 +958,17 @@ pub(crate) mod tests {
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
             export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
         });
         f.instances.push(Instance {
             name: "Bold".into(),
             location: BTreeMap::from([("wght".into(), 700.0)]),
             export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
         });
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
@@ -942,6 +996,194 @@ pub(crate) mod tests {
         let loc = BTreeMap::from([("wdth".to_string(), 75.0)]);
         assert_eq!(ufo::width_class(&h, &loc), Some(3));
         assert_eq!(ufo::width_class(&h, &BTreeMap::new()), Some(5));
+    }
+
+    fn name_strings(bytes: &[u8]) -> BTreeMap<u16, String> {
+        let f = FontRef::new(bytes).unwrap();
+        let name = f.name().unwrap();
+        let mut out = BTreeMap::new();
+        for rec in name.name_record() {
+            let s = rec
+                .string(name.string_data())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            out.entry(u16::from_be_bytes(rec.name_id().to_be_bytes()))
+                .or_insert(s);
+        }
+        out
+    }
+
+    #[test]
+    fn naming_fields_reach_the_name_table() {
+        let mut f = sample_font();
+        f.info.copyright = Some("(c) 2026 Ada".into());
+        f.info.designer = Some("Ada Lovelace".into());
+        f.info.designer_url = Some("https://ada.example".into());
+        f.info.manufacturer = Some("Analytical Foundry".into());
+        f.info.manufacturer_url = Some("https://foundry.example".into());
+        f.info.license = Some("SIL Open Font License 1.1".into());
+        f.info.license_url = Some("https://scripts.sil.org/OFL".into());
+        f.info.description = Some("A face for testing names".into());
+        f.info.trademark = Some("Analytical is a trademark".into());
+        f.info.sample_text = Some("Hamburgefonstiv".into());
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let names = name_strings(&std::fs::read(&r.files[0].path).unwrap());
+        for (id, expected) in [
+            (0, "(c) 2026 Ada"),
+            (7, "Analytical is a trademark"),
+            (8, "Analytical Foundry"),
+            (9, "Ada Lovelace"),
+            (10, "A face for testing names"),
+            (11, "https://foundry.example"),
+            (12, "https://ada.example"),
+            (13, "SIL Open Font License 1.1"),
+            (14, "https://scripts.sil.org/OFL"),
+            (19, "Hamburgefonstiv"),
+        ] {
+            assert_eq!(
+                names.get(&id).map(String::as_str),
+                Some(expected),
+                "name id {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn instance_class_overrides_and_style_map() {
+        let mut f = two_masters();
+        f.instances.push(Instance {
+            name: "Medium".into(),
+            location: BTreeMap::from([("wght".into(), 550.0)]),
+            export: true,
+            weight_class: Some(560),
+            width_class: Some(4),
+            style_link: None,
+        });
+        f.instances.push(Instance {
+            name: "Bold".into(),
+            location: BTreeMap::from([("wght".into(), 700.0)]),
+            export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: Some(kernest_core::StyleLink {
+                bold: true,
+                italic: false,
+                base: "Regular".into(),
+            }),
+        });
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let read = |style: &str| {
+            std::fs::read(&r.files.iter().find(|x| x.style == style).unwrap().path).unwrap()
+        };
+        let medium_bytes = read("Medium");
+        let medium = FontRef::new(&medium_bytes).unwrap();
+        assert_eq!(medium.os2().unwrap().us_weight_class(), 560);
+        assert_eq!(medium.os2().unwrap().us_width_class(), 4);
+        let bold = read("Bold");
+        let names = name_strings(&bold);
+        let family = f.info.family_name.clone();
+        assert_eq!(names.get(&1).map(String::as_str), Some(family.as_str()));
+        assert_eq!(names.get(&2).map(String::as_str), Some("Bold"));
+        // fontc omits 16/17 when they would repeat 1/2; when present they must agree.
+        if let Some(n16) = names.get(&16) {
+            assert_eq!(n16, &family);
+        }
+        if let Some(n17) = names.get(&17) {
+            assert_eq!(n17, "Bold");
+        }
+        // Linking to a non-Regular base groups the styles under that base's family.
+        f.instances[1].style_link = Some(kernest_core::StyleLink {
+            bold: true,
+            italic: false,
+            base: "Book".into(),
+        });
+        let out2 = tempfile::tempdir().unwrap();
+        let r2 = export(&f, &ExportOptions::ttf(false, true, out2.path())).unwrap();
+        let bold2 =
+            std::fs::read(&r2.files.iter().find(|x| x.style == "Bold").unwrap().path).unwrap();
+        let names2 = name_strings(&bold2);
+        assert_eq!(
+            names2.get(&1).map(String::as_str),
+            Some(format!("{family} Book").as_str())
+        );
+        assert_eq!(names2.get(&2).map(String::as_str), Some("Bold"));
+    }
+
+    fn feature_font() -> Font {
+        let mut f = Font::new("Feat", [0x61, 0x66, 0x69]);
+        let mid = f.masters[0].id.clone();
+        for n in ["a.ss01", "a.alt", "f_i"] {
+            let mut g = kernest_core::Glyph::new(n, vec![]);
+            g.layers.push(Layer::new(&mid, 600.0));
+            f.glyphs.push(g);
+        }
+        f
+    }
+
+    fn gsub_tags(bytes: &[u8]) -> Vec<String> {
+        let f = FontRef::new(bytes).unwrap();
+        let gsub = f.gsub().unwrap();
+        let mut tags: Vec<String> = gsub
+            .feature_list()
+            .unwrap()
+            .feature_records()
+            .iter()
+            .map(|r| String::from_utf8_lossy(&r.feature_tag().to_be_bytes()).into_owned())
+            .collect();
+        tags.sort();
+        tags.dedup();
+        tags
+    }
+
+    #[test]
+    fn generated_features_compile_into_gsub() {
+        let mut f = feature_font();
+        f.feature_settings.automatic = kernest_core::features::available(&f);
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let tags = gsub_tags(&std::fs::read(&r.files[0].path).unwrap());
+        for t in ["ss01", "liga", "salt", "aalt"] {
+            assert!(tags.contains(&t.to_string()), "{tags:?}");
+        }
+    }
+
+    #[test]
+    fn hand_written_and_generated_features_compile_together() {
+        let mut f = feature_font();
+        f.feature_settings.automatic = kernest_core::features::available(&f);
+        // ss01 is written by hand, so generation must leave it out; the rest still
+        // compile alongside it without a duplicate-feature error.
+        f.features = "feature ss01 {\n  sub a by a.alt;\n} ss01;\n".into();
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let tags = gsub_tags(&std::fs::read(&r.files[0].path).unwrap());
+        assert!(
+            tags.contains(&"ss01".to_string()) && tags.contains(&"liga".to_string()),
+            "{tags:?}"
+        );
+    }
+
+    #[test]
+    fn notes_are_saved_but_never_exported() {
+        let mut f = sample_font();
+        f.notes = "private remark about the ogonek".into();
+        let dir = tempfile::tempdir().unwrap();
+        let pkg = dir.path().join("x.kernest");
+        kernest_core::package::save(&f, &pkg).unwrap();
+        assert_eq!(kernest_core::package::open(&pkg).unwrap().notes, f.notes);
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        assert!(
+            !bytes
+                .windows(f.notes.len())
+                .any(|w| w == f.notes.as_bytes()),
+            "notes leaked into the exported font"
+        );
     }
 
     #[test]

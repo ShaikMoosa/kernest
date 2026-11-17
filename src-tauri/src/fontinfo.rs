@@ -4,10 +4,65 @@ use std::collections::BTreeMap;
 
 use kernest_core::interpolate::{check_glyph, default_master};
 use kernest_core::{structure, Axis, Font, Hinting, Instance, Metrics};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::{doc_mut, lock, status, AppState, CmdResult, DocStatus, Document};
+
+/// The naming fields edited on the General tab. Empty strings clear a field.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FontNames {
+    pub designer: String,
+    pub designer_url: String,
+    pub manufacturer: String,
+    pub manufacturer_url: String,
+    pub copyright: String,
+    pub vendor_id: String,
+    pub license: String,
+    pub license_url: String,
+    pub description: String,
+    pub trademark: String,
+    pub sample_text: String,
+}
+
+fn opt(s: &str) -> Option<String> {
+    let t = s.trim();
+    (!t.is_empty()).then(|| t.to_string())
+}
+
+impl FontNames {
+    fn from_info(i: &kernest_core::FontInfo) -> Self {
+        let get = |v: &Option<String>| v.clone().unwrap_or_default();
+        FontNames {
+            designer: get(&i.designer),
+            designer_url: get(&i.designer_url),
+            manufacturer: get(&i.manufacturer),
+            manufacturer_url: get(&i.manufacturer_url),
+            copyright: get(&i.copyright),
+            vendor_id: get(&i.vendor_id),
+            license: get(&i.license),
+            license_url: get(&i.license_url),
+            description: get(&i.description),
+            trademark: get(&i.trademark),
+            sample_text: get(&i.sample_text),
+        }
+    }
+
+    fn apply(&self, i: &mut kernest_core::FontInfo) {
+        i.designer = opt(&self.designer);
+        i.designer_url = opt(&self.designer_url);
+        i.manufacturer = opt(&self.manufacturer);
+        i.manufacturer_url = opt(&self.manufacturer_url);
+        i.copyright = opt(&self.copyright);
+        i.vendor_id = opt(&self.vendor_id);
+        i.license = opt(&self.license);
+        i.license_url = opt(&self.license_url);
+        i.description = opt(&self.description);
+        i.trademark = opt(&self.trademark);
+        i.sample_text = opt(&self.sample_text);
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +80,9 @@ pub struct FontInfoView {
     units_per_em: u16,
     version_major: u16,
     version_minor: u16,
+    names: FontNames,
+    /// Designer notes, saved with the font but never exported.
+    notes: String,
     axes: Vec<Axis>,
     masters: Vec<MasterView>,
     instances: Vec<Instance>,
@@ -47,6 +105,8 @@ fn info_view(doc: &Document) -> FontInfoView {
         units_per_em: f.info.units_per_em,
         version_major: f.info.version_major,
         version_minor: f.info.version_minor,
+        names: FontNames::from_info(&f.info),
+        notes: f.notes.clone(),
         axes: f.axes.clone(),
         masters: f
             .masters
@@ -106,6 +166,24 @@ pub fn set_font_info(
 ) -> CmdResult<FontInfoView> {
     edit(&state, |f| {
         structure::set_info(f, &family_name, units_per_em, version_major, version_minor)
+    })
+}
+
+#[tauri::command]
+pub fn set_font_names(state: State<AppState>, names: FontNames) -> CmdResult<FontInfoView> {
+    edit(&state, |f| {
+        let mut next = f.clone();
+        names.apply(&mut next.info);
+        Ok(next)
+    })
+}
+
+#[tauri::command]
+pub fn set_notes(state: State<AppState>, text: String) -> CmdResult<FontInfoView> {
+    edit(&state, |f| {
+        let mut next = f.clone();
+        next.notes = text;
+        Ok(next)
     })
 }
 

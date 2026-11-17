@@ -103,6 +103,8 @@ fn interpolated_font(
         glyphs,
         kerning: Default::default(),
         features: String::new(),
+        notes: String::new(),
+        feature_settings: Default::default(),
         palettes: Vec::new(),
     };
     (scratch, bad)

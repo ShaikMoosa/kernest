@@ -39,6 +39,9 @@ fn two_masters() -> Font {
         name: "Medium".into(),
         location: BTreeMap::from([("wght".into(), 550.0)]),
         export: true,
+        weight_class: None,
+        width_class: None,
+        style_link: None,
     });
     // A brace layer for H and an alternate for o.
     let (mut f, brace) =

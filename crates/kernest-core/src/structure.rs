@@ -411,6 +411,9 @@ mod tests {
             name: n.into(),
             location: BTreeMap::from([("wght".into(), v)]),
             export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
         };
         let f = set_instances(&f, vec![i("Light", 300.0), i("Bold", 700.0)]).unwrap();
         assert_eq!(f.instances.len(), 2);
