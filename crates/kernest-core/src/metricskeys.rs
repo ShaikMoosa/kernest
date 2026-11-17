@@ -183,10 +183,11 @@ pub fn apply_all(font: &Font) -> (Font, Vec<String>) {
     let mut f = font.clone();
     let mut problems = Vec::new();
     // Glyphs with keys, ordered so that references come before the glyphs using them.
+    // Locked glyphs keep their metrics as they are.
     let with_keys: Vec<String> = font
         .glyphs
         .iter()
-        .filter(|g| g.layers.iter().any(|l| !l.metrics_keys.is_empty()))
+        .filter(|g| !g.locked && g.layers.iter().any(|l| !l.metrics_keys.is_empty()))
         .map(|g| g.name.clone())
         .collect();
     let mut order: Vec<String> = Vec::new();

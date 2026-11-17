@@ -431,6 +431,7 @@ mod tests {
             .unwrap()
             .shapes
             .push(Shape::Path(Path {
+                locked: false,
                 closed: true,
                 nodes: vec![],
             }));

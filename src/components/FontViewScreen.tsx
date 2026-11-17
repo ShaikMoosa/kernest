@@ -26,6 +26,13 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen }: { glyph: GlyphSu
         )}
       </span>
       {!glyph.compatible && <span className="glyph-incompatible" title={t("Masters can't be interpolated (open the glyph to see why)")} aria-label={t("Incompatible masters")} />}
+      {glyph.locked && (
+        <span className="glyph-locked" title={t("This glyph is locked. Unlock it to edit.")} aria-label={t("Locked")}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+            <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+          </svg>
+        </span>
+      )}
       <span className="glyph-label">
         <span className="glyph-name">{glyph.name}</span>
         <span className="glyph-unicode">{glyph.unicode ?? ""}</span>

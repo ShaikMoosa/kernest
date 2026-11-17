@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::{
-    doc_mut, layer_view_of, lock, status, AppState, CmdResult, DocStatus, Document, LayerView,
+    doc_mut, ensure_glyph_unlocked, layer_view_of, lock, status, AppState, CmdResult, DocStatus,
+    Document, LayerView,
 };
 
 #[derive(Deserialize)]
@@ -97,6 +98,7 @@ fn add_anchor_in(
     anchor: &Anchor,
     all_masters: bool,
 ) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     finite(&[anchor.x, anchor.y])?;
     let next = anchors::add_anchor(&doc.font, glyph, key, anchor, all_masters)?;
     let next = anchors::align_dependents(&next, glyph)?;
@@ -125,6 +127,7 @@ fn move_anchors_in(
     moves: &[AnchorMove],
     all_masters: bool,
 ) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     for m in moves {
         finite(&[m.dx, m.dy])?;
     }
@@ -156,6 +159,7 @@ fn rename_anchor_in(
     new: &str,
     all_masters: bool,
 ) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     let next = anchors::rename_anchor(&doc.font, glyph, key, old, new, all_masters)?;
     let next = anchors::align_dependents(&next, glyph)?;
     apply_edit(doc, next, glyph, key)
@@ -182,6 +186,7 @@ fn remove_anchors_in(
     names: &[String],
     all_masters: bool,
 ) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     let next = anchors::remove_anchors(&doc.font, glyph, key, names, all_masters)?;
     let next = anchors::align_dependents(&next, glyph)?;
     apply_edit(doc, next, glyph, key)
@@ -242,6 +247,7 @@ fn set_component_align_in(
     index: usize,
     align: bool,
 ) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     let mut next = doc.font.clone();
     let layer = next
         .glyph_mut(glyph)

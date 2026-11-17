@@ -521,7 +521,11 @@ fn layer(id: &str, g: &norad::Glyph, skipped: &mut usize) -> Layer {
                 smooth: p.smooth,
             })
             .collect();
-        l.shapes.push(Shape::Path(KPath { closed, nodes }));
+        l.shapes.push(Shape::Path(KPath {
+            locked: false,
+            closed,
+            nodes,
+        }));
     }
     for c in &g.components {
         let t = &c.transform;

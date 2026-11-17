@@ -141,6 +141,7 @@ mod tests {
         let mut l = Layer::new("m01", 600.0);
         let rect = |x0: f64| {
             Shape::Path(Path {
+                locked: false,
                 closed: true,
                 nodes: vec![
                     Node::new(x0, 0.0, NodeKind::Line),
@@ -278,6 +279,7 @@ mod tests {
     fn updated_replaces_contents_and_empty_removes() {
         let f = sample_font();
         let rect = Shape::Path(Path {
+            locked: false,
             closed: true,
             nodes: vec![
                 Node::new(0.0, 0.0, NodeKind::Line),

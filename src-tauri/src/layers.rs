@@ -8,7 +8,9 @@ use kernest_core::{layers, smart, AxisRange, Font, SmartAxis};
 use serde::Serialize;
 use tauri::State;
 
-use crate::commands::{doc_mut, lock, status, AppState, CmdResult, DocStatus};
+use crate::commands::{
+    doc_mut, ensure_glyph_unlocked, lock, status, AppState, CmdResult, DocStatus,
+};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,10 +96,12 @@ pub struct LayerAdded {
 
 fn apply(
     state: &AppState,
+    glyph: &str,
     f: impl FnOnce(&Font) -> Result<(Font, String), String>,
 ) -> CmdResult<LayerAdded> {
     let mut guard = lock(state)?;
     let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     let (next, key) = f(&doc.font)?;
     if doc
         .history
@@ -120,7 +124,7 @@ pub fn add_brace_layer(
     master_id: String,
     location: BTreeMap<String, f64>,
 ) -> CmdResult<LayerAdded> {
-    apply(&state, |f| {
+    apply(&state, &glyph, |f| {
         layers::add_brace_layer(f, &glyph, &master_id, &location)
     })
 }
@@ -133,7 +137,7 @@ pub fn add_bracket_layers(
     master_id: String,
     ranges: Vec<AxisRange>,
 ) -> CmdResult<LayerAdded> {
-    apply(&state, |f| {
+    apply(&state, &glyph, |f| {
         layers::add_bracket_layers(f, &glyph, &master_id, &ranges)
     })
 }
@@ -147,7 +151,7 @@ pub fn update_layer_position(
     location: Option<BTreeMap<String, f64>>,
     ranges: Option<Vec<AxisRange>>,
 ) -> CmdResult<LayerAdded> {
-    apply(&state, |f| {
+    apply(&state, &glyph, |f| {
         let next =
             layers::update_layer_position(f, &glyph, &key, location.as_ref(), ranges.as_deref())?;
         Ok((next, key.clone()))
@@ -161,7 +165,7 @@ pub fn set_smart_axes(
     glyph: String,
     axes: Vec<SmartAxis>,
 ) -> CmdResult<DocStatus> {
-    let r = apply(&state, |f| {
+    let r = apply(&state, &glyph, |f| {
         Ok((smart::set_smart_axes(f, &glyph, axes)?, String::new()))
     })?;
     Ok(r.status)
@@ -175,13 +179,15 @@ pub fn add_smart_pole(
     master_id: String,
     pole: BTreeMap<String, f64>,
 ) -> CmdResult<LayerAdded> {
-    apply(&state, |f| smart::add_pole(f, &glyph, &master_id, &pole))
+    apply(&state, &glyph, |f| {
+        smart::add_pole(f, &glyph, &master_id, &pole)
+    })
 }
 
 /// Removes a brace layer, or a whole alternate.
 #[tauri::command]
 pub fn remove_layer(state: State<AppState>, glyph: String, key: String) -> CmdResult<DocStatus> {
-    let r = apply(&state, |f| {
+    let r = apply(&state, &glyph, |f| {
         Ok((layers::remove_layer(f, &glyph, &key)?, String::new()))
     })?;
     Ok(r.status)
@@ -194,7 +200,9 @@ pub fn add_color_layer(
     glyph: String,
     master_id: String,
 ) -> CmdResult<LayerAdded> {
-    apply(&state, |f| color::add_color_layer(f, &glyph, &master_id))
+    apply(&state, &glyph, |f| {
+        color::add_color_layer(f, &glyph, &master_id)
+    })
 }
 
 /// Sets a colour layer's paint (in every master).
@@ -205,7 +213,7 @@ pub fn set_color_paint(
     key: String,
     paint: Paint,
 ) -> CmdResult<LayerAdded> {
-    apply(&state, |f| {
+    apply(&state, &glyph, |f| {
         Ok((color::set_paint(f, &glyph, &key, paint)?, key.clone()))
     })
 }
@@ -218,7 +226,7 @@ pub fn move_color_layer(
     key: String,
     up: bool,
 ) -> CmdResult<LayerAdded> {
-    apply(&state, |f| {
+    apply(&state, &glyph, |f| {
         Ok((color::move_color_layer(f, &glyph, &key, up)?, key.clone()))
     })
 }

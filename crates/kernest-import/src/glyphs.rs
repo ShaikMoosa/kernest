@@ -520,6 +520,7 @@ fn shape_v3(d: &glyphs_reader::Plist) -> Option<Shape> {
         })
         .collect();
     Some(Shape::Path(KPath {
+        locked: false,
         closed: d.get("closed").and_then(|c| c.as_i64()).unwrap_or(1) != 0,
         nodes,
     }))
@@ -552,6 +553,7 @@ fn shapes_v2(d: &glyphs_reader::Plist) -> Vec<Shape> {
             })
             .collect();
         out.push(Shape::Path(KPath {
+            locked: false,
             closed: p.get("closed").and_then(|c| c.as_i64()).unwrap_or(1) != 0,
             nodes,
         }));
@@ -796,6 +798,7 @@ fn layer(id: &str, l: &glyphs_reader::Layer) -> Layer {
                     })
                     .collect();
                 out.shapes.push(Shape::Path(KPath {
+                    locked: false,
                     closed: p.closed,
                     nodes,
                 }));

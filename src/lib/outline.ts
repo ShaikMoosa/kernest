@@ -14,6 +14,8 @@ export interface EditNode {
 export interface EditPath {
   closed: boolean;
   nodes: EditNode[];
+  /** A locked path refuses every edit until unlocked. */
+  locked?: boolean;
 }
 
 export const isOn = (n: EditNode) => n.kind !== "offcurve";
@@ -54,7 +56,7 @@ export function pathsToSvg(paths: EditPath[]): string {
   return d;
 }
 
-export const clonePaths = (paths: EditPath[]): EditPath[] => paths.map((p) => ({ closed: p.closed, nodes: p.nodes.map((n) => ({ ...n })) }));
+export const clonePaths = (paths: EditPath[]): EditPath[] => paths.map((p) => ({ closed: p.closed, locked: p.locked, nodes: p.nodes.map((n) => ({ ...n })) }));
 
 /** Index of the node before/after `i` in a path, or -1 at the ends of an open path. */
 export function neighbour(p: EditPath, i: number, dir: 1 | -1): number {
@@ -119,7 +121,7 @@ export function deleteSelection(base: EditPath[], selection: Set<string>): EditP
     if (drop.size === 0) return result.push(p);
     const kept = p.nodes.filter((_, i) => !drop.has(i)).map((n) => ({ ...n }));
     const nodes = normalizeSegments({ closed: p.closed, nodes: kept });
-    if (nodes.filter(isOn).length >= 2) result.push({ closed: p.closed, nodes });
+    if (nodes.filter(isOn).length >= 2) result.push({ closed: p.closed, locked: p.locked, nodes });
   });
   return result;
 }
@@ -187,6 +189,7 @@ export function ellipsePath(x0: number, y0: number, x1: number, y1: number): Edi
 export function transformPaths(paths: EditPath[], t: number[]): EditPath[] {
   return paths.map((p) => ({
     closed: p.closed,
+    locked: p.locked,
     nodes: p.nodes.map((n) => ({ ...n, x: t[0] * n.x + t[2] * n.y + t[4], y: t[1] * n.x + t[3] * n.y + t[5] })),
   }));
 }
@@ -199,4 +202,35 @@ export function pointBounds(paths: EditPath[]): { minX: number; maxX: number } |
     maxX = Math.max(maxX, n.x);
   }
   return minX === Infinity ? null : { minX, maxX };
+}
+
+export interface Bounds { minX: number; minY: number; maxX: number; maxY: number }
+
+/** Bounds of the coordinate pairs in an SVG path string; curve control points are included. */
+export function svgBounds(d: string): Bounds | null {
+  const nums = d.match(/-?\d+(?:\.\d+)?/g);
+  if (!nums || nums.length < 2) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    const x = Number(nums[i]), y = Number(nums[i + 1]);
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/** Matrix product of two affines in [xx, xy, yx, yy, dx, dy] order (b acts first). */
+export const mulAffine = (a: number[], b: number[]): number[] => [
+  a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1],
+  a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3],
+  a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5],
+];
+
+export const ORIGIN_LABELS = ["Top left", "Top", "Top right", "Left", "Center", "Right", "Bottom left", "Bottom", "Bottom right"];
+
+/** The 9-point origin picker's point `i` (row-major from the top left) of a bounds box. */
+export function originPoint(b: Bounds, i: number): { x: number; y: number } {
+  const xs = [b.minX, (b.minX + b.maxX) / 2, b.maxX];
+  const ys = [b.maxY, (b.minY + b.maxY) / 2, b.minY];
+  return { x: xs[i % 3], y: ys[Math.floor(i / 3)] };
 }

@@ -9,6 +9,7 @@ use crate::model::{Codepoint, Font, Layer, Node, NodeKind, Path, Shape};
 fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Shape {
     // Counter-clockwise outer contour (PostScript direction).
     Shape::Path(Path {
+        locked: false,
         closed: true,
         nodes: vec![
             Node::new(x0, y0, NodeKind::Line),
@@ -50,6 +51,7 @@ fn ellipse(cx: f64, cy: f64, rx: f64, ry: f64, clockwise: bool) -> Shape {
     // A closed path conventionally ends on its start point's incoming segment.
     nodes.rotate_left(1);
     Shape::Path(Path {
+        locked: false,
         closed: true,
         nodes,
     })

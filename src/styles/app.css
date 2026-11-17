@@ -224,6 +224,10 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .metric-label { font: 400 10px var(--k-font-ui); fill: var(--k-text-muted); pointer-events: none; }
 .advance-box { fill: none; stroke: var(--k-border-strong); stroke-width: 1; shape-rendering: crispEdges; }
 .glyph-fill { fill: var(--k-editor-glyph-fill); stroke: var(--k-editor-outline); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.glyph-fill.is-dimmed { opacity: 0.25; }
+.path-hit { stroke: transparent; }
+.path-hit:hover { stroke: var(--k-editor-selection); stroke-opacity: 0.25; }
+.path-hit.is-locked:hover { stroke: var(--k-status-danger); stroke-opacity: 0.4; }
 .component-fill { fill: var(--k-border-strong); opacity: 0.7; }
 .preview-outline { fill: var(--k-accent-subtle); stroke: var(--k-editor-selection); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
 .handle-line { stroke: var(--k-editor-handle); stroke-width: 1; }
@@ -288,7 +292,18 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
   background: none; text-align: start; font: 400 12px var(--k-font-ui); color: var(--k-text-primary); cursor: pointer;
 }
 .ctx-menu button:hover { background: var(--k-bg-hover); }
+.ctx-menu button svg { vertical-align: -2px; margin-inline-end: var(--k-space-6); }
+.ctx-note { display: block; padding: var(--k-space-6) var(--k-space-8); }
+.locked-badge { display: inline-flex; align-items: center; gap: var(--k-space-4); padding: 2px var(--k-space-8); border-radius: var(--k-radius-sm); background: var(--k-status-warning-subtle); color: var(--k-text-warning); white-space: nowrap; }
+.ctx-sep { display: block; height: 1px; margin: var(--k-space-4) 0; background: var(--k-border-default); }
 .dialog-sm { width: 380px; }
+.filter-preview { width: 100%; height: 200px; background: var(--k-editor-canvas); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-md); }
+.filter-preview-empty { display: grid; place-items: center; }
+.filter-preview-base { fill: var(--k-editor-glyph-fill); stroke: var(--k-editor-handle); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.filter-preview-result { fill: none; stroke: var(--k-editor-selection); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.filter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--k-space-8); }
+.filter-scope { display: flex; flex-direction: column; gap: var(--k-space-4); margin-block-start: var(--k-space-8); }
+.filter-dialog .origin-picker { margin-block: var(--k-space-8); }
 .picker-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; }
 .picker-list .list-item { font-family: var(--k-font-code); font-size: 12px; }
 
@@ -339,6 +354,7 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 /* ---------- Masters & Font Info ---------- */
 .glyph-cell { position: relative; }
 .glyph-incompatible { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--k-status-danger); box-shadow: 0 0 0 2px var(--k-bg-surface); }
+.glyph-locked { position: absolute; top: 4px; inset-inline-start: 6px; display: grid; place-items: center; color: var(--k-text-warning); }
 .notice-warning { background: var(--k-status-warning-subtle); color: var(--k-text-warning); }
 .fontinfo { flex: 1; display: flex; min-height: 0; background: var(--k-bg-app); }
 .fontinfo-scroll { flex: 1; overflow: auto; padding: var(--k-space-24) var(--k-space-32); display: flex; flex-direction: column; gap: var(--k-space-20); }
@@ -457,6 +473,9 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
   border-radius: var(--k-radius-md); font: 500 11px var(--k-font-ui); color: var(--k-text-primary); pointer-events: none;
 }
 .measure-line { stroke: var(--k-editor-measure); stroke-width: 1.5; }
+.knife-line { stroke: var(--k-editor-guide-global); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.node-start-arrow { fill: var(--k-editor-handle); }
+.node-duplicate { fill: none; stroke: var(--k-editor-guide-global); stroke-width: 1.5; }
 .measure-hit { fill: var(--k-bg-surface); stroke: var(--k-editor-measure); stroke-width: 1.5; }
 .measure-label {
   font: 600 11px var(--k-font-code); fill: var(--k-editor-measure); pointer-events: none;

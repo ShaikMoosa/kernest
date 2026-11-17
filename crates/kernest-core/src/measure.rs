@@ -126,6 +126,7 @@ mod tests {
     fn rect_layer() -> Layer {
         let mut l = Layer::new("m01", 600.0);
         l.shapes = vec![Shape::Path(Path {
+            locked: false,
             closed: true,
             nodes: vec![
                 Node::new(0.0, 0.0, NodeKind::Line),

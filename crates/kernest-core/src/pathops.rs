@@ -110,6 +110,7 @@ pub fn reverse(p: &Path) -> Path {
         let mut nodes = p.nodes.clone();
         nodes.reverse();
         return Path {
+            locked: p.locked,
             closed: p.closed,
             nodes,
         };
@@ -138,6 +139,7 @@ pub fn reverse(p: &Path) -> Path {
         nodes.reverse();
     }
     Path {
+        locked: p.locked,
         closed: p.closed,
         nodes,
     }
@@ -531,6 +533,587 @@ pub fn add_extremes(layer: &mut Layer, only: Option<&[usize]>) -> usize {
     apply_extremes(layer, &plan)
 }
 
+// ---------- Knife ----------
+
+use kurbo::{CubicBez, Line, PathSeg, Point, QuadBez};
+
+fn kpt(p: Pt) -> Point {
+    Point::new(p.0, p.1)
+}
+
+/// Distance from a point to the infinite knife line.
+fn off_line(line: Line, p: Pt) -> f64 {
+    let d = line.p1 - line.p0;
+    let len = d.hypot().max(1e-12);
+    ((p.0 - line.p0.x) * d.y - (p.1 - line.p0.y) * d.x).abs() / len
+}
+
+/// The path's nodes with the knife's crossing points inserted, and the indices of
+/// those crossings. Closed paths are walked from node 0 (rotated on-curve first).
+fn knife_nodes(p: &Path, line: Line) -> Option<(Vec<Node>, Vec<usize>)> {
+    let (ons, segs) = segments(p)?;
+    // segments() puts the wrap-around segment first for closed paths; walk it last.
+    let order: Vec<&Segment> = if p.closed {
+        segs.iter().skip(1).chain(segs.iter().take(1)).collect()
+    } else {
+        segs.iter().collect()
+    };
+    let mut out: Vec<Node> = vec![p.nodes[ons[0]]];
+    let mut cuts: Vec<usize> = Vec::new();
+    if off_line(line, (out[0].x, out[0].y)) < 1e-6 {
+        cuts.push(0);
+    }
+    for seg in order {
+        let end = p.nodes[seg.end];
+        let s = seg_start(p, seg, &ons);
+        let start = (s.x, s.y);
+        let mut hits: Vec<(usize, f64)> = Vec::new();
+        for (k, piece) in seg.pieces.iter().enumerate() {
+            let ks = match *piece {
+                Piece::Cubic(a, b, c, d) => {
+                    PathSeg::Cubic(CubicBez::new(kpt(a), kpt(b), kpt(c), kpt(d)))
+                }
+                Piece::Quad(a, b, c) => PathSeg::Quad(QuadBez::new(kpt(a), kpt(b), kpt(c))),
+            };
+            for h in ks.intersect_line(line) {
+                if h.segment_t > 1e-4 && h.segment_t < 1.0 - 1e-4 {
+                    hits.push((k, h.segment_t));
+                }
+            }
+        }
+        let line_hit = if seg.pieces.is_empty() {
+            let ks = PathSeg::Line(Line::new(kpt(start), kpt((end.x, end.y))));
+            ks.intersect_line(line)
+                .into_iter()
+                .find(|h| h.segment_t > 1e-4 && h.segment_t < 1.0 - 1e-4)
+                .map(|h| {
+                    let m = lerp(start, (end.x, end.y), h.segment_t);
+                    Node::new(m.0, m.1, NodeKind::Line)
+                })
+        } else {
+            None
+        };
+        let end_on_line = off_line(line, (end.x, end.y)) < 1e-6;
+        if hits.is_empty() && line_hit.is_none() {
+            out.extend(seg.offs.iter().copied());
+        } else if seg.pieces.is_empty() {
+            if let Some(m) = line_hit {
+                cuts.push(out.len());
+                out.push(m);
+            }
+        } else {
+            for (k, piece) in seg.pieces.iter().enumerate() {
+                let ts: Vec<f64> = hits
+                    .iter()
+                    .filter(|(pk, _)| *pk == k)
+                    .map(|(_, t)| *t)
+                    .collect();
+                let base = out.len();
+                let per = match piece {
+                    Piece::Cubic(..) => 3,
+                    Piece::Quad(..) => 2,
+                };
+                out.extend(piece.split_nodes(&ts));
+                for j in 0..ts.len() {
+                    cuts.push(base + (j + 1) * per - 1);
+                }
+                // Between quadratic pieces the implied on-curve point becomes real.
+                if k + 1 < seg.pieces.len() {
+                    if let (Piece::Quad(_, h, _), Piece::Quad(_, h2, _)) =
+                        (&seg.pieces[k], &seg.pieces[k + 1])
+                    {
+                        let m = lerp(*h, *h2, 0.5);
+                        out.push(Node {
+                            x: m.0,
+                            y: m.1,
+                            kind: NodeKind::QCurve,
+                            smooth: true,
+                        });
+                    }
+                }
+            }
+        }
+        if end_on_line {
+            cuts.push(out.len());
+        }
+        out.push(end);
+    }
+    if p.closed {
+        // The walk ends back at node 0; drop the duplicate and fold its cut into 0.
+        out.pop();
+        if cuts.last() == Some(&out.len()) {
+            cuts.pop();
+            cuts.push(0);
+        }
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+    Some((out, cuts))
+}
+
+/// The on-curve node a segment starts from.
+fn seg_start(p: &Path, seg: &Segment, ons: &[usize]) -> Node {
+    let k = ons.iter().position(|&i| i == seg.end).unwrap_or(0);
+    let prev = if k == 0 {
+        ons[ons.len() - 1]
+    } else {
+        ons[k - 1]
+    };
+    p.nodes[prev]
+}
+
+/// Cuts one path along the knife line. Closed paths become one closed path per arc
+/// between consecutive crossings (each closed by a straight chord on the line);
+/// open paths become open pieces. `None` when the line doesn't cut the path.
+fn knife_path(p: &Path, line: Line) -> Option<Vec<Path>> {
+    let mut owned;
+    let p = if p.closed && !p.nodes.first()?.on_curve() {
+        let first = p.nodes.iter().position(|n| n.on_curve())?;
+        owned = p.clone();
+        owned.nodes.rotate_left(first);
+        &owned
+    } else {
+        p
+    };
+    let (nodes, cuts) = knife_nodes(p, line)?;
+    if cuts.len() < 2 && p.closed {
+        return None;
+    }
+    if cuts.is_empty() {
+        return None;
+    }
+    let n = nodes.len();
+    let mut out = Vec::new();
+    if p.closed {
+        for w in 0..cuts.len() {
+            let a = cuts[w];
+            let b = cuts[(w + 1) % cuts.len()];
+            let mut arc: Vec<Node> = Vec::new();
+            let mut i = a;
+            loop {
+                arc.push(nodes[i]);
+                if i == b {
+                    break;
+                }
+                i = (i + 1) % n;
+            }
+            // An arc lying entirely on the knife line is the edge the knife ran
+            // along, not a real side; cutting along an edge must change nothing.
+            if arc.iter().all(|n| off_line(line, (n.x, n.y)) < 1e-6) {
+                continue;
+            }
+            // The chord back to the arc's start is a straight line.
+            arc[0].kind = NodeKind::Line;
+            arc[0].smooth = false;
+            out.push(Path {
+                locked: false,
+                closed: true,
+                nodes: arc,
+            });
+        }
+        if out.len() < 2 {
+            return None;
+        }
+    } else {
+        let mut bounds: Vec<usize> = vec![0];
+        bounds.extend(cuts.iter().copied());
+        bounds.push(n - 1);
+        for w in bounds.windows(2) {
+            let piece: Vec<Node> = nodes[w[0]..=w[1]].to_vec();
+            if piece.len() < 2 {
+                continue;
+            }
+            let mut piece = piece;
+            piece[0].kind = NodeKind::Line;
+            piece[0].smooth = false;
+            out.push(Path {
+                locked: false,
+                closed: false,
+                nodes: piece,
+            });
+        }
+    }
+    Some(out)
+}
+
+/// Knife: cuts every unlocked path the line through `p0`–`p1` crosses, closing each
+/// side. Returns whether anything changed.
+pub fn cut(layer: &mut Layer, p0: (f64, f64), p1: (f64, f64)) -> bool {
+    if (p1.0 - p0.0).hypot(p1.1 - p0.1) < 1e-9 {
+        return false;
+    }
+    let line = Line::new(kpt(p0), kpt(p1));
+    let mut changed = false;
+    let mut shapes: Vec<Shape> = Vec::with_capacity(layer.shapes.len());
+    for s in layer.shapes.drain(..) {
+        match s {
+            Shape::Path(p) if !p.locked => match knife_path(&p, line) {
+                Some(parts) => {
+                    changed = true;
+                    shapes.extend(parts.into_iter().map(Shape::Path));
+                }
+                None => shapes.push(Shape::Path(p)),
+            },
+            other => shapes.push(other),
+        }
+    }
+    layer.shapes = shapes;
+    changed
+}
+
+// ---------- Corners and connections ----------
+
+/// Opens a corner into two overlapping nodes: the original keeps the incoming
+/// segment, the new node starts the outgoing one. One undoable step at the command
+/// layer. Errors on locked paths and off-curve nodes.
+pub fn open_corner(layer: &mut Layer, path: usize, node: usize) -> Result<(), String> {
+    let p = path_at(layer, path)?;
+    if p.locked {
+        return Err("Unlock the path first.".into());
+    }
+    let n = p
+        .nodes
+        .get(node)
+        .ok_or_else(|| "No node at that position.".to_string())?;
+    if !n.on_curve() {
+        return Err("Pick an on-curve node.".into());
+    }
+    if !p.closed && (node == 0 || node == p.nodes.len() - 1) {
+        return Err("An open path's ends have no corner to open.".into());
+    }
+    let dup = Node::new(n.x, n.y, NodeKind::Line);
+    let p = path_at_mut(layer, path)?;
+    p.nodes[node].smooth = false;
+    p.nodes.insert(node + 1, dup);
+    Ok(())
+}
+
+/// Reconnect Nodes: merges neighbouring duplicate on-curve nodes (what Open Corner
+/// made) back into one. Returns how many were merged.
+pub fn reconnect_nodes(layer: &mut Layer, only: Option<&[usize]>) -> usize {
+    let mut merged = 0;
+    let mut pi = 0;
+    for s in &mut layer.shapes {
+        let Shape::Path(p) = s else { continue };
+        let i = pi;
+        pi += 1;
+        if p.locked || only.is_some_and(|o| !o.contains(&i)) {
+            continue;
+        }
+        let mut kept: Vec<Node> = Vec::with_capacity(p.nodes.len());
+        for n in p.nodes.drain(..) {
+            if let Some(last) = kept.last() {
+                if last.on_curve()
+                    && n.on_curve()
+                    && n.kind == NodeKind::Line
+                    && (last.x - n.x).abs() < 1e-6
+                    && (last.y - n.y).abs() < 1e-6
+                {
+                    merged += 1;
+                    continue;
+                }
+            }
+            kept.push(n);
+        }
+        // A closed path can end on the duplicate of its start.
+        if p.closed && kept.len() > 1 {
+            let (a, b) = (kept[0], kept[kept.len() - 1]);
+            if a.on_curve()
+                && b.on_curve()
+                && b.kind == NodeKind::Line
+                && (a.x - b.x).abs() < 1e-6
+                && (a.y - b.y).abs() < 1e-6
+            {
+                kept.pop();
+                merged += 1;
+            }
+        }
+        p.nodes = kept;
+    }
+    merged
+}
+
+/// Connect Nodes: joins two open path ends into one path. The ends may belong to the
+/// same path, which closes it. Errors unless both picks are ends of open paths.
+pub fn connect_nodes(
+    layer: &mut Layer,
+    a: (usize, usize),
+    b: (usize, usize),
+) -> Result<(), String> {
+    let pa = path_at(layer, a.0)?;
+    let pb = path_at(layer, b.0)?;
+    if pa.locked || pb.locked {
+        return Err("Unlock the path first.".into());
+    }
+    for (p, n) in [(pa, a.1), (pb, b.1)] {
+        if p.closed {
+            return Err("Pick the ends of open paths.".into());
+        }
+        if n != 0 && n != p.nodes.len() - 1 {
+            return Err("Pick the ends of open paths.".into());
+        }
+    }
+    if a.0 == b.0 {
+        let p = path_at_mut(layer, a.0)?;
+        p.closed = true;
+        p.nodes[0].kind = NodeKind::Line;
+        p.nodes[0].smooth = false;
+        return Ok(());
+    }
+    let mut pa = pa.clone();
+    let mut pb = pb.clone();
+    if a.1 == 0 {
+        pa = reverse(&pa);
+    }
+    if b.1 == pb.nodes.len() - 1 {
+        pb = reverse(&pb);
+    }
+    let join = pa.nodes.last().copied().unwrap();
+    let skip = pb
+        .nodes
+        .first()
+        .is_some_and(|n| (n.x - join.x).abs() < 1e-6 && (n.y - join.y).abs() < 1e-6);
+    pa.nodes
+        .extend(pb.nodes.into_iter().skip(usize::from(skip)));
+    let (keep, drop) = if a.0 < b.0 { (a.0, b.0) } else { (b.0, a.0) };
+    let mut pi = 0;
+    layer.shapes.retain_mut(|s| {
+        let Shape::Path(_) = s else { return true };
+        let i = pi;
+        pi += 1;
+        if i == drop {
+            return false;
+        }
+        if i == keep {
+            *s = Shape::Path(pa.clone());
+        }
+        true
+    });
+    Ok(())
+}
+
+/// Close Open Paths: closes the open paths in `only` (indices among the layer's
+/// paths), or all of them. Returns how many were closed.
+pub fn close_open_paths(layer: &mut Layer, only: Option<&[usize]>) -> usize {
+    let mut closed = 0;
+    let mut pi = 0;
+    for s in &mut layer.shapes {
+        let Shape::Path(p) = s else { continue };
+        let i = pi;
+        pi += 1;
+        if p.closed || p.locked || only.is_some_and(|o| !o.contains(&i)) {
+            continue;
+        }
+        if p.nodes.len() < 3 {
+            continue;
+        }
+        p.closed = true;
+        p.nodes[0].kind = NodeKind::Line;
+        p.nodes[0].smooth = false;
+        closed += 1;
+    }
+    closed
+}
+
+/// Make Node First: rotates a closed path so the chosen on-curve node starts it.
+pub fn make_node_first(layer: &mut Layer, path: usize, node: usize) -> Result<(), String> {
+    let p = path_at(layer, path)?;
+    if p.locked {
+        return Err("Unlock the path first.".into());
+    }
+    if !p.closed {
+        return Err("An open path already has a first node.".into());
+    }
+    let n = p
+        .nodes
+        .get(node)
+        .ok_or_else(|| "No node at that position.".to_string())?;
+    if !n.on_curve() {
+        return Err("Pick an on-curve node.".into());
+    }
+    let p = path_at_mut(layer, path)?;
+    p.nodes.rotate_left(node);
+    Ok(())
+}
+
+/// Reverse Selected Contours: reverses the paths in `only`, or all unlocked paths.
+/// Returns how many were reversed.
+pub fn reverse_contours(layer: &mut Layer, only: Option<&[usize]>) -> usize {
+    let mut done = 0;
+    let mut pi = 0;
+    for s in &mut layer.shapes {
+        let Shape::Path(p) = s else { continue };
+        let i = pi;
+        pi += 1;
+        if p.locked || only.is_some_and(|o| !o.contains(&i)) {
+            continue;
+        }
+        *p = reverse(p);
+        done += 1;
+    }
+    done
+}
+
+// ---------- Tidy up and rounding ----------
+
+fn same_pos(a: &Node, b: &Node) -> bool {
+    (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6
+}
+
+/// One tidy pass over a node list: duplicate on-curve nodes, collinear line nodes and
+/// handles sitting on their own node. Returns how many changes were made (nodes
+/// removed, plus curves flattened to lines).
+fn tidy_nodes(nodes: &mut Vec<Node>, closed: bool) -> usize {
+    let before = nodes.len();
+    // Handles on top of an adjacent on-curve node carry no shape.
+    let mut i = 0;
+    while i < nodes.len() {
+        if nodes[i].kind == NodeKind::OffCurve {
+            let prev = (i + nodes.len() - 1) % nodes.len();
+            let next = (i + 1) % nodes.len();
+            if (nodes[prev].on_curve() && same_pos(&nodes[i], &nodes[prev]))
+                || (nodes[next].on_curve() && same_pos(&nodes[i], &nodes[next]))
+            {
+                nodes.remove(i);
+                continue;
+            }
+        }
+        i += 1;
+    }
+    // A curve node with fewer than two handles left is a line node.
+    let mut flattened = 0;
+    for k in 0..nodes.len() {
+        if nodes[k].kind == NodeKind::Curve {
+            let prev = (k + nodes.len() - 1) % nodes.len();
+            let prev2 = (k + nodes.len() - 2) % nodes.len();
+            if nodes[prev].on_curve() || nodes[prev2].kind != NodeKind::OffCurve {
+                nodes[k].kind = NodeKind::Line;
+                nodes[k].smooth = false;
+                flattened += 1;
+            }
+        }
+    }
+    // Duplicate on-curve nodes and collinear line nodes, walking neighbouring
+    // on-curve nodes with nothing (or only removed handles) between them.
+    let mut kept: Vec<Node> = Vec::with_capacity(nodes.len());
+    for n in nodes.drain(..) {
+        if n.on_curve() {
+            if let Some(last) = kept.last() {
+                if last.on_curve() && same_pos(last, &n) {
+                    continue;
+                }
+            }
+            if n.kind == NodeKind::Line && !n.smooth && kept.len() >= 2 {
+                let a = kept[kept.len() - 2];
+                let b = kept[kept.len() - 1];
+                if a.on_curve()
+                    && b.on_curve()
+                    && b.kind == NodeKind::Line
+                    && !b.smooth
+                    && kept.iter().rev().take(2).all(|k| k.on_curve())
+                {
+                    let cross = (b.x - a.x) * (n.y - a.y) - (b.y - a.y) * (n.x - a.x);
+                    let len = ((b.x - a.x).powi(2) + (b.y - a.y).powi(2))
+                        .sqrt()
+                        .max(1e-12);
+                    let between = (b.x - a.x) * (n.x - a.x) + (b.y - a.y) * (n.y - a.y) >= 0.0
+                        && (n.x - b.x) * (n.x - a.x) + (n.y - b.y) * (n.y - a.y) >= 0.0;
+                    if cross.abs() / len < 1e-6 && between {
+                        kept.pop();
+                        kept.push(n);
+                        continue;
+                    }
+                }
+            }
+        }
+        kept.push(n);
+    }
+    if closed && kept.len() > 1 {
+        let (a, b) = (kept[0], kept[kept.len() - 1]);
+        if a.on_curve() && b.on_curve() && same_pos(&a, &b) {
+            kept.pop();
+        }
+    }
+    *nodes = kept;
+    before - nodes.len() + flattened
+}
+
+/// Tidy up Paths: removes duplicate nodes, collinear line nodes and handles on top of
+/// their node, in the paths in `only` or all unlocked paths. Returns changes made.
+pub fn tidy_up(layer: &mut Layer, only: Option<&[usize]>) -> usize {
+    let mut removed = 0;
+    let mut pi = 0;
+    for s in &mut layer.shapes {
+        let Shape::Path(p) = s else { continue };
+        let i = pi;
+        pi += 1;
+        if p.locked || only.is_some_and(|o| !o.contains(&i)) {
+            continue;
+        }
+        // Repeat until stable: removing a node can expose another tidy case.
+        loop {
+            let n = tidy_nodes(&mut p.nodes, p.closed);
+            removed += n;
+            if n == 0 {
+                break;
+            }
+        }
+    }
+    removed
+}
+
+/// Round Coordinates: rounds node and anchor positions to whole units in the paths
+/// in `only` or all unlocked paths (anchors always). Returns whether anything moved.
+pub fn round_coordinates(layer: &mut Layer, only: Option<&[usize]>) -> bool {
+    let mut changed = false;
+    let mut pi = 0;
+    for s in &mut layer.shapes {
+        let Shape::Path(p) = s else { continue };
+        let i = pi;
+        pi += 1;
+        if p.locked || only.is_some_and(|o| !o.contains(&i)) {
+            continue;
+        }
+        for n in &mut p.nodes {
+            let (x, y) = (n.x.round(), n.y.round());
+            if x != n.x || y != n.y {
+                changed = true;
+            }
+            n.x = x;
+            n.y = y;
+        }
+    }
+    for a in &mut layer.anchors {
+        let (x, y) = (a.x.round(), a.y.round());
+        if x != a.x || y != a.y {
+            changed = true;
+        }
+        a.x = x;
+        a.y = y;
+    }
+    changed
+}
+
+/// The layer's `path`-th path (counting paths only, not components).
+fn path_at(layer: &Layer, path: usize) -> Result<&Path, String> {
+    layer_paths(layer)
+        .get(path)
+        .copied()
+        .ok_or_else(|| "No path at that position.".to_string())
+}
+
+fn path_at_mut(layer: &mut Layer, path: usize) -> Result<&mut Path, String> {
+    layer
+        .shapes
+        .iter_mut()
+        .filter_map(|s| match s {
+            Shape::Path(p) => Some(p),
+            _ => None,
+        })
+        .nth(path)
+        .ok_or_else(|| "No path at that position.".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,6 +1128,7 @@ mod tests {
             pts.reverse();
         }
         Shape::Path(Path {
+            locked: false,
             closed: true,
             nodes: pts
                 .into_iter()
@@ -589,6 +1173,7 @@ mod tests {
         // Listed: right counter, right outline, open stroke, left outline.
         let mut l = Layer::new("m01", 1000.0);
         let open = Shape::Path(Path {
+            locked: false,
             closed: false,
             nodes: vec![
                 node(0.0, 900.0, NodeKind::Line),
@@ -649,6 +1234,7 @@ mod tests {
     fn reversing_keeps_curve_segments() {
         // A closed path: line, then a curve back to the start.
         let p = Path {
+            locked: false,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Curve),
@@ -678,6 +1264,7 @@ mod tests {
         // A cubic from (0,0) to (200,0) bulging up to y=0.75h at t=0.5.
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
+            locked: false,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -712,6 +1299,7 @@ mod tests {
         // A TrueType-style bump: two handles with an implied on-curve point between them.
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
+            locked: false,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -726,6 +1314,7 @@ mod tests {
 
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
+            locked: false,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -771,5 +1360,332 @@ mod tests {
         let mut flat = bulge(0.0);
         assert_eq!(apply_extremes(&mut flat, &plan), 1);
         assert_eq!(path(&flat.shapes[0]).nodes.len(), r.nodes.len());
+    }
+
+    // ---------- Phase 5: knife, corners, connections, tidy, rounding ----------
+
+    fn rect_layer() -> Layer {
+        let mut l = Layer::new("m01", 600.0);
+        l.shapes = vec![rect(100.0, 0.0, 500.0, 700.0, true)];
+        l
+    }
+
+    fn coords(p: &Path) -> Vec<(f64, f64)> {
+        p.nodes.iter().map(|n| (n.x, n.y)).collect()
+    }
+
+    #[test]
+    fn knife_splits_a_rect_into_two_closed_paths() {
+        let mut l = rect_layer();
+        assert!(cut(&mut l, (300.0, -100.0), (300.0, 800.0)));
+        assert_eq!(l.shapes.len(), 2);
+        let (a, b) = (path(&l.shapes[0]), path(&l.shapes[1]));
+        assert!(a.closed && b.closed);
+        assert_eq!(a.nodes.len(), 4);
+        assert_eq!(b.nodes.len(), 4);
+        let mut left = coords(a);
+        let mut right = coords(b);
+        left.sort_by(|p, q| p.0.total_cmp(&q.0).then(p.1.total_cmp(&q.1)));
+        right.sort_by(|p, q| p.0.total_cmp(&q.0).then(p.1.total_cmp(&q.1)));
+        if left[0].0 > right[0].0 {
+            std::mem::swap(&mut left, &mut right);
+        }
+        assert_eq!(
+            left,
+            [(100.0, 0.0), (100.0, 700.0), (300.0, 0.0), (300.0, 700.0)]
+        );
+        assert_eq!(
+            right,
+            [(300.0, 0.0), (300.0, 700.0), (500.0, 0.0), (500.0, 700.0)]
+        );
+        // Every node is a line node: the chords and the rect sides are straight.
+        assert!(a
+            .nodes
+            .iter()
+            .chain(&b.nodes)
+            .all(|n| n.kind == NodeKind::Line));
+        // Cutting again along the same line does nothing (the halves only touch it).
+        assert!(!cut(&mut l, (300.0, -100.0), (300.0, 800.0)));
+    }
+
+    #[test]
+    fn knife_closes_a_curve_cut_with_a_chord() {
+        let mut l = bulge(200.0);
+        assert!(cut(&mut l, (-50.0, 100.0), (250.0, 100.0)));
+        assert_eq!(l.shapes.len(), 2);
+        for s in &l.shapes {
+            let p = path(s);
+            assert!(p.closed);
+            // Each side stays on its side of the knife, with the chord on y=100.
+            let above = p
+                .nodes
+                .iter()
+                .filter(|n| n.on_curve())
+                .all(|n| n.y >= 100.0 - 1e-6);
+            let below = p
+                .nodes
+                .iter()
+                .filter(|n| n.on_curve())
+                .all(|n| n.y <= 100.0 + 1e-6);
+            assert!(above || below);
+            assert!(
+                p.nodes
+                    .iter()
+                    .filter(|n| n.on_curve() && (n.y - 100.0).abs() < 1e-6)
+                    .count()
+                    >= 2
+            );
+        }
+        // The upper piece keeps curve nodes; the lower is the straight chord side.
+        let upper = l
+            .shapes
+            .iter()
+            .map(path)
+            .find(|p| p.nodes.iter().any(|n| n.y > 100.0))
+            .unwrap();
+        assert!(upper.nodes.iter().any(|n| n.kind == NodeKind::Curve));
+    }
+
+    #[test]
+    fn knife_misses_and_locked_paths_are_left_alone() {
+        let mut l = rect_layer();
+        let before = l.clone();
+        assert!(!cut(&mut l, (600.0, -100.0), (600.0, 800.0)));
+        assert_eq!(l, before);
+        if let Shape::Path(p) = &mut l.shapes[0] {
+            p.locked = true;
+        }
+        assert!(!cut(&mut l, (300.0, -100.0), (300.0, 800.0)));
+        assert_eq!(l.shapes.len(), 1);
+    }
+
+    #[test]
+    fn knife_splits_an_open_path_into_open_pieces() {
+        let mut l = Layer::new("m01", 300.0);
+        l.shapes = vec![Shape::Path(Path {
+            locked: false,
+            closed: false,
+            nodes: vec![
+                node(0.0, 0.0, NodeKind::Line),
+                node(100.0, 0.0, NodeKind::Line),
+                node(200.0, 0.0, NodeKind::Line),
+            ],
+        })];
+        assert!(cut(&mut l, (50.0, -10.0), (50.0, 10.0)));
+        // One crossing: two open pieces.
+        assert_eq!(l.shapes.len(), 2);
+        assert!(l.shapes.iter().map(path).all(|p| !p.closed));
+        assert_eq!(coords(path(&l.shapes[0])), [(0.0, 0.0), (50.0, 0.0)]);
+        assert_eq!(
+            coords(path(&l.shapes[1])),
+            [(50.0, 0.0), (100.0, 0.0), (200.0, 0.0)]
+        );
+    }
+
+    #[test]
+    fn open_corner_duplicates_and_reconnect_restores() {
+        let mut l = rect_layer();
+        let before = l.clone();
+        open_corner(&mut l, 0, 1).unwrap();
+        let p = path(&l.shapes[0]);
+        assert_eq!(p.nodes.len(), 5);
+        assert_eq!((p.nodes[1].x, p.nodes[1].y), (500.0, 0.0));
+        assert_eq!((p.nodes[2].x, p.nodes[2].y), (500.0, 0.0));
+        assert_eq!(p.nodes[2].kind, NodeKind::Line);
+        assert_eq!(reconnect_nodes(&mut l, None), 1);
+        assert_eq!(l, before, "reconnect undoes open corner exactly");
+    }
+
+    #[test]
+    fn open_corner_refuses_locked_paths_and_handles() {
+        let mut l = rect_layer();
+        if let Shape::Path(p) = &mut l.shapes[0] {
+            p.locked = true;
+        }
+        assert!(open_corner(&mut l, 0, 1).is_err());
+        let mut l = bulge(200.0);
+        assert!(open_corner(&mut l, 0, 1).is_err(), "off-curve node");
+        assert!(open_corner(&mut l, 5, 0).is_err(), "no such path");
+    }
+
+    #[test]
+    fn connect_nodes_joins_two_open_ends() {
+        let mut l = Layer::new("m01", 300.0);
+        let open = |pts: &[(f64, f64)]| {
+            Shape::Path(Path {
+                locked: false,
+                closed: false,
+                nodes: pts
+                    .iter()
+                    .map(|&(x, y)| node(x, y, NodeKind::Line))
+                    .collect(),
+            })
+        };
+        l.shapes = vec![
+            open(&[(0.0, 0.0), (100.0, 0.0)]),
+            open(&[(100.0, 0.0), (100.0, 100.0)]),
+        ];
+        connect_nodes(&mut l, (0, 1), (1, 0)).unwrap();
+        assert_eq!(l.shapes.len(), 1);
+        let p = path(&l.shapes[0]);
+        assert!(!p.closed);
+        assert_eq!(coords(p), [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]);
+    }
+
+    #[test]
+    fn connect_nodes_on_one_path_closes_it() {
+        let mut l = Layer::new("m01", 300.0);
+        l.shapes = vec![Shape::Path(Path {
+            locked: false,
+            closed: false,
+            nodes: vec![
+                node(0.0, 0.0, NodeKind::Line),
+                node(100.0, 0.0, NodeKind::Line),
+                node(100.0, 100.0, NodeKind::Line),
+            ],
+        })];
+        connect_nodes(&mut l, (0, 0), (0, 2)).unwrap();
+        assert!(path(&l.shapes[0]).closed);
+        assert!(connect_nodes(&mut l, (0, 0), (0, 1)).is_err(), "closed now");
+    }
+
+    #[test]
+    fn close_open_paths_closes_only_open_unlocked_ones() {
+        let mut l = Layer::new("m01", 300.0);
+        let tri = |locked: bool, closed: bool| {
+            Shape::Path(Path {
+                locked,
+                closed,
+                nodes: vec![
+                    node(0.0, 0.0, NodeKind::Line),
+                    node(100.0, 0.0, NodeKind::Line),
+                    node(100.0, 100.0, NodeKind::Line),
+                ],
+            })
+        };
+        l.shapes = vec![tri(false, false), tri(true, false), tri(false, true)];
+        assert_eq!(close_open_paths(&mut l, None), 1);
+        assert!(path(&l.shapes[0]).closed);
+        assert!(!path(&l.shapes[1]).closed, "locked stays open");
+    }
+
+    #[test]
+    fn make_node_first_rotates_keeping_segments() {
+        let mut l = rect_layer();
+        make_node_first(&mut l, 0, 2).unwrap();
+        let p = path(&l.shapes[0]);
+        assert_eq!(
+            coords(p),
+            [(500.0, 700.0), (100.0, 700.0), (100.0, 0.0), (500.0, 0.0)]
+        );
+        assert!(p.nodes.iter().all(|n| n.kind == NodeKind::Line));
+        assert!(make_node_first(&mut l, 0, 9).is_err());
+    }
+
+    #[test]
+    fn reverse_contours_respects_the_selection() {
+        let mut l = rect_layer();
+        l.shapes.push(rect(600.0, 0.0, 700.0, 700.0, true));
+        let second = l.shapes[1].clone();
+        assert_eq!(reverse_contours(&mut l, Some(&[0])), 1);
+        assert_eq!(l.shapes[1], second);
+        assert_eq!(
+            coords(path(&l.shapes[0])),
+            [(100.0, 0.0), (100.0, 700.0), (500.0, 700.0), (500.0, 0.0)]
+        );
+    }
+
+    #[test]
+    fn tidy_up_removes_duplicates_collinear_and_dead_handles() {
+        let mut l = Layer::new("m01", 300.0);
+        l.shapes = vec![Shape::Path(Path {
+            locked: false,
+            closed: true,
+            nodes: vec![
+                node(0.0, 0.0, NodeKind::Line),
+                node(50.0, 0.0, NodeKind::Line), // collinear with 0,0 and 100,0
+                node(100.0, 0.0, NodeKind::Line),
+                node(100.0, 0.0, NodeKind::Line), // duplicate
+                node(100.0, 100.0, NodeKind::Line),
+            ],
+        })];
+        assert_eq!(tidy_up(&mut l, None), 2);
+        assert_eq!(
+            coords(path(&l.shapes[0])),
+            [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]
+        );
+
+        // Both handles sit on their own node and go; the curve left with no
+        // handles flattens to a line. Three changes in total.
+        let mut l = Layer::new("m01", 300.0);
+        l.shapes = vec![Shape::Path(Path {
+            locked: false,
+            closed: true,
+            nodes: vec![
+                node(0.0, 0.0, NodeKind::Line),
+                node(0.0, 0.0, NodeKind::OffCurve),
+                node(100.0, 0.0, NodeKind::OffCurve),
+                node(100.0, 0.0, NodeKind::Curve),
+                node(100.0, 100.0, NodeKind::Line),
+            ],
+        })];
+        assert_eq!(tidy_up(&mut l, None), 3);
+        let p = path(&l.shapes[0]);
+        assert_eq!(coords(p), [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]);
+        assert!(p.nodes.iter().all(|n| n.kind == NodeKind::Line));
+    }
+
+    #[test]
+    fn tidy_up_keeps_curves_with_two_handles() {
+        // A well-formed cubic corner (two off-curve handles before the curve node)
+        // must survive tidy_up untouched — and count as no change.
+        let mut l = Layer::new("m01", 300.0);
+        l.shapes = vec![Shape::Path(Path {
+            locked: false,
+            closed: true,
+            nodes: vec![
+                node(0.0, 0.0, NodeKind::Line),
+                node(0.0, 60.0, NodeKind::OffCurve),
+                node(40.0, 100.0, NodeKind::OffCurve),
+                node(100.0, 100.0, NodeKind::Curve),
+                node(100.0, 0.0, NodeKind::Line),
+            ],
+        })];
+        assert_eq!(tidy_up(&mut l, None), 0);
+        let p = path(&l.shapes[0]);
+        assert_eq!(p.nodes[3].kind, NodeKind::Curve);
+        assert_eq!(p.nodes.len(), 5);
+    }
+
+    #[test]
+    fn round_coordinates_rounds_nodes_and_anchors_but_not_locked_paths() {
+        let mut l = Layer::new("m01", 300.0);
+        l.shapes = vec![Shape::Path(Path {
+            locked: false,
+            closed: true,
+            nodes: vec![
+                node(0.4, 0.6, NodeKind::Line),
+                node(100.0, 0.0, NodeKind::Line),
+                node(100.0, 100.0, NodeKind::Line),
+            ],
+        })];
+        l.anchors = vec![crate::model::Anchor {
+            name: "top".into(),
+            x: 50.5,
+            y: 99.4,
+        }];
+        assert!(round_coordinates(&mut l, None));
+        assert_eq!(
+            (path(&l.shapes[0]).nodes[0].x, path(&l.shapes[0]).nodes[0].y),
+            (0.0, 1.0)
+        );
+        assert_eq!((l.anchors[0].x, l.anchors[0].y), (51.0, 99.0));
+        assert!(!round_coordinates(&mut l, None), "nothing left to round");
+        if let Shape::Path(p) = &mut l.shapes[0] {
+            p.locked = true;
+            p.nodes[0].x = 0.4;
+        }
+        assert!(!round_coordinates(&mut l, None));
+        assert_eq!(path(&l.shapes[0]).nodes[0].x, 0.4);
     }
 }

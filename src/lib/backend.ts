@@ -44,6 +44,8 @@ export interface GlyphSummary {
   svg: string;
   /** False when this glyph's masters can't be interpolated. */
   compatible: boolean;
+  /** A locked glyph refuses every edit and is skipped by filters. */
+  locked?: boolean;
   /** Colour layers in this master, bottom to top (colour glyphs only). */
   color?: ColorLayerView[];
 }
@@ -177,6 +179,8 @@ export interface LayerView {
   smartAxes?: SmartAxis[];
   /** Why this glyph's masters can't be interpolated (empty when they can). */
   issues: string[];
+  /** True when the whole glyph is locked against edits. */
+  glyphLocked: boolean;
   /** This master's colour layers, bottom to top, and the default palette. */
   colorLayers?: ColorLayerView[];
   palette?: string[];
@@ -537,6 +541,16 @@ export interface Backend {
   setGlyphExport(names: string[], exportGlyph: boolean): Promise<DocStatus>;
   /** Correct Path Direction or Add Extremes on one layer (Add Extremes: only `paths`, if given). */
   pathOperation(glyph: string, masterId: string, operation: PathOperation, paths?: number[]): Promise<LayerView>;
+  /** Node-context-menu path edits; `warning` when only the current master could change. */
+  pathEdit(glyph: string, masterId: string, operation: PathEditOperation, opts?: { paths?: number[]; nodes?: [number, number][]; points?: [number, number][] }): Promise<PathEditResult>;
+  /** Locks or unlocks one path (index among the layer's paths, not components). */
+  setPathLocked(glyph: string, masterId: string, path: number, locked: boolean): Promise<LayerView>;
+  /** Locks or unlocks a whole glyph against edits. */
+  setGlyphLocked(glyph: string, locked: boolean): Promise<DocStatus>;
+  /** Runs a filter over the chosen glyphs (empty = the current one) as one undo step. */
+  runFilter(current: string, masterId: string, glyphs: string[], name: FilterName, params: FilterParams, allMasters: boolean): Promise<FilterResult>;
+  /** A filter's result on one layer without changing the document: the dialogs' live preview. */
+  filterPreview(glyph: string, masterId: string, name: FilterName, params: FilterParams): Promise<LayerView>;
   /** Master, brace and bracket layers of a glyph. */
   glyphLayers(glyph: string): Promise<LayerInfo[]>;
   addBraceLayer(glyph: string, masterId: string, location: Location): Promise<{ key: string; status: DocStatus }>;
@@ -562,6 +576,41 @@ export interface Backend {
 }
 
 export type PathOperation = "correct-direction" | "add-extremes" | "remove-overlap";
+
+export type PathEditOperation =
+  | "knife"
+  | "open-corner"
+  | "reconnect-nodes"
+  | "connect-nodes"
+  | "close-open-paths"
+  | "make-node-first"
+  | "reverse-contours"
+  | "tidy-up"
+  | "round-coordinates";
+
+export interface PathEditResult {
+  layer: LayerView;
+  /** Set when the edit could only be applied to the current master. */
+  warning?: string;
+}
+
+export type FilterName = "round-corners" | "offset-curve" | "transformations";
+
+/** A filter's settings; each dialog only sends its own fields. */
+export interface FilterParams {
+  radius?: number;
+  offsetX?: number;
+  offsetY?: number;
+  makeStroke?: boolean;
+  affine?: number[];
+  origin?: [number, number];
+}
+
+export interface FilterResult {
+  changed: string[];
+  warnings?: string[];
+  layer: LayerView;
+}
 
 export interface ExportFormats {
   ttf: boolean;
@@ -630,6 +679,11 @@ const tauriBackend: Backend = {
   removeGlyphs: (names) => invoke("remove_glyphs", { names }),
   setGlyphExport: (names, exportGlyph) => invoke("set_glyph_export", { names, export: exportGlyph }),
   pathOperation: (glyph, masterId, operation, paths) => invoke("path_operation", { glyph, masterId, operation, paths }),
+  pathEdit: (glyph, masterId, operation, opts) => invoke("path_edit", { glyph, masterId, operation, paths: opts?.paths, nodes: opts?.nodes, points: opts?.points }),
+  setPathLocked: (glyph, masterId, path, locked) => invoke("set_path_locked", { glyph, masterId, path, locked }),
+  setGlyphLocked: (glyph, locked) => invoke("set_glyph_locked", { glyph, locked }),
+  runFilter: (current, masterId, glyphs, name, params, allMasters) => invoke("run_filter", { current, masterId, glyphs, name, params, allMasters }),
+  filterPreview: (glyph, masterId, name, params) => invoke("filter_preview", { glyph, masterId, name, params }),
   glyphLayers: (glyph) => invoke("glyph_layers", { glyph }),
   addBraceLayer: (glyph, masterId, location) => invoke("add_brace_layer", { glyph, masterId, location }),
   addBracketLayers: (glyph, masterId, ranges) => invoke("add_bracket_layers", { glyph, masterId, ranges }),
@@ -796,7 +850,7 @@ function mockLayer(d: MockDoc, g: MockGlyph): LayerView {
   const components = g.components.map((c) => ({ base: c.base, transform: [...c.transform], align: true, svg: pathsToSvg(resolveComponent(d, c)) }));
   return {
     glyph: g.name, unicode: g.unicode, masterId: "m01", metrics: METRICS, width: g.width, ...sb(d, g),
-    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], metricsKeys: {}, issues: [], guides: [], masterGuides: [], status: status(d),
+    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], metricsKeys: {}, issues: [], glyphLocked: false, guides: [], masterGuides: [], status: status(d),
   };
 }
 
@@ -1097,6 +1151,21 @@ const mockBackend: Backend = {
   },
   async pathOperation() {
     throw "Path operations need the desktop app (npm run tauri dev).";
+  },
+  async pathEdit() {
+    throw "Path operations need the desktop app (npm run tauri dev).";
+  },
+  async setPathLocked() {
+    throw "Locking paths needs the desktop app (npm run tauri dev).";
+  },
+  async setGlyphLocked() {
+    throw "Locking glyphs needs the desktop app (npm run tauri dev).";
+  },
+  async runFilter() {
+    throw "Filters need the desktop app (npm run tauri dev).";
+  },
+  async filterPreview() {
+    throw "Filters need the desktop app (npm run tauri dev).";
   },
   async glyphLayers(glyph) {
     const d = need();

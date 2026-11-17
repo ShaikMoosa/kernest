@@ -7,8 +7,8 @@ use kernest_core::{background, measure, structure, Guide};
 use tauri::State;
 
 use crate::commands::{
-    doc_mut, layer_view_of, lock, to_component, to_path, AppState, CmdResult, ComponentInput,
-    Document, LayerView, PathDto,
+    doc_mut, ensure_glyph_unlocked, layer_view_of, lock, to_component, to_path, AppState,
+    CmdResult, ComponentInput, Document, LayerView, PathDto,
 };
 
 /// The background as a layer, so the transform and measure engines can work on it.
@@ -32,6 +32,7 @@ fn set_guides_in(
     key: &str,
     guides: Vec<Guide>,
 ) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     structure::check_guides(&guides)?;
     let current = doc
         .font
@@ -70,6 +71,7 @@ fn set_guide_scope_in(
     index: usize,
     to_global: bool,
 ) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     let next = structure::move_guide(&doc.font, glyph, key, index, to_global)
         .map_err(|e| e.to_string())?;
     if doc
@@ -108,6 +110,7 @@ fn transform_in(
     all_masters: bool,
     on_background: bool,
 ) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     if affine
         .iter()
         .chain([origin.0, origin.1].iter())
@@ -188,6 +191,7 @@ fn background_edit_in(
     edit: background::Edit,
     selection: &Selection,
 ) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     let next =
         background::edited(&doc.font, glyph, key, edit, selection).map_err(|e| e.to_string())?;
     let layer = next
@@ -272,6 +276,7 @@ fn update_background_in(
     components: Vec<ComponentInput>,
     anchors: Vec<Anchor>,
 ) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
     let mut shapes = paths
         .iter()
         .map(|p| to_path(p).map(Shape::Path))
@@ -490,6 +495,7 @@ mod tests {
             .layer_mut("m01")
             .unwrap()
             .shapes = vec![Shape::Path(Path {
+            locked: false,
             closed: true,
             nodes: vec![
                 Node::new(0.0, 0.0, NodeKind::Line),

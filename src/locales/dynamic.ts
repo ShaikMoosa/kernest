@@ -27,9 +27,14 @@ export const DYNAMIC_KEYS = [
   "Select (V)",
   "Pen (P)",
   "Rectangle (F)",
-  "Ellipse (E)",
+  "Ellipse (Shift+E)",
+  "Knife (E)",
   "Measure (L)",
   "Hand (H) · or hold Space",
+  // Filter dialog titles
+  "Round Corners",
+  "Offset Curve",
+  "Transformations",
   // Transform panel origin picker
   "Top left",
   "Top",

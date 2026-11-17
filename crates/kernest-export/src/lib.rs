@@ -1263,6 +1263,7 @@ pub(crate) mod tests {
         for id in &ids {
             let mark = |x0: f64, x1: f64| {
                 Shape::Path(kernest_core::Path {
+                    locked: false,
                     closed: true,
                     nodes: [
                         (x0, 720.0),
@@ -1485,6 +1486,7 @@ pub(crate) mod tests {
         let mut f = smart::set_smart_axes(&f, "_stem", axes).unwrap();
         let rect = |h: f64| {
             Shape::Path(kernest_core::Path {
+                locked: false,
                 closed: true,
                 nodes: [(0.0, 0.0), (80.0, 0.0), (80.0, h), (0.0, h)]
                     .into_iter()
@@ -1621,6 +1623,7 @@ pub(crate) mod tests {
         {
             if l.shapes.is_empty() {
                 l.shapes = vec![Shape::Path(kernest_core::Path {
+                    locked: false,
                     closed: true,
                     nodes: [(0.0, 300.0), (600.0, 300.0), (600.0, 400.0), (0.0, 400.0)]
                         .into_iter()
@@ -1760,6 +1763,7 @@ pub(crate) mod tests {
         .font;
         let rect = |x0: f64, y0: f64, x1: f64, y1: f64| {
             Shape::Path(kernest_core::Path {
+                locked: false,
                 closed: true,
                 nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
                     .into_iter()
@@ -1839,6 +1843,7 @@ pub(crate) mod tests {
         l.width = 600.0;
         let stem = |x: f64| {
             Shape::Path(kernest_core::Path {
+                locked: false,
                 closed: true,
                 nodes: [(x, 0.0), (x + 100.0, 0.0), (x + 100.0, 700.0), (x, 700.0)]
                     .into_iter()
@@ -1902,6 +1907,7 @@ pub(crate) mod tests {
         for (n, x0, x1) in [("uni0628", 50.0, 550.0), ("uni0627", 200.0, 300.0)] {
             let l = f.glyph_mut(n).unwrap().layer_mut("m01").unwrap();
             l.shapes = vec![Shape::Path(kernest_core::Path {
+                locked: false,
                 closed: true,
                 nodes: [(x0, 0.0), (x1, 0.0), (x1, 500.0), (x0, 500.0)]
                     .into_iter()
