@@ -127,6 +127,7 @@ An anchor is a named point that tells other glyphs where to sit: a mark above a 
 - **Text tabs** (Window › New Text Tab, Ctrl+T): type sample text to see your glyphs together.
   - Click between two glyphs to place the cursor.
   - **Alt+Left** and **Alt+Right** change the kerning there by 10 units, or by 1 unit with Shift held too.
+  - The **Features** button previews OpenType features on the sample text (see [Features](#features)).
 - **Kerning window** (Window › Kerning, Ctrl+Shift+K): every kerning pair for the current master, with a filter box and a row for adding pairs.
 - **Kerning groups:** a glyph has a **left group** (used when it's on the right side of a pair) and a **right group** (used when it's on the left side). Group pairs are written as `@group`. A pair between two specific glyphs is an **exception**, and it overrides the group pair.
 
@@ -143,15 +144,32 @@ Open **Font Info** (Ctrl+I) to set:
   - Removing an axis takes masters and instances off it (their positions on that axis are dropped) and deletes intermediate and alternate layers that use it. Kernest asks first, and Ctrl+Z undoes it.
 - **Masters:** each master is a full set of outlines at a location on the axes. Add a master by copying an existing one, then edit its outlines.
 - **Instances:** named styles such as SemiBold at a location between masters. They become static fonts on export; untick **Export** on an instance to leave it out.
+  - **Weight class** and **Width class** set the numbers apps use to sort and match styles (weight 1–1000, width 1–9). Leave them empty (**Automatic**) to take them from the instance's position on the Weight or Width axis, or from its name.
+  - **Style link** marks an instance as the Bold, Italic or Bold Italic of another instance (or of the family). Exported fonts then carry the right style-map names, so apps group Regular and Bold as one family.
 
 Switch the master you're editing with the buttons at the top right. Previews interpolate live. Kernest checks that every glyph can be interpolated, meaning the same number of paths, nodes and components in each master, and lists the glyphs that can't be in the **Incompatible** category of Font View.
+
+## Names and notes
+
+Font Info › **General** holds the names that go into the exported font's name table: designer and designer URL, manufacturer and manufacturer URL, copyright, vendor ID, license and license URL, trademark, description and sample text. Leave a field empty to leave it out of the export. The family name stays at the top of Font Info.
+
+Font Info › **Notes** is a free text box for remarks to yourself about the font. Notes are saved in the `.kernest` file and undo with Ctrl+Z, but they are never exported into the font.
+
+## Features
+
+OpenType features are the substitutions and positioning rules that run when text is shaped: ligatures, stylistic alternates, mark placement and so on. Font Info › **Features** is where they come from.
+
+- **Automatic features:** Kernest reads your glyph names and offers a switch for each feature it can build: `liga` from ligature names like `f_i`, `ss01`…`ss20` from suffixes like `a.ss01`, and `aalt` gathering the alternates. Turn a switch on and the feature is generated for you; the **Generated code** disclosure shows exactly what will be compiled.
+- **Your own code:** the editor below the switches is for hand-written feature code, with line numbers. **Apply features** compiles it; errors are listed with their line and column, and clicking an error jumps to that line. When it compiles cleanly you'll see "Compiled with no errors." A hand-written feature replaces the generated one with the same tag; your code is used as-is.
+- **In exported fonts:** generated and hand-written features are compiled together into GSUB/GPOS, alongside the mark and kerning features Kernest builds from anchors and kerning.
+- **Preview in text tabs:** the **Features** button in a text tab lists every available feature with a checkbox, plus **Shape preview**. With Shape preview on, the sample text is shaped with the ticked features (using the same engine as browsers), so you can see `fi` become a ligature or `a` become its `ss01` alternate. Spacing edits are paused while Shape preview is on; turn it off to edit kerning again.
 
 ## Export
 
 **File › Export** (Ctrl+E) builds fonts with [fontc](https://github.com/googlefonts/fontc):
 
 - **Variable font** (`Family-VF.ttf`): built from all the masters. It needs at least two masters, an axis, a master at the default location, and glyphs that can be interpolated.
-- **Static fonts** (`Family-Style.ttf`): one per exported instance, or one per master if there are no instances. Instances between masters are interpolated by Kernest first. Each static font's weight class (used by apps to sort and match styles) comes from its position on the Weight axis, or from its style name (Thin, Light, Bold…) if there's no Weight axis; its width class comes from a Width axis.
+- **Static fonts** (`Family-Style.ttf`): one per exported instance, or one per master if there are no instances. Instances between masters are interpolated by Kernest first. Each static font's weight class (used by apps to sort and match styles) comes from its **Weight class** in Font Info, or from its position on the Weight axis, or from its style name (Thin, Light, Bold…) if there's no Weight axis; its width class comes from **Width class** or a Width axis. Style-linked instances carry the style-map names that group them with their base family.
 
 Choose the formats:
 
@@ -165,7 +183,7 @@ And what happens before building:
 - **Apply metrics keys** re-applies every metrics key, so sidebearings are up to date.
 - **Autohint** adds TrueType hinting instructions to TTF and WOFF2 files, static and variable, using the settings in Font Info › Hinting. Hinting makes text crisper at small sizes on Windows. OTF files aren't affected. Kernest hints with [tilvisan](https://github.com/simoncozens/tilvisan), a Rust port of ttfautohint.
 
-Kerning and kerning groups are compiled into GPOS, and your feature code is included. Glyphs that aren't set to export are left out.
+Kerning and kerning groups are compiled into GPOS, and your feature code — generated and hand-written (see [Features](#features)) — is included. Glyphs that aren't set to export are left out.
 
 ## Colour fonts
 

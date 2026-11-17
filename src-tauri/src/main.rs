@@ -4,6 +4,7 @@
 mod anchors;
 mod commands;
 mod export;
+mod features;
 mod fontinfo;
 mod glyphs;
 mod import;
@@ -51,7 +52,13 @@ fn main() {
             fontinfo::update_master,
             fontinfo::remove_master,
             fontinfo::set_instances,
+            fontinfo::set_font_names,
+            fontinfo::set_notes,
             fontinfo::compatibility,
+            features::features,
+            features::set_features,
+            features::set_automatic_features,
+            features::shape_text,
             export::export_font,
             import::import_font,
             glyphs::add_glyphs,

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use kernest_core::glyphdata::Category;
-use kernest_core::{Font, KernPair, Layer, Metrics, NodeKind, Shape};
+use kernest_core::{Font, Instance, KernPair, Layer, Metrics, NodeKind, Shape};
 use norad::{
     AffineTransform, Anchor, Codepoints, Component, Contour, ContourPoint, Glyph, Name, PointType,
 };
@@ -111,6 +111,9 @@ pub struct UfoSource<'a> {
     pub alternates: Vec<(String, String)>,
     /// Where this source sits in the design space (for the OS/2 weight and width class).
     pub location: BTreeMap<String, f64>,
+    /// The instance this source exports, when it is one; its class and style-link
+    /// overrides win over the values derived from the design-space location.
+    pub instance: Option<&'a Instance>,
 }
 
 /// OS/2 weight class (1–1000) for a style: the `wght` location if the font has that
@@ -225,9 +228,43 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     info.italic_angle = Some(-src.metrics.italic_angle);
     info.copyright = font.info.copyright.clone();
     info.open_type_name_designer = font.info.designer.clone();
+    info.open_type_name_designer_url = font.info.designer_url.clone();
+    info.open_type_name_manufacturer = font.info.manufacturer.clone();
+    info.open_type_name_manufacturer_url = font.info.manufacturer_url.clone();
+    info.open_type_name_license = font.info.license.clone();
+    info.open_type_name_license_url = font.info.license_url.clone();
+    info.open_type_name_description = font.info.description.clone();
+    info.trademark = font.info.trademark.clone();
+    info.open_type_name_sample_text = font.info.sample_text.clone();
     info.open_type_os2_vendor_id = font.info.vendor_id.clone();
-    info.open_type_os2_weight_class = Some(weight_class(font, &src.location, src.style_name));
-    info.open_type_os2_width_class = width_class(font, &src.location).map(os2_width);
+    let inst = src.instance;
+    info.open_type_os2_weight_class = Some(
+        inst.and_then(|i| i.weight_class)
+            .map(u32::from)
+            .unwrap_or_else(|| weight_class(font, &src.location, src.style_name)),
+    );
+    info.open_type_os2_width_class = inst
+        .and_then(|i| i.width_class)
+        .map(|w| os2_width(w.clamp(1, 9) as u8))
+        .or_else(|| width_class(font, &src.location).map(os2_width));
+    if let Some(link) = inst.and_then(|i| i.style_link.as_ref()) {
+        use norad::fontinfo::StyleMapStyle;
+        // The style map groups the linked styles under one family so applications
+        // can switch between them with the bold/italic buttons.
+        let base = link.base.trim();
+        info.style_map_family_name =
+            Some(if base.is_empty() || base.eq_ignore_ascii_case("regular") {
+                font.info.family_name.clone()
+            } else {
+                format!("{} {base}", font.info.family_name)
+            });
+        info.style_map_style_name = Some(match (link.bold, link.italic) {
+            (true, true) => StyleMapStyle::BoldItalic,
+            (true, false) => StyleMapStyle::Bold,
+            (false, true) => StyleMapStyle::Italic,
+            (false, false) => StyleMapStyle::Regular,
+        });
+    }
 
     let has_notdef = src.layers.iter().any(|(n, _)| n == ".notdef");
     let mut order: Vec<String> = Vec::with_capacity(src.layers.len() + 1);
@@ -325,7 +362,9 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
         ufo.kerning.entry(l).or_default().insert(r, p.value);
     }
     ufo.groups = groups;
-    ufo.features = font.features.clone();
+    // Generated code plus the designer's own; a hand-written feature tag is never
+    // generated, so the designer's version of a feature is the one compiled.
+    ufo.features = kernest_core::features::combined(font);
     Ok(ufo)
 }
 

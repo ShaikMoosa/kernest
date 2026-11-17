@@ -3,7 +3,7 @@
 //! Units are font units (y up, baseline at 0), stored as `f64` so intermediate
 //! edits and interpolation keep full precision; rounding happens at export.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -30,10 +30,33 @@ pub struct Font {
     /// OpenType feature code (AFDKO syntax).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub features: String,
+    /// Free-form notes for the designer. Saved in `.kernest` but never exported
+    /// into font files, so private remarks cannot leak into a shipped font.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub notes: String,
+    /// Which generated features are switched on. Generated code is kept out of
+    /// `features` so a hand-written feature always wins over the generated one.
+    #[serde(default, skip_serializing_if = "FeatureSettings::is_empty")]
+    pub feature_settings: FeatureSettings,
     /// Colour palettes (CPAL): every palette has the same number of colours, and
     /// colour layers refer to them by index. Palette 0 is the default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub palettes: Vec<Vec<crate::color::Color>>,
+}
+
+/// Toggles for the features Kernest generates from glyph names. Only the tags
+/// listed here are generated; anything the designer writes by hand is left alone.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureSettings {
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub automatic: BTreeSet<String>,
+}
+
+impl FeatureSettings {
+    pub fn is_empty(&self) -> bool {
+        self.automatic.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,6 +72,22 @@ pub struct FontInfo {
     pub copyright: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vendor_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub designer_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manufacturer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manufacturer_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trademark: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_text: Option<String>,
     /// TrueType autohinting settings; `None` means the defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hinting: Option<Hinting>,
@@ -641,6 +680,14 @@ impl Font {
                 designer: None,
                 copyright: None,
                 vendor_id: None,
+                designer_url: None,
+                manufacturer: None,
+                manufacturer_url: None,
+                license: None,
+                license_url: None,
+                description: None,
+                trademark: None,
+                sample_text: None,
                 hinting: None,
             },
             axes: Vec::new(),
@@ -649,6 +696,8 @@ impl Font {
             instances: Vec::new(),
             kerning: BTreeMap::new(),
             features: String::new(),
+            notes: String::new(),
+            feature_settings: FeatureSettings::default(),
             palettes: Vec::new(),
         }
     }
@@ -798,4 +847,27 @@ pub struct Instance {
     pub location: BTreeMap<String, f64>,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub export: bool,
+    /// OS/2 usWeightClass override; `None` lets export derive it from the axes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight_class: Option<u16>,
+    /// OS/2 usWidthClass override; `None` lets export derive it from the axes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width_class: Option<u16>,
+    /// Style linking (bold/italic flags and the family they link to); `None`
+    /// means export derives the style map from the instance name and location.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_link: Option<StyleLink>,
+}
+
+/// How an instance participates in the four-style (RIBBI) style map. `base` is
+/// the style-map family name the linked styles share (usually the family name).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleLink {
+    #[serde(default)]
+    pub bold: bool,
+    #[serde(default)]
+    pub italic: bool,
+    #[serde(default)]
+    pub base: String,
 }

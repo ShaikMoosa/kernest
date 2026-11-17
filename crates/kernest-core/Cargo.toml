@@ -12,6 +12,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 kurbo = "0.13"
 linesweeper = "0.5"
+fea-rs = "2.0.0"
 
 [dev-dependencies]
 tempfile = "3"

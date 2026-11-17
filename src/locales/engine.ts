@@ -105,6 +105,10 @@ export const ENGINE_MESSAGES = [
   "\"{glyph}\" has no anchor named \"{old}\".",
   "\"{glyph}\" already has an anchor named \"{new}\".",
   "An anchor has an invalid coordinate.",
+  // kernest-core: features
+  "include statements are not supported; paste the feature code here",
+  // src-tauri: feature preview
+  "could not read the preview font",
   // kernest-export
   "could not read the compiled font: {e}",
   "could not read the variable font: {e}",

@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 kernest-core = { path = "../kernest-core" }
 fontc = { version = "2.0.1", default-features = false, features = ["rayon"] }
+fontbe = "2.0.0"
 norad = "0.19.2"
 tempfile = "3"
 plist = "1"

@@ -131,6 +131,9 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
                 .unwrap_or_else(|| format!("Instance {}", i + 1)),
             location: location(&inst.location),
             export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
         })
         .collect();
 
@@ -345,6 +348,14 @@ fn build(
         designer: fi.open_type_name_designer.clone(),
         copyright: fi.copyright.clone(),
         vendor_id: fi.open_type_os2_vendor_id.clone(),
+        designer_url: fi.open_type_name_designer_url.clone(),
+        manufacturer: fi.open_type_name_manufacturer.clone(),
+        manufacturer_url: fi.open_type_name_manufacturer_url.clone(),
+        license: fi.open_type_name_license.clone(),
+        license_url: fi.open_type_name_license_url.clone(),
+        description: fi.open_type_name_description.clone(),
+        trademark: fi.trademark.clone(),
+        sample_text: fi.open_type_name_sample_text.clone(),
         hinting: None,
     };
 
@@ -476,6 +487,8 @@ fn build(
         glyphs,
         kerning,
         features: def.features.clone(),
+        notes: String::new(),
+        feature_settings: Default::default(),
         palettes: Vec::new(),
     }
 }

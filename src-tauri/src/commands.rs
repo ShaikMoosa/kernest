@@ -19,6 +19,15 @@ use kernest_core::{
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+/// A compiled preview font with the revision and location it was built from,
+/// plus the glyph order its ids map to.
+pub(crate) type PreviewFont = (
+    u64,
+    Option<kernest_core::designspace::Location>,
+    Vec<u8>,
+    Vec<String>,
+);
+
 pub struct Document {
     pub font: Font,
     pub path: Option<PathBuf>,
@@ -26,6 +35,9 @@ pub struct Document {
     /// Incremented on every change; compared with `saved_revision` for the unsaved-changes state.
     pub(crate) revision: u64,
     saved_revision: u64,
+    /// Compiled preview font for the text view's feature shaping, keyed by the
+    /// revision and design-space location it was built from so edits rebuild it.
+    pub(crate) preview: Option<PreviewFont>,
 }
 
 impl Document {
@@ -36,6 +48,7 @@ impl Document {
             history: History::default(),
             revision: 0,
             saved_revision: 0,
+            preview: None,
         }
     }
     fn dirty(&self) -> bool {
@@ -99,7 +112,7 @@ pub struct GlyphSummary {
 }
 
 /// A colour layer as the UI draws it.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ColorLayerView {
     key: String,

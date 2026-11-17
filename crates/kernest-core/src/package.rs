@@ -24,14 +24,16 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, IoContext, Result};
-use crate::model::{Axis, Font, FontInfo, Glyph, Instance, KernPair, Master};
+use crate::model::{Axis, FeatureSettings, Font, FontInfo, Glyph, Instance, KernPair, Master};
 
 /// Format version written by this build.
 /// Version 2 adds colour palettes and colour layers; version 3 adds the component
-/// align flag (older versions would silently re-align hand-placed components).
-/// Fonts using neither are still written as version 1, colour-only fonts as 2,
-/// so older Kernest versions keep opening them.
-pub const FORMAT_VERSION: u32 = 3;
+/// align flag (older versions would silently re-align hand-placed components);
+/// version 4 adds the naming fields, instance classes/style links, notes and
+/// automatic-feature settings (older versions would drop them on save).
+/// Fonts using none of these are still written as version 1, colour-only as 2 and
+/// manual-component-only as 3, so older Kernest versions keep opening them.
+pub const FORMAT_VERSION: u32 = 4;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -48,6 +50,10 @@ struct FontFile {
     instances: Vec<Instance>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     palettes: Vec<Vec<crate::color::Color>>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    notes: String,
+    #[serde(default, skip_serializing_if = "FeatureSettings::is_empty")]
+    feature_settings: FeatureSettings,
     glyph_order: Vec<String>,
 }
 
@@ -157,9 +163,31 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
                 .any(|s| matches!(s, crate::model::Shape::Component { align: false, .. }))
         })
     });
+    let i = &font.info;
+    let has_naming = [
+        &i.designer_url,
+        &i.manufacturer,
+        &i.manufacturer_url,
+        &i.license,
+        &i.license_url,
+        &i.description,
+        &i.trademark,
+        &i.sample_text,
+    ]
+    .iter()
+    .any(|v| v.is_some());
+    let has_instance_overrides = font.instances.iter().any(|inst| {
+        inst.weight_class.is_some() || inst.width_class.is_some() || inst.style_link.is_some()
+    });
+    let has_phase3 = !font.notes.is_empty()
+        || !font.feature_settings.is_empty()
+        || has_naming
+        || has_instance_overrides;
     let file = FontFile {
-        format_version: if has_manual {
+        format_version: if has_phase3 {
             FORMAT_VERSION
+        } else if has_manual {
+            3
         } else if has_color {
             2
         } else {
@@ -171,6 +199,8 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
         masters: font.masters.clone(),
         instances: font.instances.clone(),
         palettes: font.palettes.clone(),
+        notes: font.notes.clone(),
+        feature_settings: font.feature_settings.clone(),
         glyph_order: font.glyphs.iter().map(|g| g.name.clone()).collect(),
     };
     write_atomic(&font_path, &to_json(&file, &font_path)?)
@@ -246,6 +276,8 @@ pub fn open(dir: &Path) -> Result<Font> {
         kerning,
         features,
         palettes: file.palettes,
+        notes: file.notes,
+        feature_settings: file.feature_settings,
     };
     font.validate()?;
     Ok(font)
@@ -374,6 +406,40 @@ mod tests {
             open(&path),
             Err(Error::NewerFormat(_, 99, FORMAT_VERSION))
         ));
+    }
+
+    #[test]
+    fn phase3_fields_round_trip_and_gate_version() {
+        use crate::model::StyleLink;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        // Without any phase-3 work the package stays at version 1.
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
+        assert!(!fj.contains("notes"), "{fj}");
+
+        font.notes = "remember to check the ogonek".into();
+        font.feature_settings.automatic.insert("ss01".into());
+        font.info.designer_url = Some("https://example.com".into());
+        font.info.license = Some("SIL OFL 1.1".into());
+        font.instances.push(Instance {
+            name: "Bold".into(),
+            location: BTreeMap::new(),
+            export: true,
+            weight_class: Some(700),
+            width_class: Some(5),
+            style_link: Some(StyleLink {
+                bold: true,
+                italic: false,
+                base: "Regular".into(),
+            }),
+        });
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 4"), "{fj}");
+        assert_eq!(open(&path).unwrap(), font);
     }
 
     #[test]
