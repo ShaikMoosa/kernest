@@ -64,6 +64,77 @@ pub fn set_hinting(font: &Font, hinting: crate::Hinting) -> R<Font> {
     Ok(f)
 }
 
+/// Guides need a finite position and angle; anything else would draw off-canvas.
+pub fn check_guides(guides: &[crate::Guide]) -> R<()> {
+    for g in guides {
+        if !g.x.is_finite() || !g.y.is_finite() || !g.angle.is_finite() {
+            return Err("A guide has an invalid position or angle.".into());
+        }
+    }
+    Ok(())
+}
+
+/// Sets (or clears, with `None` or a zero spacing) the edit view's snap grid.
+pub fn set_grid(font: &Font, grid: Option<crate::Grid>) -> R<Font> {
+    let mut f = font.clone();
+    f.info.grid = grid.filter(|g| g.step().is_some());
+    Ok(f)
+}
+
+/// Replaces a master's global guides, drawn in every glyph of that master.
+pub fn set_master_guides(font: &Font, master_id: &str, guides: Vec<crate::Guide>) -> R<Font> {
+    check_guides(&guides)?;
+    let mut f = font.clone();
+    let m = f
+        .masters
+        .iter_mut()
+        .find(|m| m.id == master_id)
+        .ok_or_else(|| format!("No master with id \"{master_id}\""))?;
+    m.guides = guides;
+    Ok(f)
+}
+
+/// Moves one guide between a layer's local list and its master's global list,
+/// keeping its position, angle, name and lock. Appended to the target list.
+pub fn move_guide(font: &Font, glyph: &str, key: &str, index: usize, to_global: bool) -> R<Font> {
+    let mut f = font.clone();
+    let guide = if to_global {
+        let layer = f
+            .glyph_mut(glyph)
+            .and_then(|g| g.layer_mut(key))
+            .ok_or_else(|| format!("No layer for \"{glyph}\""))?;
+        if index >= layer.guides.len() {
+            return Err("No guide at that position.".into());
+        }
+        layer.guides.remove(index)
+    } else {
+        let m = f
+            .masters
+            .iter_mut()
+            .find(|m| m.id == key)
+            .ok_or_else(|| format!("No master with id \"{key}\""))?;
+        if index >= m.guides.len() {
+            return Err("No guide at that position.".into());
+        }
+        m.guides.remove(index)
+    };
+    if to_global {
+        let m = f
+            .masters
+            .iter_mut()
+            .find(|m| m.id == key)
+            .ok_or_else(|| format!("No master with id \"{key}\""))?;
+        m.guides.push(guide);
+    } else {
+        let layer = f
+            .glyph_mut(glyph)
+            .and_then(|g| g.layer_mut(key))
+            .ok_or_else(|| format!("No layer for \"{glyph}\""))?;
+        layer.guides.push(guide);
+    }
+    Ok(f)
+}
+
 fn check_axes(axes: &[Axis]) -> R<()> {
     let mut tags = HashSet::new();
     for a in axes {
@@ -181,6 +252,7 @@ pub fn add_master(
         name: name.into(),
         location,
         metrics: src.metrics,
+        guides: src.guides.clone(),
     });
     Ok((f, id))
 }

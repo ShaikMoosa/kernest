@@ -24,6 +24,21 @@ import { language, LANGUAGES, saveLanguage, t, tn, translateMessage, type Lang }
 
 const CLEAN: DocStatus = { dirty: false, canUndo: false, canRedo: false };
 
+/** A View-menu toggle remembered across sessions ("0" = off, "1" = on). */
+function useViewToggle(key: string, defaultOn: boolean): [boolean, () => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw === null ? defaultOn : raw !== "0";
+    } catch { return defaultOn; }
+  });
+  const toggle = useCallback(() => setOn((v) => {
+    try { localStorage.setItem(key, v ? "0" : "1"); } catch { /* not persisted */ }
+    return !v;
+  }), [key]);
+  return [on, toggle];
+}
+
 export default function App() {
   const [font, setFont] = useState<FontView | null>(null);
   const [status, setStatus] = useState<DocStatus>(CLEAN);
@@ -42,20 +57,12 @@ export default function App() {
   const [lang, setLangState] = useState<Lang>(language);
   const setLang = (l: Lang) => { saveLanguage(l); setLangState(l); };
   const setTheme = (t: ThemePref) => { saveTheme(t); setThemeState(t); };
-  const [showMetrics, setShowMetrics] = useState(() => {
-    try { return localStorage.getItem("kernest.showMetrics") !== "0"; } catch { return true; }
-  });
-  const toggleMetrics = useCallback(() => setShowMetrics((v) => {
-    try { localStorage.setItem("kernest.showMetrics", v ? "0" : "1"); } catch { /* not persisted */ }
-    return !v;
-  }), []);
-  const [showAnchors, setShowAnchors] = useState(() => {
-    try { return localStorage.getItem("kernest.showAnchors") !== "0"; } catch { return true; }
-  });
-  const toggleAnchors = useCallback(() => setShowAnchors((v) => {
-    try { localStorage.setItem("kernest.showAnchors", v ? "0" : "1"); } catch { /* not persisted */ }
-    return !v;
-  }), []);
+  const [showMetrics, toggleMetrics] = useViewToggle("kernest.showMetrics", true);
+  const [showAnchors, toggleAnchors] = useViewToggle("kernest.showAnchors", true);
+  const [showNodes, toggleNodes] = useViewToggle("kernest.showNodes", true);
+  const [showGuides, toggleGuides] = useViewToggle("kernest.showGuides", true);
+  const [showBackground, toggleBackground] = useViewToggle("kernest.showBackground", true);
+  const [showBoundingBox, toggleBoundingBox] = useViewToggle("kernest.showBoundingBox", false);
   const [importNotes, setImportNotes] = useState<{ source: string; familyName: string; warnings: string[] } | null>(null);
   const [toast, setToast] = useState<{ kind: "info" | "danger"; text: string } | null>(null);
   const dirtyRef = useRef(false);
@@ -381,6 +388,12 @@ export default function App() {
         e.preventDefault();
         return openHandbook();
       }
+      // Ctrl+Alt+Shift+B needs its own check: the guard below rejects Alt combinations.
+      if (e.ctrlKey && e.altKey && e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleBoundingBox();
+        return;
+      }
       if (!e.ctrlKey || e.altKey) return;
       const k = e.key.toLowerCase();
       const inField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
@@ -402,6 +415,8 @@ export default function App() {
       else if (k === "r" && e.shiftKey && active?.startsWith("g:")) sendEditCommand("correct-direction");
       else if (k === "m" && e.shiftKey) toggleMetrics();
       else if (k === "a" && e.shiftKey) toggleAnchors();
+      else if (k === "l" && e.shiftKey) toggleGuides();
+      else if (k === "b" && e.shiftKey) toggleBackground();
       else if (k === "u" && !e.shiftKey && !inField && font && glyphTargets.length) setAnchors(glyphTargets);
       else if (k === "delete" && !inField && font) removeGlyphs(glyphTargets);
       else return;
@@ -409,7 +424,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showNewFont, open, importSource, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font, showAddGlyphs, removeGlyphs, glyphTargets, toggleMetrics, toggleAnchors, setAnchors, openHandbook]);
+  }, [showNewFont, open, importSource, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font, showAddGlyphs, removeGlyphs, glyphTargets, toggleMetrics, toggleAnchors, toggleGuides, toggleBackground, toggleBoundingBox, setAnchors, openHandbook]);
 
   const inGlyph = font !== null && active !== null && active.startsWith("g:");
   const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? t("Kerning") : id === "info" ? t("Font Info") : t("Text {n}", { n: id.slice(5) }));
@@ -439,6 +454,11 @@ export default function App() {
         { label: t("Cut"), shortcut: "Ctrl+X", onSelect: inGlyph ? () => sendEditCommand("cut") : undefined, separatorBefore: true },
         { label: t("Copy"), shortcut: "Ctrl+C", onSelect: inGlyph ? () => sendEditCommand("copy") : undefined },
         { label: t("Paste"), shortcut: "Ctrl+V", onSelect: inGlyph ? () => sendEditCommand("paste") : undefined },
+        { label: t("Edit Background"), shortcut: "Ctrl+B", onSelect: inGlyph ? () => sendEditCommand("edit-background") : undefined, separatorBefore: true },
+        { label: t("Selection to Background"), shortcut: "Ctrl+J", onSelect: inGlyph ? () => sendEditCommand("to-background") : undefined },
+        { label: t("Add to Background"), shortcut: "Ctrl+Shift+J", onSelect: inGlyph ? () => sendEditCommand("add-to-background") : undefined },
+        { label: t("Swap with Background"), onSelect: inGlyph ? () => sendEditCommand("swap-background") : undefined },
+        { label: t("Clear Background"), onSelect: inGlyph ? () => sendEditCommand("clear-background") : undefined },
       ],
     },
     {
@@ -461,8 +481,12 @@ export default function App() {
       ],
     },
     { label: t("View"), items: [
+      { label: t("Show Nodes"), onSelect: toggleNodes, checked: showNodes },
       { label: t("Show Metrics"), shortcut: "Ctrl+Shift+M", onSelect: toggleMetrics, checked: showMetrics },
       { label: t("Show Anchors"), shortcut: "Ctrl+Shift+A", onSelect: toggleAnchors, checked: showAnchors },
+      { label: t("Show Guides"), shortcut: "Ctrl+Shift+L", onSelect: toggleGuides, checked: showGuides },
+      { label: t("Show Background"), shortcut: "Ctrl+Shift+B", onSelect: toggleBackground, checked: showBackground },
+      { label: t("Show Bounding Box"), shortcut: "Ctrl+Alt+Shift+B", onSelect: toggleBoundingBox, checked: showBoundingBox },
       { label: t("Theme: System"), onSelect: () => setTheme("system"), checked: theme === "system", separatorBefore: true },
       { label: t("Theme: Light"), onSelect: () => setTheme("light"), checked: theme === "light" },
       { label: t("Theme: Dark"), onSelect: () => setTheme("dark"), checked: theme === "dark" },
@@ -522,7 +546,7 @@ export default function App() {
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} showMetrics={showMetrics} showAnchors={showAnchors} />
+                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showBoundingBox={showBoundingBox} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} />
               ) : id === "kerning" ? (

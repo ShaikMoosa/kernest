@@ -28,7 +28,18 @@ export const DYNAMIC_KEYS = [
   "Pen (P)",
   "Rectangle (F)",
   "Ellipse (E)",
+  "Measure (L)",
   "Hand (H) · or hold Space",
+  // Transform panel origin picker
+  "Top left",
+  "Top",
+  "Top right",
+  "Left",
+  "Center",
+  "Right",
+  "Bottom left",
+  "Bottom",
+  "Bottom right",
   // Text View kerning modes
   "Group",
   "Kern the two glyphs' kerning groups (or the glyphs, if they have none)",

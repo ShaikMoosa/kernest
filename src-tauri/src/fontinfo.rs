@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use kernest_core::interpolate::{check_glyph, default_master};
-use kernest_core::{structure, Axis, Font, Hinting, Instance, Metrics};
+use kernest_core::{structure, Axis, Font, Grid, Guide, Hinting, Instance, Metrics};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -88,6 +88,8 @@ pub struct FontInfoView {
     instances: Vec<Instance>,
     /// TrueType autohinting settings (the defaults if the font has none).
     hinting: Hinting,
+    /// The edit view's snap grid, if set.
+    grid: Option<Grid>,
     /// Colour palettes (CSS colours `#rrggbbaa`), all the same length.
     palettes: Vec<Vec<kernest_core::color::Color>>,
     default_master_id: String,
@@ -120,6 +122,7 @@ fn info_view(doc: &Document) -> FontInfoView {
             .collect(),
         instances: f.instances.clone(),
         hinting: f.info.hinting.unwrap_or_default(),
+        grid: f.info.grid,
         palettes: f.palettes.clone(),
         default_master_id: default_master(f).id.clone(),
         warnings: structure::warnings(f),
@@ -190,6 +193,24 @@ pub fn set_notes(state: State<AppState>, text: String) -> CmdResult<FontInfoView
 #[tauri::command]
 pub fn set_hinting(state: State<AppState>, hinting: Hinting) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_hinting(f, hinting))
+}
+
+/// Sets or clears the edit view's snap grid (Font Info › General).
+#[tauri::command]
+pub fn set_grid(state: State<AppState>, grid: Option<Grid>) -> CmdResult<FontInfoView> {
+    edit(&state, |f| structure::set_grid(f, grid))
+}
+
+/// Replaces a master's global guides.
+#[tauri::command]
+pub fn set_master_guides(
+    state: State<AppState>,
+    master_id: String,
+    guides: Vec<Guide>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| {
+        structure::set_master_guides(f, &master_id, guides)
+    })
 }
 
 #[tauri::command]

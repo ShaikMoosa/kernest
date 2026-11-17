@@ -45,6 +45,9 @@ export const ENGINE_MESSAGES = [
   "There is no glyph named \"{name}\".",
   "A kerning pair needs a glyph or @group on both sides.",
   "\"{name}\" is not a valid group name.",
+  "A guide has an invalid position or angle.",
+  "No guide at that position.",
+  "The transform has an invalid number.",
   // kernest-core: files
   "could not access {path}: {e}",
   "{path} is not valid Kernest JSON: {e}",

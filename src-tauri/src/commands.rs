@@ -13,8 +13,8 @@ use kernest_core::geometry::{sidebearings, svg_path};
 use kernest_core::glyphdata::{codepoints_for, GLYPH_SETS};
 use kernest_core::interpolate::check_glyph;
 use kernest_core::{
-    package, pathops, sample, Anchor, Font, Layer, Metrics, Node, NodeKind, Path as KPath, Shape,
-    SmartAxis,
+    package, pathops, sample, Anchor, Font, Grid, Guide, Layer, Metrics, Node, NodeKind,
+    Path as KPath, Shape, SmartAxis,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -267,10 +267,10 @@ pub struct LayerView {
     unicode: Option<String>,
     master_id: String,
     metrics: Metrics,
-    width: f64,
+    pub(crate) width: f64,
     lsb: Option<f64>,
     rsb: Option<f64>,
-    paths: Vec<PathDto>,
+    pub(crate) paths: Vec<PathDto>,
     pub(crate) components: Vec<ComponentDto>,
     /// All components resolved to outlines, as SVG path data in font units (y up).
     component_svg: String,
@@ -289,7 +289,27 @@ pub struct LayerView {
     /// The paint of this layer, when it is a colour layer.
     #[serde(skip_serializing_if = "Option::is_none")]
     paint: Option<kernest_core::color::Paint>,
+    /// Local guides of this layer.
+    pub(crate) guides: Vec<Guide>,
+    /// Global guides of this layer's master, drawn in every glyph.
+    pub(crate) master_guides: Vec<Guide>,
+    /// The reference drawing behind the outline, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) background: Option<BackgroundView>,
+    /// The font's snap grid, if set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) grid: Option<Grid>,
     pub(crate) status: DocStatus,
+}
+
+/// The background layer, shaped like the foreground so it can be edited in place.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundView {
+    pub(crate) paths: Vec<PathDto>,
+    components: Vec<ComponentDto>,
+    component_svg: String,
+    anchors: Vec<Anchor>,
 }
 
 fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> {
@@ -354,10 +374,68 @@ pub(crate) fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> Cmd
     let master = font
         .master(&layer.master_id)
         .ok_or_else(|| format!("No master with id \"{}\"", layer.master_id))?;
+    let (paths, components, component_svg) = outline_views(
+        font,
+        &layer.master_id,
+        layer.location.as_ref(),
+        layer.width,
+        &layer.shapes,
+    );
+    let background = layer.background.as_ref().map(|b| {
+        let (paths, components, component_svg) = outline_views(
+            font,
+            &layer.master_id,
+            layer.location.as_ref(),
+            layer.width,
+            &b.shapes,
+        );
+        BackgroundView {
+            paths,
+            components,
+            component_svg,
+            anchors: b.anchors.clone(),
+        }
+    });
+    let sb = sidebearings(font, layer);
+    Ok(LayerView {
+        glyph: g.name.clone(),
+        unicode: g.unicodes.first().map(|c| c.to_string()),
+        master_id: master_id.into(),
+        metrics: master.metrics,
+        width: layer.width,
+        lsb: sb.map(|s| s.0),
+        rsb: sb.map(|s| s.1),
+        paths,
+        components,
+        component_svg,
+        anchors: layer.anchors.clone(),
+        metrics_keys: layer.metrics_keys.clone(),
+        smart_axes: g.smart_axes.clone(),
+        issues: check_glyph(font, glyph),
+        color_layers: color_views(font, g, &layer.master_id),
+        palette: css_palette(font),
+        paint: layer.color.as_ref().map(|c| c.paint.clone()),
+        guides: layer.guides.clone(),
+        master_guides: master.guides.clone(),
+        background,
+        grid: font.info.grid,
+        status: status(doc),
+    })
+}
+
+/// Paths, components and resolved component SVG for a set of shapes, as the UI
+/// draws them. Shared by the foreground and the background layer.
+fn outline_views(
+    font: &Font,
+    master_id: &str,
+    location: Option<&BTreeMap<String, f64>>,
+    width: f64,
+    shapes: &[Shape],
+) -> (Vec<PathDto>, Vec<ComponentDto>, String) {
     let mut paths = Vec::new();
     let mut components = Vec::new();
-    let mut comp_only = Layer::new(&layer.master_id, layer.width);
-    for s in &layer.shapes {
+    let mut comp_only = Layer::new(master_id, width);
+    for s in shapes {
         match s {
             Shape::Path(p) => paths.push(PathDto {
                 closed: p.closed,
@@ -378,8 +456,8 @@ pub(crate) fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> Cmd
                 smart,
                 align,
             } => {
-                let mut single = Layer::new(&layer.master_id, layer.width);
-                single.location = layer.location.clone();
+                let mut single = Layer::new(master_id, width);
+                single.location = location.cloned();
                 single.shapes.push(s.clone());
                 components.push(ComponentDto {
                     base: base.clone(),
@@ -396,31 +474,11 @@ pub(crate) fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> Cmd
             }
         }
     }
-    let sb = sidebearings(font, layer);
-    Ok(LayerView {
-        glyph: g.name.clone(),
-        unicode: g.unicodes.first().map(|c| c.to_string()),
-        master_id: master_id.into(),
-        metrics: master.metrics,
-        width: layer.width,
-        lsb: sb.map(|s| s.0),
-        rsb: sb.map(|s| s.1),
-        paths,
-        components,
-        component_svg: svg_path(font, &comp_only),
-        anchors: layer.anchors.clone(),
-        metrics_keys: layer.metrics_keys.clone(),
-        smart_axes: g.smart_axes.clone(),
-        issues: check_glyph(font, glyph),
-        color_layers: color_views(font, g, &layer.master_id),
-        palette: css_palette(font),
-        paint: layer.color.as_ref().map(|c| c.paint.clone()),
-        status: status(doc),
-    })
+    (paths, components, svg_path(font, &comp_only))
 }
 
 /// Validates an edited path from the UI and converts it to the model.
-fn to_path(p: &PathDto) -> CmdResult<KPath> {
+pub(crate) fn to_path(p: &PathDto) -> CmdResult<KPath> {
     if p.nodes.iter().any(|n| !n.x.is_finite() || !n.y.is_finite()) {
         return Err("A point has an invalid coordinate.".into());
     }
@@ -469,7 +527,7 @@ fn to_path(p: &PathDto) -> CmdResult<KPath> {
 }
 
 /// Validates a component from the UI: the base must exist and must not lead back to `glyph`.
-fn to_component(font: &Font, glyph: &str, c: ComponentInput) -> CmdResult<Shape> {
+pub(crate) fn to_component(font: &Font, glyph: &str, c: ComponentInput) -> CmdResult<Shape> {
     if font.glyph(&c.base).is_none() {
         return Err(format!(
             "There is no glyph named \"{}\" to use as a component.",

@@ -59,7 +59,7 @@ fn compose(outer: &[f64; 6], inner: &[f64; 6]) -> [f64; 6] {
 }
 
 /// Calls `f` for every path in the layer, with components resolved and transformed.
-fn for_each_path(
+pub(crate) fn for_each_path(
     font: &Font,
     layer: &Layer,
     t: &[f64; 6],
@@ -93,7 +93,7 @@ fn for_each_path(
 }
 
 /// Splits a path into segments `(start, off-curve points, end)`, starting at an on-curve point.
-fn segments(p: &Path) -> Vec<(Node, Vec<Node>, Node)> {
+pub(crate) fn segments(p: &Path) -> Vec<(Node, Vec<Node>, Node)> {
     let n = p.nodes.len();
     let Some(start) = p.nodes.iter().position(Node::on_curve) else {
         return Vec::new();

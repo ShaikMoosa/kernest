@@ -236,11 +236,16 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .is-first { stroke-width: 2.5; }
 .marquee { fill: rgb(89 79 238 / 0.08); stroke: var(--k-editor-selection); stroke-width: 1; stroke-dasharray: 3 3; }
 .canvas-empty { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; display: flex; flex-direction: column; gap: var(--k-space-4); }
+.editor-bottom {
+  position: absolute; left: 50%; bottom: var(--k-space-16); transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: var(--k-space-8); max-width: calc(100% - 32px);
+}
 .info-box {
   position: absolute; left: 50%; bottom: var(--k-space-16); transform: translateX(-50%);
   display: flex; align-items: flex-end; gap: var(--k-space-8); padding: var(--k-space-8) var(--k-space-12);
   background: var(--k-bg-surface); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-lg); box-shadow: var(--k-shadow-l);
 }
+.info-box.in-stack { position: static; transform: none; }
 .info-title { display: flex; flex-direction: column; gap: 2px; min-width: 90px; margin-inline-end: var(--k-space-4); padding-bottom: 4px; }
 .info-field { display: flex; flex-direction: column; gap: 2px; }
 .metric-input {
@@ -419,13 +424,68 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 
 /* Right-to-left (Arabic): the interface mirrors, but drawing areas, glyph cells,
    numbers, glyph names and code stay left to right. */
-.canvas-wrap, .text-canvas, .glyph-cell, .metric-input, .k-code, .kern-table .side, .side-input, .dest-input, .add-glyphs-text, .component-label, .anchor-label, .anchor-name-input, .info-comp {
+.canvas-wrap, .text-canvas, .glyph-cell, .metric-input, .k-code, .kern-table .side, .side-input, .dest-input, .add-glyphs-text, .component-label, .anchor-label, .anchor-name-input, .info-comp, .guide-label, .measure-label {
   direction: ltr;
 }
 [dir="rtl"] .metric-input, [dir="rtl"] .side-input { text-align: end; }
 [dir="rtl"] .text-field { direction: rtl; text-align: start; }
 /* The info box and context menu are interface, not drawing: they mirror. */
 [dir="rtl"] .info-box, [dir="rtl"] .ctx-menu { direction: rtl; }
+
+/* ---------- Guides, background, measure & transform ---------- */
+.guide-line { stroke: var(--k-editor-guide); stroke-width: 1; }
+.guide.is-global .guide-line { stroke: var(--k-editor-guide-global); }
+.guide.is-selected .guide-line { stroke-width: 2; }
+.guide.is-snapped .guide-line { stroke-width: 2.5; }
+.guide-draft .guide-line { stroke-dasharray: 4 3; }
+.guide-handle { fill: var(--k-bg-surface); stroke: var(--k-editor-guide); stroke-width: 1.5; }
+.guide.is-global .guide-handle { stroke: var(--k-editor-guide-global); }
+.guide.is-locked .guide-handle { fill: var(--k-editor-guide); }
+.guide.is-global.is-locked .guide-handle { fill: var(--k-editor-guide-global); }
+.guide-label { font: 500 11px var(--k-font-ui); fill: var(--k-editor-guide); pointer-events: none; }
+.guide.is-global .guide-label { fill: var(--k-editor-guide-global); }
+.guide-lock { fill: none; stroke: var(--k-editor-guide); stroke-width: 2; }
+.guide.is-global .guide-lock { stroke: var(--k-editor-guide-global); }
+.background-fill {
+  fill: var(--k-editor-background-layer); fill-opacity: 0.16;
+  stroke: var(--k-editor-background-layer); stroke-opacity: 0.5; stroke-width: 1; vector-effect: non-scaling-stroke;
+}
+.background-anchor { fill: none; stroke: var(--k-editor-background-layer); stroke-width: 1.5; }
+.bg-banner {
+  position: absolute; top: var(--k-space-12); left: 50%; transform: translateX(-50%);
+  padding: 4px 10px; background: var(--k-bg-surface); border: 1px solid var(--k-editor-background-layer);
+  border-radius: var(--k-radius-md); font: 500 11px var(--k-font-ui); color: var(--k-text-primary); pointer-events: none;
+}
+.measure-line { stroke: var(--k-editor-measure); stroke-width: 1.5; }
+.measure-hit { fill: var(--k-bg-surface); stroke: var(--k-editor-measure); stroke-width: 1.5; }
+.measure-label {
+  font: 600 11px var(--k-font-code); fill: var(--k-editor-measure); pointer-events: none;
+  paint-order: stroke; stroke: var(--k-editor-canvas); stroke-width: 3px;
+}
+.bbox-line { fill: none; stroke: var(--k-editor-selection); stroke-width: 1; stroke-dasharray: 4 3; }
+.transform-panel {
+  background: var(--k-bg-surface); border: 1px solid var(--k-border-default);
+  border-radius: var(--k-radius-lg); box-shadow: var(--k-shadow-l);
+}
+.transform-head {
+  display: flex; align-items: center; gap: var(--k-space-6); width: 100%; padding: 6px var(--k-space-12);
+  border: 0; background: none; cursor: pointer; font: 600 11px var(--k-font-ui);
+  color: var(--k-text-muted); text-transform: uppercase; letter-spacing: 0.04em;
+}
+.transform-head:hover { color: var(--k-text-primary); }
+.transform-head svg { transition: transform 0.15s; }
+.transform-head[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.transform-body { display: flex; align-items: flex-end; gap: var(--k-space-8); padding: 0 var(--k-space-12) var(--k-space-8); flex-wrap: wrap; }
+.origin-picker {
+  display: grid; grid-template-columns: repeat(3, 14px); grid-template-rows: repeat(3, 14px); gap: 2px;
+  padding: 4px; border: 1px solid var(--k-border-strong); border-radius: var(--k-radius-md);
+}
+.origin-dot { width: 14px; height: 14px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; border-radius: 3px; }
+.origin-dot::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--k-border-strong); }
+.origin-dot:hover::after { background: var(--k-text-muted); }
+.origin-dot.is-active::after { background: var(--k-accent-default); }
+.transform-body .check-row { align-self: center; height: auto; }
+[dir="rtl"] .transform-panel { direction: rtl; }
 
 /* Colour fonts: palette swatches, the paint dialog and Font Info's palette table. */
 .swatches { display: inline-flex; flex-wrap: wrap; gap: var(--k-space-4); }

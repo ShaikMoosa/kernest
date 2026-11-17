@@ -425,6 +425,31 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
           </div>
         </section>
 
+        <section className="fi-section" aria-labelledby="fi-grid">
+          <div className="fi-head">
+            <h2 id="fi-grid" className="k-subtitle">{t("Grid")}</h2>
+            <span className="k-caption muted">{t("Snap points to a grid while drawing and dragging. Spacing 0 turns the grid off.")}</span>
+          </div>
+          <div className="fi-row">
+            <label className="info-field" title={t("Distance between grid lines, in font units")}>
+              <span className="k-caption muted">{t("Spacing")}</span>
+              <Field label={t("Spacing")} value={info.grid?.spacing ?? 0} onCommit={(v) => {
+                const n = num(v);
+                if (!Number.isInteger(n) || n < 0 || n > 65535) { onError(t("{name}: enter a whole number.", { name: t("Spacing") })); return false; }
+                return apply(() => backend.setGrid({ spacing: n, subdivision: info.grid?.subdivision || 1 }));
+              }} />
+            </label>
+            <label className="info-field" title={t("Snap steps between two grid lines")}>
+              <span className="k-caption muted">{t("Subdivision")}</span>
+              <Field label={t("Subdivision")} value={info.grid?.subdivision ?? 1} onCommit={(v) => {
+                const n = num(v);
+                if (!Number.isInteger(n) || n < 0 || n > 65535) { onError(t("{name}: enter a whole number.", { name: t("Subdivision") })); return false; }
+                return apply(() => backend.setGrid({ spacing: info.grid?.spacing ?? 0, subdivision: n }));
+              }} />
+            </label>
+          </div>
+        </section>
+
         <section className="fi-section" aria-labelledby="fi-palettes">
           <div className="fi-head">
             <h2 id="fi-palettes" className="k-subtitle">{t("Colour palettes")}</h2>

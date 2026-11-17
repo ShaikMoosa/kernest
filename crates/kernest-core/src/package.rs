@@ -30,10 +30,12 @@ use crate::model::{Axis, FeatureSettings, Font, FontInfo, Glyph, Instance, KernP
 /// Version 2 adds colour palettes and colour layers; version 3 adds the component
 /// align flag (older versions would silently re-align hand-placed components);
 /// version 4 adds the naming fields, instance classes/style links, notes and
-/// automatic-feature settings (older versions would drop them on save).
-/// Fonts using none of these are still written as version 1, colour-only as 2 and
-/// manual-component-only as 3, so older Kernest versions keep opening them.
-pub const FORMAT_VERSION: u32 = 4;
+/// automatic-feature settings; version 5 adds guides, the background layer and the
+/// snap grid (older versions would drop them on save).
+/// Fonts using none of these are still written as version 1, colour-only as 2,
+/// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
+/// keep opening them.
+pub const FORMAT_VERSION: u32 = 5;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -183,9 +185,18 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
         || !font.feature_settings.is_empty()
         || has_naming
         || has_instance_overrides;
+    let has_phase4 = font.info.grid.as_ref().is_some_and(|g| g.step().is_some())
+        || font.masters.iter().any(|m| !m.guides.is_empty())
+        || font.glyphs.iter().any(|g| {
+            g.layers.iter().any(|l| {
+                !l.guides.is_empty() || l.background.as_ref().is_some_and(|b| !b.is_empty())
+            })
+        });
     let file = FontFile {
-        format_version: if has_phase3 {
+        format_version: if has_phase4 {
             FORMAT_VERSION
+        } else if has_phase3 {
+            4
         } else if has_manual {
             3
         } else if has_color {
@@ -439,6 +450,61 @@ mod tests {
         save(&font, &path).unwrap();
         let fj = fs::read_to_string(path.join("font.json")).unwrap();
         assert!(fj.contains("\"formatVersion\": 4"), "{fj}");
+        assert_eq!(open(&path).unwrap(), font);
+    }
+
+    #[test]
+    fn phase4_fields_round_trip_and_gate_version() {
+        use crate::model::{Anchor, Background, Grid, Guide, Node, NodeKind, Path, Shape};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        // Without guides, background or grid the package stays at version 1.
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
+        assert!(!fj.contains("guides") && !fj.contains("grid"), "{fj}");
+        let hj = fs::read_to_string(path.join("glyphs/H_.json")).unwrap();
+        assert!(!hj.contains("guides") && !hj.contains("background"), "{hj}");
+
+        font.info.grid = Some(Grid {
+            spacing: 100,
+            subdivision: 2,
+        });
+        font.masters[0].guides.push(Guide {
+            x: 0.0,
+            y: 250.0,
+            angle: 0.0,
+            name: Some("bar".into()),
+            locked: false,
+        });
+        let layer = font.glyph_mut("H").unwrap().layer_mut("m01").unwrap();
+        layer.guides.push(Guide {
+            x: 412.0,
+            y: 0.0,
+            angle: 90.0,
+            name: None,
+            locked: true,
+        });
+        layer.background = Some(Background {
+            shapes: vec![Shape::Path(Path {
+                closed: true,
+                nodes: vec![
+                    Node::new(80.0, 0.0, NodeKind::Line),
+                    Node::new(170.0, 0.0, NodeKind::Line),
+                    Node::new(170.0, 700.0, NodeKind::Line),
+                    Node::new(80.0, 700.0, NodeKind::Line),
+                ],
+            })],
+            anchors: vec![Anchor {
+                name: "top".into(),
+                x: 125.0,
+                y: 700.0,
+            }],
+        });
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 5"), "{fj}");
         assert_eq!(open(&path).unwrap(), font);
     }
 

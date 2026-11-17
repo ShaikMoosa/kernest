@@ -357,6 +357,7 @@ fn build(
         trademark: fi.trademark.clone(),
         sample_text: fi.open_type_name_sample_text.clone(),
         hinting: None,
+        grid: None,
     };
 
     // Masters, with the default one first so it is the reference for empty layers.
@@ -371,6 +372,7 @@ fn build(
             name: sources[i].0.clone(),
             location: sources[i].1.clone(),
             metrics: metrics(&sources[i].2.font_info),
+            guides: Vec::new(),
         })
         .collect();
 

@@ -5,6 +5,7 @@ Kernest is a font editor for Windows. It works offline, and your fonts are plain
 - [Fonts and files](#fonts-and-files)
 - [Font View](#font-view)
 - [Edit View](#edit-view)
+- [Guides and background](#guides-and-background)
 - [Spacing and kerning](#spacing-and-kerning)
 - [Masters, axes and instances](#masters-axes-and-instances)
 - [Export](#export)
@@ -59,6 +60,7 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
 | Pen | P | Click to add corner points, drag to add curve points. Click the first point to close the path. |
 | Rectangle | F | Drag to draw a rectangle. |
 | Ellipse | E | Drag to draw an ellipse. |
+| Measure | L | Drag a line across the outline to measure distances and angles. |
 | Hand | H or hold Space | Drag to move around the canvas. |
 
 - **Moving points:**
@@ -106,6 +108,50 @@ A smart glyph is a component that stretches: each glyph that uses it sets its ow
 3. Use the glyph as a component (**Add Component**). With the component selected, its axis values appear next to X and Y; type a value to reshape it.
 
 Poles must match the master layer point for point. On export, smart components become ordinary outlines. Smart components in Glyphs files import as smart components.
+
+## Guides and background
+
+### Guides
+
+A guide is a straight reference line to align stems, serifs or whole glyphs against. A guide belongs either to the layer you're editing or to the master: a **global** guide is drawn in every glyph of that master, so one baseline or cap-height guide serves the whole font. Global guides are drawn in a different colour from local ones.
+
+- **Add:** right-click the canvas and choose **Add Horizontal Guide** or **Add Vertical Guide**, or drag from the strip at the left or top edge of the canvas into the glyph. Dropping back on the strip cancels.
+- **Move:** drag a guide to slide it. While you drag a node near a guide, the node snaps onto it.
+- **Edit:** double-click a guide to open its panel: position (X, Y), angle, a name, and a lock. A locked guide can't be dragged until you unlock it.
+- **Make global / Make local** in the panel moves the guide between the layer and the master, keeping its position, angle, name and lock.
+- **Delete** removes the selected guide.
+- **Show or hide:** View › Show Guides (Ctrl+Shift+L).
+
+Guides are saved in the `.kernest` file, undo with Ctrl+Z, and are never exported into the font.
+
+### Background
+
+Each layer can hold a background drawing, shown tinted behind the outline. Use it to trace a sketch or keep an earlier version of the glyph while you rework the outline.
+
+- **Edit › Selection to Background** (Ctrl+J) moves the selected paths out of the outline and into the background, replacing what was there. **Add to Background** (Ctrl+Shift+J) also moves them, but keeps the existing background and adds to it. With nothing selected, the whole layer is used.
+- **Swap with Background** exchanges the outline and the background; **Clear Background** removes the background.
+- **Edit Background** (Ctrl+B) lets you draw on the background directly: the pen, rectangle and ellipse tools edit the background while the outline stays untouched. Press Ctrl+B again to return to the outline. The sidebearing fields are paused while you edit the background.
+- **Show or hide:** View › Show Background (Ctrl+Shift+B).
+
+The background is saved in the `.kernest` file and never exported into the font.
+
+### Transform panel
+
+The **Transform** panel in the glyph editor scales, rotates, skews and mirrors the selected paths and components — or the whole layer when nothing is selected.
+
+- **Scale X %** and **Scale Y %** resize; **Rotate °** turns counter-clockwise; **Skew X °** and **Skew Y °** slant; the two mirror buttons flip left-to-right or top-to-bottom.
+- The nine-point picker chooses the origin the transform works around: a corner, an edge midpoint or the centre of the selection's bounding box.
+- **All masters** applies the same transform to this layer in every master, so the glyph stays compatible.
+- **Apply** performs the transform as one step that Ctrl+Z undoes.
+
+### Measuring
+
+With the **Measure** tool (L), drag a line across the outline. Kernest marks where the line crosses the outline and shows the distance between each pair of crossings, plus the line's angle — handy for checking stem widths and diagonals. Esc clears the measurement. While editing the background, the measure tool measures the background instead.
+
+### Grid and view toggles
+
+- **Grid:** Font Info › General › Grid has **Spacing** and **Subdivision**. Points snap to a grid of Spacing ÷ Subdivision units while drawing and dragging. Spacing 0 turns the grid off.
+- **View menu:** Show Nodes, Show Anchors, Show Guides, Show Background and Show Bounding Box (the rectangle around the outline) each switch their drawing on or off. Kernest remembers these choices between sessions.
 
 ## Anchors and composites
 
@@ -235,6 +281,10 @@ Kernest brings over the axes, masters, outlines, components, anchors, kerning, i
 | Show Anchors | Ctrl+Shift+A |
 | Correct Path Direction | Ctrl+Shift+R |
 | Show Metrics | Ctrl+Shift+M |
+| Show Guides / Show Background | Ctrl+Shift+L / Ctrl+Shift+B |
+| Show Bounding Box | Ctrl+Alt+Shift+B |
+| Edit Background | Ctrl+B |
+| Selection to Background / Add to Background | Ctrl+J / Ctrl+Shift+J |
 | New Text Tab / Kerning | Ctrl+T / Ctrl+Shift+K |
 | Font Info / Export | Ctrl+I / Ctrl+E |
 | Handbook | F1 |

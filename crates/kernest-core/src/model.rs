@@ -91,6 +91,28 @@ pub struct FontInfo {
     /// TrueType autohinting settings; `None` means the defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hinting: Option<Hinting>,
+    /// Snap grid for the edit view; `None` (or spacing 0) means no grid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid: Option<Grid>,
+}
+
+/// A snap grid in font units: nodes snap to `spacing / subdivision` steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Grid {
+    pub spacing: u16,
+    pub subdivision: u16,
+}
+
+impl Grid {
+    /// The snap step, or `None` when the grid is off.
+    pub fn step(&self) -> Option<f64> {
+        if self.spacing == 0 || self.subdivision == 0 {
+            None
+        } else {
+            Some(self.spacing as f64 / self.subdivision as f64)
+        }
+    }
 }
 
 /// Settings for TrueType autohinting on export: the ttfautohint options that matter
@@ -143,6 +165,9 @@ pub struct Master {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub location: BTreeMap<String, f64>,
     pub metrics: Metrics,
+    /// Global guides: drawn in every glyph of this master.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guides: Vec<Guide>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -305,6 +330,43 @@ pub struct Layer {
     pub anchors: Vec<Anchor>,
     #[serde(default, skip_serializing_if = "MetricsKeys::is_empty")]
     pub metrics_keys: MetricsKeys,
+    /// Local guides: drawn only in this layer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guides: Vec<Guide>,
+    /// A reference drawing behind the outline (a previous version or a scan).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<Background>,
+}
+
+/// A straight guide line through `(x, y)` at `angle` degrees from horizontal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Guide {
+    pub x: f64,
+    pub y: f64,
+    #[serde(default)]
+    pub angle: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
+}
+
+/// The reference drawing behind a layer's outline: shapes and anchors kept aside so
+/// the designer can trace over them without them exporting.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Background {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shapes: Vec<Shape>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<Anchor>,
+}
+
+impl Background {
+    pub fn is_empty(&self) -> bool {
+        self.shapes.is_empty() && self.anchors.is_empty()
+    }
 }
 
 impl Layer {
@@ -320,6 +382,8 @@ impl Layer {
             shapes: Vec::new(),
             anchors: Vec::new(),
             metrics_keys: MetricsKeys::default(),
+            guides: Vec::new(),
+            background: None,
         }
     }
 
@@ -661,6 +725,7 @@ impl Font {
             name: "Regular".into(),
             location: BTreeMap::new(),
             metrics: Metrics::default(),
+            guides: Vec::new(),
         };
         let glyphs = codepoints
             .into_iter()
@@ -689,6 +754,7 @@ impl Font {
                 trademark: None,
                 sample_text: None,
                 hinting: None,
+                grid: None,
             },
             axes: Vec::new(),
             masters: vec![master],

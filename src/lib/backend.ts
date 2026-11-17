@@ -107,6 +107,57 @@ export interface ComponentView extends ComponentEdit {
   smartAxes?: SmartAxis[];
 }
 
+/** A guide line through (x, y), at `angle` degrees from horizontal. */
+export interface Guide {
+  x: number;
+  y: number;
+  angle: number;
+  name?: string;
+  locked?: boolean;
+}
+
+/** The edit view's snap grid; a spacing or subdivision of 0 turns it off. */
+export interface Grid {
+  spacing: number;
+  subdivision: number;
+}
+
+/** The reference drawing behind the outline, shaped like the foreground. */
+export interface BackgroundView {
+  paths: EditPath[];
+  components: ComponentView[];
+  componentSvg: string;
+  anchors: { name: string; x: number; y: number }[];
+}
+
+/** Which parts of a layer an edit touches; all empty means the whole layer. */
+export interface Selection {
+  /** [path index, node index] pairs. */
+  nodes: [number, number][];
+  components: number[];
+  anchors: string[];
+}
+
+export const EMPTY_SELECTION: Selection = { nodes: [], components: [], anchors: [] };
+
+export type BackgroundEdit = "toBackground" | "addToBackground" | "swap" | "clear";
+
+/** One crossing of the measure line with the outline; t is 0–1 along the line. */
+export interface MeasureHit {
+  x: number;
+  y: number;
+  t: number;
+}
+
+export interface Measurement {
+  hits: MeasureHit[];
+  /** Gaps between consecutive crossings, in font units. */
+  distances: number[];
+  /** The line's angle in degrees, and its length in font units. */
+  angle: number;
+  length: number;
+}
+
 export interface LayerView {
   glyph: string;
   unicode: string | null;
@@ -131,6 +182,14 @@ export interface LayerView {
   palette?: string[];
   /** This layer's paint, when it is a colour layer. */
   paint?: Paint;
+  /** Local guides of this layer. */
+  guides: Guide[];
+  /** Global guides of this layer's master, drawn in every glyph. */
+  masterGuides: Guide[];
+  /** The reference drawing behind the outline, if any. */
+  background?: BackgroundView;
+  /** The font's snap grid, if set. */
+  grid?: Grid;
   status: DocStatus;
 }
 
@@ -237,6 +296,8 @@ export interface FontInfo {
   instances: Instance[];
   /** TrueType autohinting settings. */
   hinting: Hinting;
+  /** The edit view's snap grid, if set. */
+  grid: Grid | null;
   /** Colour palettes (CSS colours #rrggbbaa); every palette has the same length. */
   palettes: string[][];
   defaultMasterId: string;
@@ -430,6 +491,22 @@ export interface Backend {
   setAxes(axes: Axis[]): Promise<FontInfo>;
   /** Sets the TrueType autohinting settings. */
   setHinting(hinting: Hinting): Promise<FontInfo>;
+  /** Sets (or clears, with null) the edit view's snap grid. */
+  setGrid(grid: Grid | null): Promise<FontInfo>;
+  /** Replaces a master's global guides, drawn in every glyph of that master. */
+  setMasterGuides(masterId: string, guides: Guide[]): Promise<FontInfo>;
+  /** Replaces a layer's local guides. */
+  setGuides(glyph: string, masterId: string, guides: Guide[]): Promise<LayerView>;
+  /** Moves guide `index` between the layer's local list and the master's global list. */
+  setGuideScope(glyph: string, masterId: string, index: number, toGlobal: boolean): Promise<LayerView>;
+  /** Applies affine [xx, xy, yx, yy, dx, dy] around `origin` to the selection (empty = whole layer). */
+  transform(glyph: string, masterId: string, selection: Selection, affine: number[], origin: [number, number], allMasters: boolean, onBackground?: boolean): Promise<LayerView>;
+  /** Moves the selection to / adds it to / swaps it with / clears the background. */
+  backgroundEdit(glyph: string, masterId: string, edit: BackgroundEdit, selection: Selection): Promise<LayerView>;
+  /** Replaces the background's outlines and anchors (drawing in background edit mode). */
+  updateBackground(glyph: string, masterId: string, paths: EditPath[], components: ComponentEdit[], anchors: { name: string; x: number; y: number }[]): Promise<LayerView>;
+  /** Where the segment p0–p1 crosses the outline, and the gaps between crossings. */
+  measure(glyph: string, masterId: string, p0: [number, number], p1: [number, number], onBackground?: boolean): Promise<Measurement>;
   /** Sets the colour palettes (#rrggbb or #rrggbbaa). */
   setPalettes(palettes: string[][]): Promise<FontInfo>;
   /** Adds a colour layer on top of the glyph's others, in every master. */
@@ -526,6 +603,15 @@ const tauriBackend: Backend = {
   setAutomaticFeatures: (automatic) => invoke("set_automatic_features", { automatic }),
   shapeText: (text, masterId, location, features) => invoke("shape_text", { text, masterId, location: location ?? null, features: features ?? [] }),
   setHinting: (hinting) => invoke("set_hinting", { hinting }),
+  setGrid: (grid) => invoke("set_grid", { grid }),
+  setMasterGuides: (masterId, guides) => invoke("set_master_guides", { masterId, guides }),
+  setGuides: (glyph, masterId, guides) => invoke("set_guides", { glyph, masterId, guides }),
+  setGuideScope: (glyph, masterId, index, toGlobal) => invoke("set_guide_scope", { glyph, masterId, index, toGlobal }),
+  transform: (glyph, masterId, selection, affine, origin, allMasters, onBackground) =>
+    invoke("transform", { glyph, masterId, selection, affine, origin, allMasters, onBackground: onBackground ?? false }),
+  backgroundEdit: (glyph, masterId, edit, selection) => invoke("background_edit", { glyph, masterId, edit, selection }),
+  updateBackground: (glyph, masterId, paths, components, anchors) => invoke("update_background", { glyph, masterId, paths, components, anchors }),
+  measure: (glyph, masterId, p0, p1, onBackground) => invoke("measure", { glyph, masterId, p0, p1, onBackground: onBackground ?? false }),
   setPalettes: (palettes) => invoke("set_palettes", { palettes }),
   addColorLayer: (glyph, masterId) => invoke("add_color_layer", { glyph, masterId }),
   setColorPaint: (glyph, key, paint) => invoke("set_color_paint", { glyph, key, paint }),
@@ -627,6 +713,7 @@ interface MockMeta {
   masters: MasterView[];
   instances: Instance[];
   hinting?: Hinting;
+  grid?: Grid | null;
 }
 
 interface MockDoc extends MockMeta {
@@ -709,7 +796,7 @@ function mockLayer(d: MockDoc, g: MockGlyph): LayerView {
   const components = g.components.map((c) => ({ base: c.base, transform: [...c.transform], align: true, svg: pathsToSvg(resolveComponent(d, c)) }));
   return {
     glyph: g.name, unicode: g.unicode, masterId: "m01", metrics: METRICS, width: g.width, ...sb(d, g),
-    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], metricsKeys: {}, issues: [], status: status(d),
+    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], metricsKeys: {}, issues: [], guides: [], masterGuides: [], status: status(d),
   };
 }
 
@@ -805,7 +892,7 @@ function undoStep(d: MockDoc, c: MockChange, forward: boolean): UndoResult {
 
 const metaCopy = (m: MockMeta): MockMeta => JSON.parse(JSON.stringify({
   familyName: m.familyName, unitsPerEm: m.unitsPerEm, versionMajor: m.versionMajor, versionMinor: m.versionMinor,
-  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, hinting: m.hinting,
+  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, hinting: m.hinting, grid: m.grid,
 }));
 
 function mockInfo(d: MockDoc): FontInfo {
@@ -814,7 +901,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, palettes: [], defaultMasterId: def.id, warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, grid: d.grid ?? null, palettes: [], defaultMasterId: def.id, warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -904,6 +991,32 @@ const mockBackend: Backend = {
     if (h.rangeMin > h.rangeMax) throw "The smallest hinted size can't be larger than the largest.";
     if (h.increaseXHeight !== 0 && !(ok(h.increaseXHeight) && h.increaseXHeight >= 6)) throw "Increase x-height must be 0 (off) or between 6 and 1000.";
     return editMeta(need(), (m) => { m.hinting = { ...h }; });
+  },
+  async setGrid(grid) {
+    const whole = (v: number) => Number.isInteger(v) && v >= 0 && v <= 65535;
+    if (grid && (!whole(grid.spacing) || !whole(grid.subdivision))) throw "Grid spacing and subdivision must be whole numbers.";
+    return editMeta(need(), (m) => { m.grid = grid && grid.spacing > 0 && grid.subdivision > 0 ? { ...grid } : null; });
+  },
+  async setMasterGuides() {
+    throw "Guides need the desktop app (npm run tauri dev).";
+  },
+  async setGuides() {
+    throw "Guides need the desktop app (npm run tauri dev).";
+  },
+  async setGuideScope() {
+    throw "Guides need the desktop app (npm run tauri dev).";
+  },
+  async transform() {
+    throw "Transforms need the desktop app (npm run tauri dev).";
+  },
+  async backgroundEdit() {
+    throw "The background layer needs the desktop app (npm run tauri dev).";
+  },
+  async updateBackground() {
+    throw "The background layer needs the desktop app (npm run tauri dev).";
+  },
+  async measure() {
+    throw "Measuring needs the desktop app (npm run tauri dev).";
   },
   async setAxes(axes) {
     const tags = new Set<string>();

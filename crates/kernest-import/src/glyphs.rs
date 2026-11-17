@@ -73,6 +73,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                 // Glyphs and Kernest both store the slant, positive leaning right.
                 italic_angle: m.italic_angle().unwrap_or(0.0),
             },
+            guides: Vec::new(),
         })
         .collect();
 
@@ -99,6 +100,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         trademark: g.get_default_name("trademarks").map(String::from),
         sample_text: g.get_default_name("sampleTexts").map(String::from),
         hinting: None,
+        grid: None,
     };
 
     // Glyphs in the file's order, then any the order doesn't mention.

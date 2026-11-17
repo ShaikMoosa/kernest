@@ -53,6 +53,8 @@
   --k-editor-handle: #64748b;
   --k-editor-anchor: #f59e09;
   --k-editor-guide: #7072ff;
+  --k-editor-guide-global: #e5484d;
+  --k-editor-measure: #30a46c;
   --k-editor-background-layer: #ff9087;
   --k-editor-selection: #594fee;
   --k-scrim: rgb(2 6 23 / 0.35);
@@ -135,6 +137,8 @@
     --k-editor-handle: #8a98ad;
     --k-editor-anchor: #f5a524;
     --k-editor-guide: #9496ff;
+    --k-editor-guide-global: #ff6369;
+    --k-editor-measure: #3dd68c;
     --k-editor-background-layer: #ff9087;
     --k-editor-selection: #8a83ff;
     --k-scrim: rgb(0 0 0 / 0.6);
@@ -187,6 +191,8 @@
   --k-editor-handle: #8a98ad;
   --k-editor-anchor: #f5a524;
   --k-editor-guide: #9496ff;
+  --k-editor-guide-global: #ff6369;
+  --k-editor-measure: #3dd68c;
   --k-editor-background-layer: #ff9087;
   --k-editor-selection: #8a83ff;
   --k-scrim: rgb(0 0 0 / 0.6);

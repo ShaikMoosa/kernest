@@ -11,6 +11,7 @@ mod import;
 mod launch;
 mod layers;
 mod spacing;
+mod tools;
 
 fn main() {
     let launch_paths = launch::paths_from_args(std::env::args());
@@ -46,6 +47,8 @@ fn main() {
             fontinfo::font_info,
             fontinfo::set_font_info,
             fontinfo::set_hinting,
+            fontinfo::set_grid,
+            fontinfo::set_master_guides,
             fontinfo::set_palettes,
             fontinfo::set_axes,
             fontinfo::add_master,
@@ -85,6 +88,12 @@ fn main() {
             anchors::set_default_anchors,
             anchors::set_component_align,
             anchors::create_composites,
+            tools::set_guides,
+            tools::set_guide_scope,
+            tools::transform,
+            tools::background_edit,
+            tools::update_background,
+            tools::measure,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kernest");

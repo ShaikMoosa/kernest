@@ -8,6 +8,7 @@
 //!   so fonts diff and merge cleanly in Git.
 
 pub mod anchors;
+pub mod background;
 pub mod color;
 pub mod decompose;
 pub mod designspace;
@@ -20,6 +21,7 @@ pub mod glyphset;
 pub mod interpolate;
 pub mod kerning;
 pub mod layers;
+pub mod measure;
 pub mod metricskeys;
 pub mod model;
 pub mod overlap;
@@ -29,6 +31,7 @@ pub mod sample;
 pub mod smart;
 pub mod structure;
 pub mod text;
+pub mod transform;
 
 pub use error::{Error, Result};
 pub use geometry::Rect;

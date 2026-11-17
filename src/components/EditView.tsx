@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, type Axis, type ComponentEdit, type ComponentView, type DocStatus, type LayerInfo, type LayerView, type MetricName, type Paint } from "../lib/backend";
+import { backend, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type Guide, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type Selection } from "../lib/backend";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
 import {
@@ -11,24 +11,30 @@ import { t, tn, translateMessage } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
 import { PaintDialog } from "./PaintDialog";
 
-type Tool = "select" | "pen" | "rect" | "ellipse" | "hand";
+type Tool = "select" | "pen" | "rect" | "ellipse" | "hand" | "measure";
 interface Pt { x: number; y: number }
 interface View { s: number; ox: number; oy: number }
 /** A component as drawn: the server's outline plus a live offset while dragging. */
 interface Comp extends ComponentView { dx: number; dy: number }
+type GuideScope = "local" | "global";
+interface GuideRef { scope: GuideScope; index: number }
 
 const TOOLS: { id: Tool; key: string; label: string; icon: React.ReactNode }[] = [
   { id: "select", key: "v", label: "Select (V)", icon: <path d="M6 3l12 9-6 1-3 6z" /> },
   { id: "pen", key: "p", label: "Pen (P)", icon: <><path d="M12 3l6 10-6 8-6-8z" /><circle cx="12" cy="12" r="1.6" /></> },
   { id: "rect", key: "f", label: "Rectangle (F)", icon: <rect x="5" y="6" width="14" height="12" rx="1" /> },
   { id: "ellipse", key: "e", label: "Ellipse (E)", icon: <ellipse cx="12" cy="12" rx="7.5" ry="6.5" /> },
+  { id: "measure", key: "l", label: "Measure (L)", icon: <><path d="M4 20L20 4" /><path d="M4 15v5h5" /><path d="M20 9V4h-5" /></> },
   { id: "hand", key: "h", label: "Hand (H) · or hold Space", icon: <path d="M8 12V6.5a1.5 1.5 0 0 1 3 0V11V5a1.5 1.5 0 0 1 3 0v6V6.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-1a6 6 0 0 1-4.6-2.2L4 15a1.5 1.5 0 0 1 2.2-2z" /> },
 ];
 
 const HIT = 7; // px
+const EDGE = 10; // px strip at the canvas border: dragging from it pulls out a new guide
+const SNAP = 6; // px: a dragged node this close to a guide lands on it
 
 /** Commands sent from the app menus to the active Edit View. */
-export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes" | "remove-overlap";
+export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes" | "remove-overlap"
+  | "edit-background" | "to-background" | "add-to-background" | "swap-background" | "clear-background";
 export const sendEditCommand = (name: EditCommand) => window.dispatchEvent(new CustomEvent("kernest:edit", { detail: name }));
 
 // Clipboard shared by all Edit View tabs; also mirrored to the system clipboard as JSON.
@@ -59,8 +65,8 @@ const toEdit = (c: Comp): ComponentEdit => {
 };
 const fromView = (cs: ComponentView[]): Comp[] => cs.map((c) => ({ ...c, dx: 0, dy: 0 }));
 
-function MetricField({ label, value, disabled, onCommit, metricKey, onKey, onInvalid }: { label: string; value: number | null; disabled?: boolean; onCommit: (v: number) => void; metricKey?: string; onKey?: (key: string | null) => void; onInvalid?: (message: string) => void }) {
-  const shown = value === null ? "" : String(Math.round(value));
+function MetricField({ label, value, disabled, onCommit, metricKey, onKey, onInvalid, decimals }: { label: string; value: number | null; disabled?: boolean; onCommit: (v: number) => void; metricKey?: string; onKey?: (key: string | null) => void; onInvalid?: (message: string) => void; decimals?: boolean }) {
+  const shown = value === null ? "" : decimals ? String(Math.round(value * 10) / 10) : String(Math.round(value));
   const [text, setText] = useState(shown);
   useEffect(() => setText(shown), [shown]);
   const commit = (raw: string) => {
@@ -168,6 +174,14 @@ interface Props {
   showMetrics?: boolean;
   /** View › Show Anchors: anchor diamonds and their names. */
   showAnchors?: boolean;
+  /** View › Show Nodes: points and their handles. */
+  showNodes?: boolean;
+  /** View › Show Guides: local and global guides. */
+  showGuides?: boolean;
+  /** View › Show Background: the background drawing behind the outline. */
+  showBackground?: boolean;
+  /** View › Show Bounding Box: a dashed box around the drawing. */
+  showBoundingBox?: boolean;
   /** The current master's id; `masterId` differs when a brace or bracket layer is open. */
   masterKey?: string;
   /** Switches this tab to another layer (a layer key). */
@@ -175,7 +189,7 @@ interface Props {
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, showMetrics = true, showAnchors = true, masterKey, onPickLayer }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showBoundingBox = false, masterKey, onPickLayer }: Props) {
   const master = masterKey ?? masterId;
   // ---------- Layers (master, brace, bracket) ----------
   const [layerList, setLayerList] = useState<LayerInfo[]>([]);
@@ -288,16 +302,27 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [preview, setPreview] = useState<EditPath | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [localGuides, setLocalGuides] = useState<Guide[]>([]);
+  const [globalGuides, setGlobalGuides] = useState<Guide[]>([]);
+  const [guideSel, setGuideSel] = useState<GuideRef | null>(null);
+  const [guideDraft, setGuideDraft] = useState<Guide | null>(null);
+  const [snapGuide, setSnapGuide] = useState<GuideRef | null>(null);
+  const [editingBackground, setEditingBackground] = useState(false);
+  const [measureLine, setMeasureLine] = useState<{ p0: Pt; p1: Pt } | null>(null);
+  const [measurement, setMeasurement] = useState<Measurement | null>(null);
+  const [transformOpen, setTransformOpen] = useState(false);
+  const [tf, setTf] = useState({ sx: 100, sy: 100, rot: 0, kx: 0, ky: 0, mh: false, mv: false, origin: 4, allMasters: false });
   const [, rerender] = useState(0);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const fitted = useRef(false);
-  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; baseAnchors: LayerView["anchors"]; moved: boolean; additive?: boolean; pi?: number; ni?: number; startView?: View; lastPaths?: EditPath[]; lastComps?: Comp[]; lastAnchors?: LayerView["anchors"] }>(null);
+  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; baseAnchors: LayerView["anchors"]; moved: boolean; additive?: boolean; pi?: number; ni?: number; startView?: View; lastPaths?: EditPath[]; lastComps?: Comp[]; lastAnchors?: LayerView["anchors"]; scope?: GuideScope; gi?: number; angle?: number; baseLocal?: Guide[]; baseGlobal?: Guide[]; lastGuide?: Guide }>(null);
   const pen = useRef<{ path: number | null; pendingOut: Pt | null }>({ path: null, pendingOut: null });
   const chain = useRef(Promise.resolve());
-  const latest = useRef({ layer, paths, comps, anchors, selection, compSel, anchorSel, view });
-  latest.current = { layer, paths, comps, anchors, selection, compSel, anchorSel, view };
+  const measureSeq = useRef(0);
+  const latest = useRef({ layer, paths, comps, anchors, selection, compSel, anchorSel, view, editingBackground, localGuides, globalGuides, guideSel });
+  latest.current = { layer, paths, comps, anchors, selection, compSel, anchorSel, view, editingBackground, localGuides, globalGuides, guideSel };
 
   // ---------- Loading & committing ----------
 
@@ -306,12 +331,23 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     backend.glyphLayer(glyph, masterId).then((l) => {
       if (cancelled) return;
       setLayer(l);
-      setPaths(l.paths);
-      setComps(fromView(l.components));
-      setAnchors(l.anchors);
-      setSelection((sel) => new Set([...sel].filter((k) => { const [pi, ni] = parseKey(k); return !!l.paths[pi]?.nodes[ni]; })));
-      setCompSel((sel) => new Set([...sel].filter((i) => i < l.components.length)));
-      setAnchorSel((sel) => new Set([...sel].filter((n) => l.anchors.some((a) => a.name === n))));
+      // While editing the background, the drawing state holds the background's content.
+      const bg = latest.current.editingBackground;
+      const act = bg ? l.background?.paths ?? [] : l.paths;
+      const actComps = bg ? l.background?.components ?? [] : l.components;
+      setPaths(act);
+      setComps(fromView(actComps));
+      setAnchors(bg ? [] : l.anchors);
+      setLocalGuides(l.guides);
+      setGlobalGuides(l.masterGuides);
+      setSelection((sel) => new Set([...sel].filter((k) => { const [pi, ni] = parseKey(k); return !!act[pi]?.nodes[ni]; })));
+      setCompSel((sel) => new Set([...sel].filter((i) => i < actComps.length)));
+      setAnchorSel((sel) => new Set(bg ? [] : [...sel].filter((n) => l.anchors.some((a) => a.name === n))));
+      setGuideSel((sel) => {
+        if (!sel) return null;
+        const list = sel.scope === "local" ? l.guides : l.masterGuides;
+        return sel.index < list.length ? sel : null;
+      });
     }, (e) => {
       if (cancelled) return;
       // A brace or bracket layer that no longer exists (undo, removed elsewhere): go back
@@ -322,12 +358,15 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     return () => { cancelled = true; };
   }, [glyph, masterId, version, onError, master, onPickLayer]);
 
-  const accept = useCallback((l: LayerView) => {
+  const accept = useCallback((l: LayerView, bgOverride?: boolean) => {
     setLayer(l);
-    setPaths(l.paths);
-    setComps(fromView(l.components));
-    setAnchors(l.anchors);
-    setAnchorSel((sel) => new Set([...sel].filter((n) => l.anchors.some((a) => a.name === n))));
+    const bg = bgOverride ?? latest.current.editingBackground;
+    setPaths(bg ? l.background?.paths ?? [] : l.paths);
+    setComps(fromView(bg ? l.background?.components ?? [] : l.components));
+    setAnchors(bg ? [] : l.anchors);
+    setLocalGuides(l.guides);
+    setGlobalGuides(l.masterGuides);
+    setAnchorSel((sel) => new Set(bg ? [] : [...sel].filter((n) => l.anchors.some((a) => a.name === n))));
     onCommitted(l.status);
   }, [onCommitted]);
 
@@ -418,12 +457,15 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     chain.current = chain.current.then(async () => {
       const l = latest.current.layer;
       if (!l) return;
+      const bg = latest.current.editingBackground;
       const cs = (nextComps ?? latest.current.comps).map(toEdit);
       try {
-        accept(await backend.updateLayer(glyph, masterId, width ?? l.width, next, cs));
+        accept(bg
+          ? await backend.updateBackground(glyph, masterId, next, cs, l.background?.anchors ?? [])
+          : await backend.updateLayer(glyph, masterId, width ?? l.width, next, cs));
       } catch (e) {
-        setPaths(l.paths);
-        setComps(fromView(l.components));
+        setPaths(bg ? l.background?.paths ?? [] : l.paths);
+        setComps(fromView(bg ? l.background?.components ?? [] : l.components));
         onError(e);
       }
     });
@@ -452,6 +494,139 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       }
     });
   }, [glyph, masterId, accept, onError]);
+
+  // ---------- Guides ----------
+
+  /** Saves a guide list as one undoable step; global guides reach every glyph of the master. */
+  const saveGuides = useCallback((scope: GuideScope, guides: Guide[]) => {
+    chain.current = chain.current.then(async () => {
+      try {
+        if (scope === "local") accept(await backend.setGuides(glyph, masterId, guides));
+        else {
+          const info = await backend.setMasterGuides(master, guides);
+          onCommitted(info.status);
+          const l = await backend.glyphLayer(glyph, masterId);
+          setLayer(l);
+          setLocalGuides(l.guides);
+          setGlobalGuides(l.masterGuides);
+        }
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, master, accept, onCommitted, onError]);
+
+  const updateGuide = useCallback((ref: GuideRef, patch: Partial<Guide>) => {
+    const list = ref.scope === "local" ? latest.current.localGuides : latest.current.globalGuides;
+    saveGuides(ref.scope, list.map((g, i) => (i === ref.index ? { ...g, ...patch } : g)));
+  }, [saveGuides]);
+
+  const deleteGuide = useCallback((ref: GuideRef) => {
+    const list = ref.scope === "local" ? latest.current.localGuides : latest.current.globalGuides;
+    saveGuides(ref.scope, list.filter((_, i) => i !== ref.index));
+    setGuideSel(null);
+  }, [saveGuides]);
+
+  const addGuideAt = useCallback((x: number, y: number, angle: number) => {
+    const list = latest.current.localGuides;
+    saveGuides("local", [...list, { x, y, angle, locked: false }]);
+    setGuideSel({ scope: "local", index: list.length });
+  }, [saveGuides]);
+
+  /** Moves the selected guide between the layer and the master as one undoable step. */
+  const switchGuideScope = useCallback((ref: GuideRef) => {
+    const toGlobal = ref.scope === "local";
+    chain.current = chain.current.then(async () => {
+      try {
+        const l = await backend.setGuideScope(glyph, masterId, ref.index, toGlobal);
+        accept(l);
+        setGuideSel({ scope: toGlobal ? "global" : "local", index: (toGlobal ? l.masterGuides : l.guides).length - 1 });
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, accept, onError]);
+
+  // ---------- Background ----------
+
+  /** Ctrl+B: the background becomes the drawing; the outline shows as a tint behind it. */
+  const toggleBackground = useCallback(() => {
+    const l = latest.current.layer;
+    if (!l) return;
+    const next = !latest.current.editingBackground;
+    setEditingBackground(next);
+    setPaths(next ? l.background?.paths ?? [] : l.paths);
+    setComps(fromView(next ? l.background?.components ?? [] : l.components));
+    setAnchors(next ? [] : l.anchors);
+    setSelection(new Set());
+    setCompSel(new Set());
+    setAnchorSel(new Set());
+    pen.current = { path: null, pendingOut: null };
+  }, []);
+
+  /** The current selection for transform and background commands; empty means the whole layer. */
+  const currentSelection = useCallback((): Selection => {
+    const { selection, compSel, anchorSel, editingBackground } = latest.current;
+    return {
+      nodes: [...selection].map(parseKey),
+      components: [...compSel],
+      anchors: editingBackground ? [] : [...anchorSel],
+    };
+  }, []);
+
+  // ---------- Transform panel ----------
+
+  const contentBounds = (): Bounds | null => {
+    const { paths, comps, selection, compSel } = latest.current;
+    const useSel = selection.size > 0 || compSel.size > 0;
+    const pathIdx = new Set([...selection].map((k) => parseKey(k)[0]));
+    let b: Bounds | null = null;
+    const add = (nb: Bounds | null) => {
+      if (!nb) return;
+      b = b === null ? nb : { minX: Math.min(b.minX, nb.minX), minY: Math.min(b.minY, nb.minY), maxX: Math.max(b.maxX, nb.maxX), maxY: Math.max(b.maxY, nb.maxY) };
+    };
+    paths.forEach((p, i) => { if (!useSel || pathIdx.has(i)) add(svgBounds(pathsToSvg([p]))); });
+    comps.forEach((c, i) => {
+      if (!useSel || compSel.has(i)) {
+        const cb = svgBounds(c.svg);
+        if (cb) add({ minX: cb.minX + c.dx, minY: cb.minY + c.dy, maxX: cb.maxX + c.dx, maxY: cb.maxY + c.dy });
+      }
+    });
+    return b;
+  };
+
+  const applyTransform = () => {
+    const b = contentBounds();
+    const o = b ? originPoint(b, tf.origin) : { x: 0, y: 0 };
+    const r = (tf.rot * Math.PI) / 180;
+    const scale = [tf.sx / 100, 0, 0, tf.sy / 100, 0, 0];
+    const skew = [1, Math.tan((tf.ky * Math.PI) / 180), Math.tan((tf.kx * Math.PI) / 180), 1, 0, 0];
+    const rotate = [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), 0, 0];
+    const mirror = [tf.mh ? -1 : 1, 0, 0, tf.mv ? -1 : 1, 0, 0];
+    // Same order as the engine's panel affine: scale, skew, rotate, mirror.
+    // The engine wraps it about the origin, so it is sent without a shift.
+    const affine = mulAffine(mirror, mulAffine(rotate, mulAffine(skew, scale)));
+    const bg = latest.current.editingBackground;
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await backend.transform(glyph, masterId, currentSelection(), affine, [o.x, o.y], tf.allMasters && !bg, bg));
+      } catch (e) {
+        onError(e);
+      }
+    });
+  };
+
+  // ---------- Measure ----------
+
+  const runMeasure = (p0: Pt, p1: Pt) => {
+    const seq = ++measureSeq.current;
+    backend.measure(glyph, masterId, [p0.x, p0.y], [p1.x, p1.y], latest.current.editingBackground)
+      .then((m) => { if (seq === measureSeq.current) setMeasurement(m); }, () => {});
+  };
+
+  useEffect(() => {
+    if (tool !== "measure") { setMeasureLine(null); setMeasurement(null); }
+  }, [tool]);
 
   // ---------- View ----------
 
@@ -501,7 +676,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     const r = svgRef.current!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
-  const round = (p: Pt): Pt => ({ x: Math.round(p.x), y: Math.round(p.y) });
+  const gridStep = layer?.grid && layer.grid.spacing > 0 && layer.grid.subdivision > 0 ? layer.grid.spacing / layer.grid.subdivision : 0;
+  const snapV = (v: number) => (gridStep ? Math.round(v / gridStep) * gridStep : Math.round(v));
+  const round = (p: Pt): Pt => ({ x: snapV(p.x), y: snapV(p.y) });
 
   const zoomAt = useCallback((factor: number, sx: number, sy: number) => {
     setView((v) => {
@@ -528,6 +705,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   // ---------- Hit testing ----------
 
   function hitNode(sp: Pt): string | null {
+    if (!showNodes) return null;
     let best: string | null = null;
     let bestD = HIT;
     paths.forEach((p, pi) => p.nodes.forEach((n, ni) => {
@@ -561,6 +739,23 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     return best;
   }
 
+  /** Nearest guide line within reach; local guides win over global ones at equal distance. */
+  function hitGuide(sp: Pt): GuideRef | null {
+    if (!showGuides) return null;
+    let best: GuideRef | null = null;
+    let bestD = HIT;
+    const test = (gs: Guide[], scope: GuideScope) => gs.forEach((g, index) => {
+      const p = toScreen(g.x, g.y);
+      const a = (g.angle * Math.PI) / 180;
+      const dx = Math.cos(a), dy = -Math.sin(a);
+      const dist = Math.abs((sp.x - p.x) * -dy + (sp.y - p.y) * dx);
+      if (dist <= bestD) { bestD = dist; best = { scope, index }; }
+    });
+    test(globalGuides, "global");
+    test(localGuides, "local");
+    return best;
+  }
+
   // ---------- Pointer interaction ----------
 
   const activeTool: Tool = spaceDown ? "hand" : tool;
@@ -580,10 +775,19 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     }
     if (e.button !== 0) return;
 
+    if (activeTool === "measure") {
+      const p = { x: Math.round(wp.x * 10) / 10, y: Math.round(wp.y * 10) / 10 };
+      setMeasureLine({ p0: p, p1: p });
+      setMeasurement(null);
+      drag.current = { mode: "measure", startScreen: sp, startWorld: p, base, baseComps, baseAnchors, moved: false };
+      return;
+    }
+
     if (activeTool === "select") {
       const ah = hitAnchor(sp);
       const hit = ah ? null : hitNode(sp);
-      const comp = ah || hit ? null : hitComponent(wp);
+      const gh = ah || hit ? null : hitGuide(sp);
+      const comp = ah || hit || gh ? null : hitComponent(wp);
       if (ah) {
         let sel = anchorSel;
         if (e.shiftKey) {
@@ -595,6 +799,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           setCompSel(new Set());
         }
         setAnchorSel(sel);
+        setGuideSel(null);
         drag.current = { mode: "anchor", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
       } else if (hit) {
         let sel = selection;
@@ -607,7 +812,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           setAnchorSel(new Set());
         }
         setSelection(sel);
+        setGuideSel(null);
         drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
+      } else if (gh) {
+        setGuideSel(gh);
+        setSelection(new Set());
+        setCompSel(new Set());
+        setAnchorSel(new Set());
+        drag.current = { mode: "guide", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, scope: gh.scope, gi: gh.index, baseLocal: localGuides.map((g) => ({ ...g })), baseGlobal: globalGuides.map((g) => ({ ...g })) };
       } else if (comp !== null) {
         let sel = compSel;
         if (e.shiftKey) {
@@ -619,10 +831,19 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           setAnchorSel(new Set());
         }
         setCompSel(sel);
+        setGuideSel(null);
         drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
       } else {
-        if (!e.shiftKey) { setSelection(new Set()); setCompSel(new Set()); setAnchorSel(new Set()); }
-        drag.current = { mode: "marquee", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, additive: e.shiftKey };
+        setGuideSel(null);
+        // Dragging out of the canvas edge pulls a new guide: vertical from the sides, horizontal from top/bottom.
+        const angle = showGuides && (sp.x < EDGE || sp.x > size.w - EDGE) ? 90 : showGuides && (sp.y < EDGE || sp.y > size.h - EDGE) ? 0 : null;
+        if (angle !== null) {
+          setGuideDraft({ x: wp.x, y: wp.y, angle, locked: false });
+          drag.current = { mode: "new-guide", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, angle };
+        } else {
+          if (!e.shiftKey) { setSelection(new Set()); setCompSel(new Set()); setAnchorSel(new Set()); }
+          drag.current = { mode: "marquee", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, additive: e.shiftKey };
+        }
       }
       return;
     }
@@ -690,18 +911,64 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     if (d.mode === "pan" && d.startView) {
       setView({ ...d.startView, ox: d.startView.ox + sp.x - d.startScreen.x, oy: d.startView.oy + sp.y - d.startScreen.y });
     } else if (d.mode === "anchor") {
-      let dx = Math.round(wp.x - d.startWorld.x), dy = Math.round(wp.y - d.startWorld.y);
+      let dx = snapV(wp.x - d.startWorld.x), dy = snapV(wp.y - d.startWorld.y);
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
       d.lastAnchors = d.baseAnchors.map((a) => (anchorSel.has(a.name) ? { ...a, x: a.x + dx, y: a.y + dy } : a));
       setAnchors(d.lastAnchors);
     } else if (d.mode === "move") {
-      let dx = Math.round(wp.x - d.startWorld.x), dy = Math.round(wp.y - d.startWorld.y);
+      let dx = snapV(wp.x - d.startWorld.x), dy = snapV(wp.y - d.startWorld.y);
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+      // A dragged node landing near a guide snaps onto it.
+      if (showGuides && selection.size) {
+        const [pi, ni] = parseKey([...selection][0]);
+        const n0 = d.base[pi]?.nodes[ni];
+        if (n0) {
+          const cand = { x: n0.x + dx, y: n0.y + dy };
+          const thresh = SNAP / view.s;
+          let best: { ref: GuideRef; x: number; y: number; dist: number } | null = null;
+          const test = (gs: Guide[], scope: GuideScope) => gs.forEach((g, index) => {
+            const a = (g.angle * Math.PI) / 180;
+            const nx = -Math.sin(a), ny = Math.cos(a);
+            const signed = (cand.x - g.x) * nx + (cand.y - g.y) * ny;
+            if (Math.abs(signed) <= thresh && (!best || Math.abs(signed) < best.dist)) {
+              best = { ref: { scope, index }, x: cand.x - signed * nx, y: cand.y - signed * ny, dist: Math.abs(signed) };
+            }
+          });
+          test(globalGuides, "global");
+          test(localGuides, "local");
+          if (best) {
+            const b = best as { ref: GuideRef; x: number; y: number; dist: number };
+            dx = b.x - n0.x;
+            dy = b.y - n0.y;
+            setSnapGuide(b.ref);
+          } else setSnapGuide(null);
+        }
+      }
       d.lastPaths = moveSelection(d.base, selection, dx, dy);
       // Moving a component by hand takes it off its anchors.
       d.lastComps = d.baseComps.map((c, i) => (compSel.has(i) && (dx !== 0 || dy !== 0) ? { ...c, dx: c.dx + dx, dy: c.dy + dy, align: false } : c));
       setPaths(d.lastPaths);
       setComps(d.lastComps);
+    } else if (d.mode === "guide" && d.scope && d.gi !== undefined) {
+      const list = d.scope === "local" ? d.baseLocal! : d.baseGlobal!;
+      const g = list[d.gi];
+      if (g.locked) return;
+      // Guides slide along their normal, keeping their angle.
+      const a = (g.angle * Math.PI) / 180;
+      const nx = -Math.sin(a), ny = Math.cos(a);
+      const proj = (wp.x - d.startWorld.x) * nx + (wp.y - d.startWorld.y) * ny;
+      const ng = { ...g, x: g.x + proj * nx, y: g.y + proj * ny };
+      d.lastGuide = ng;
+      if (d.scope === "local") setLocalGuides(list.map((x, i) => (i === d.gi ? ng : x)));
+      else setGlobalGuides(list.map((x, i) => (i === d.gi ? ng : x)));
+    } else if (d.mode === "new-guide" && d.angle !== undefined) {
+      const ng = { x: wp.x, y: wp.y, angle: d.angle, locked: false };
+      d.lastGuide = ng;
+      setGuideDraft(ng);
+    } else if (d.mode === "measure") {
+      const p1 = { x: Math.round(wp.x * 10) / 10, y: Math.round(wp.y * 10) / 10 };
+      setMeasureLine({ p0: d.startWorld, p1 });
+      runMeasure(d.startWorld, p1);
     } else if (d.mode === "marquee") {
       setMarquee({ x0: d.startScreen.x, y0: d.startScreen.y, x1: sp.x, y1: sp.y });
     } else if (d.mode === "shape") {
@@ -735,8 +1002,22 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     drag.current = null;
     if (!d) return;
     const sp = local(e);
+    setSnapGuide(null);
     // Commit what the last pointer move computed (state may not have re-rendered yet).
-    if (d.mode === "move" && d.moved) commit(d.lastPaths ?? latest.current.paths, d.lastComps ?? latest.current.comps);
+    if (d.mode === "guide" && d.moved && d.scope && d.gi !== undefined && d.lastGuide) {
+      const g = { ...d.lastGuide, x: Math.round(d.lastGuide.x), y: Math.round(d.lastGuide.y) };
+      const list = (d.scope === "local" ? d.baseLocal! : d.baseGlobal!).map((x, i) => (i === d.gi ? g : x));
+      saveGuides(d.scope, list);
+    } else if (d.mode === "new-guide") {
+      // Dropped back on the edge strip: no guide.
+      const inside = sp.x > EDGE && sp.x < size.w - EDGE && sp.y > EDGE && sp.y < size.h - EDGE;
+      if (d.moved && inside && d.lastGuide) {
+        const g = { ...d.lastGuide, x: Math.round(d.lastGuide.x), y: Math.round(d.lastGuide.y) };
+        saveGuides("local", [...latest.current.localGuides, g]);
+        setGuideSel({ scope: "local", index: latest.current.localGuides.length });
+      }
+      setGuideDraft(null);
+    } else if (d.mode === "move" && d.moved) commit(d.lastPaths ?? latest.current.paths, d.lastComps ?? latest.current.comps);
     else if (d.mode === "anchor" && d.moved) {
       const fin = d.lastAnchors ?? latest.current.anchors;
       const moves = d.baseAnchors
@@ -753,7 +1034,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       const [x0, x1] = [Math.min(marquee.x0, sp.x), Math.max(marquee.x0, sp.x)];
       const [y0, y1] = [Math.min(marquee.y0, sp.y), Math.max(marquee.y0, sp.y)];
       const sel = new Set(d.additive ? selection : []);
-      paths.forEach((p, pi) => p.nodes.forEach((n, ni) => {
+      if (showNodes) paths.forEach((p, pi) => p.nodes.forEach((n, ni) => {
         const q = toScreen(n.x, n.y);
         if (q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1) sel.add(nodeKey(pi, ni));
       }));
@@ -830,6 +1111,25 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       });
       return;
     }
+    if (name === "edit-background") return toggleBackground();
+    if (name === "to-background" || name === "add-to-background" || name === "swap-background" || name === "clear-background") {
+      // While drawing on the background, moving its own content aside makes no sense.
+      if (latest.current.editingBackground && (name === "to-background" || name === "add-to-background")) return;
+      const edit: BackgroundEdit = name === "to-background" ? "toBackground" : name === "add-to-background" ? "addToBackground" : name === "swap-background" ? "swap" : "clear";
+      const sel = currentSelection();
+      const exit = edit === "swap" || edit === "clear";
+      chain.current = chain.current.then(async () => {
+        try {
+          const l = await backend.backgroundEdit(glyph, masterId, edit, sel);
+          if (exit) setEditingBackground(false);
+          accept(l, exit ? false : undefined);
+          if (exit) { setSelection(new Set()); setCompSel(new Set()); setAnchorSel(new Set()); }
+        } catch (e) {
+          onError(e);
+        }
+      });
+      return;
+    }
     const { pathIdx, data } = selectedContent();
     if (name === "copy" || name === "cut") {
       if (!data.paths.length && !data.components.length) return;
@@ -858,7 +1158,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       setCompSel(new Set(clip.components.map((_, i) => comps.length + i)));
       commit(nextPaths, nextComps);
     }
-  }, [commit, selectedContent, accept, glyph, masterId, onError]);
+  }, [commit, selectedContent, accept, glyph, masterId, onError, toggleBackground, currentSelection]);
 
   useEffect(() => {
     if (!active) return;
@@ -881,7 +1181,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         if (k === "a") {
           setSelection(new Set(paths.flatMap((p, pi) => p.nodes.map((_, ni) => nodeKey(pi, ni)))));
           setCompSel(new Set(comps.map((_, i) => i)));
-          if (showAnchors) setAnchorSel(new Set(anchors.map((a) => a.name)));
+          if (showAnchors && !latest.current.editingBackground) setAnchorSel(new Set(anchors.map((a) => a.name)));
         } else if (k === "0") fit();
         else if (k === "=" || k === "+") zoomAt(1.25, size.w / 2, size.h / 2);
         else if (k === "-") zoomAt(0.8, size.w / 2, size.h / 2);
@@ -889,6 +1189,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         else if (k === "x" && !e.shiftKey) runCommand("cut");
         else if (k === "v" && !e.shiftKey) runCommand("paste");
         else if (k === "c" && e.shiftKey) runCommand("add-component");
+        else if (k === "b" && !e.shiftKey) toggleBackground();
+        else if (k === "j" && !e.shiftKey) runCommand("to-background");
+        else if (k === "j" && e.shiftKey) runCommand("add-to-background");
         else return;
         e.preventDefault();
         return;
@@ -910,6 +1213,11 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         setPaths(next);
         setComps(nextComps);
         commit(next, nextComps);
+        e.preventDefault();
+        return;
+      }
+      if (!e.ctrlKey && (e.key === "Delete" || e.key === "Backspace") && latest.current.guideSel) {
+        deleteGuide(latest.current.guideSel);
         e.preventDefault();
         return;
       }
@@ -945,8 +1253,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       }
       if (e.key === "Escape") {
         if (ctxMenu) setCtxMenu(null);
+        else if (latest.current.guideSel) setGuideSel(null);
         else if (pen.current.path !== null) pen.current = { path: null, pendingOut: null };
         else { setSelection(new Set()); setCompSel(new Set()); setAnchorSel(new Set()); }
+        setMeasureLine(null);
+        setMeasurement(null);
+        setGuideDraft(null);
         rerender((n) => n + 1);
         return;
       }
@@ -963,7 +1275,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       window.removeEventListener("keydown", onDown);
       window.removeEventListener("keyup", onUp);
     };
-  }, [active, picking, commit, fit, zoomAt, size, runCommand, showAnchors, ctxMenu, moveAnchorsBy, removeAnchorsNamed]);
+  }, [active, picking, commit, fit, zoomAt, size, runCommand, showAnchors, ctxMenu, moveAnchorsBy, removeAnchorsNamed, toggleBackground, deleteGuide]);
 
   const glyphNames = useMemo(() => new Set(glyphs.map((g) => g.name)), [glyphs]);
 
@@ -975,10 +1287,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const lines: [string, number][] = [[t("Ascender"), ascender], [t("Cap height"), capHeight], [t("x-height"), xHeight], [t("Baseline"), 0], [t("Descender"), descender]];
   const x0 = toScreen(0, 0).x, x1 = toScreen(layer.width, 0).x;
   const outline = pathsToSvg(paths);
-  const one = selection.size === 1 && compSel.size === 0 && anchorSel.size === 0 ? parseKey([...selection][0]) : null;
+  const world = `translate(${view.ox} ${view.oy}) scale(${view.s} ${-view.s})`;
+  const selGuide = guideSel ? (guideSel.scope === "local" ? localGuides : globalGuides)[guideSel.index] : undefined;
+  const one = selection.size === 1 && compSel.size === 0 && anchorSel.size === 0 && !selGuide ? parseKey([...selection][0]) : null;
   const oneNode = one ? paths[one[0]]?.nodes[one[1]] : undefined;
-  const oneComp = compSel.size === 1 && selection.size === 0 && anchorSel.size === 0 ? comps[[...compSel][0]] : undefined;
-  const oneAnchor = anchorSel.size === 1 && selection.size === 0 && compSel.size === 0 ? anchors.find((a) => a.name === [...anchorSel][0]) : undefined;
+  const oneComp = compSel.size === 1 && selection.size === 0 && anchorSel.size === 0 && !selGuide ? comps[[...compSel][0]] : undefined;
+  const oneAnchor = anchorSel.size === 1 && selection.size === 0 && compSel.size === 0 && !selGuide ? anchors.find((a) => a.name === [...anchorSel][0]) : undefined;
   const pendingOut = pen.current.path !== null ? pen.current.pendingOut : null;
   const penPath = pen.current.path !== null ? paths[pen.current.path] : undefined;
   const lastPen = penPath && !penPath.closed ? penPath.nodes[penPath.nodes.length - 1] : undefined;
@@ -1053,7 +1367,16 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           }}
           onDoubleClick={(e) => {
             if (tool !== "select") return;
-            const hit = hitNode(local(e));
+            const sp = local(e);
+            const gh = hitGuide(sp);
+            if (gh) {
+              setGuideSel(gh);
+              setSelection(new Set());
+              setCompSel(new Set());
+              setAnchorSel(new Set());
+              return;
+            }
+            const hit = hitNode(sp);
             if (!hit) return;
             const [pi] = parseKey(hit);
             setSelection(new Set(paths[pi].nodes.map((_, ni) => nodeKey(pi, ni))));
@@ -1069,8 +1392,17 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             );
           })}
           {showMetrics && <rect x={x0} y={toScreen(0, ascender).y} width={Math.max(0, x1 - x0)} height={(ascender - descender) * view.s} className="advance-box" />}
+          {/* Background: a reference drawing behind the outline; never exports. */}
+          {showBackground && !editingBackground && layer.background && (
+            <g transform={world} pointerEvents="none">
+              <path d={layer.background.componentSvg} className="background-fill" />
+              <path d={pathsToSvg(layer.background.paths)} className="background-fill" fillRule="nonzero" />
+            </g>
+          )}
           {/* Glyph */}
-          <g transform={`translate(${view.ox} ${view.oy}) scale(${view.s} ${-view.s})`}>
+          <g transform={world}>
+            {/* While editing the background, the outline is the tinted reference. */}
+            {editingBackground && <path d={pathsToSvg(layer.paths) + layer.componentSvg} className="background-fill" fillRule="nonzero" pointerEvents="none" />}
             {comps.map((c, i) => (
               <g key={`c${i}`} transform={`translate(${c.dx} ${c.dy})`}>
                 <path d={c.svg} data-comp={i} className={`component-fill${compSel.has(i) ? " is-selected" : ""}`} />
@@ -1099,18 +1431,20 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             return compSel.has(i) || missing ? <text key={`cl${i}`} x={at.x + 4} y={at.y + 14} className={`component-label${missing ? " is-missing" : ""}`}>{c.base}</text> : null;
           })}
           {/* Handles and nodes */}
-          {paths.map((p, pi) => p.nodes.map((n, ni) => {
-            if (isOn(n)) return null;
-            const owner = handleOwner(p, ni);
-            if (owner < 0) return null;
-            const a = toScreen(n.x, n.y), b = toScreen(p.nodes[owner].x, p.nodes[owner].y);
-            return <line key={`h${pi}:${ni}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="handle-line" />;
-          }))}
-          {pendingOut && lastPen && (() => {
-            const a = toScreen(lastPen.x, lastPen.y), b = toScreen(pendingOut.x, pendingOut.y);
-            return <g><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="handle-line" /><circle cx={b.x} cy={b.y} r={3} className="node-off" /></g>;
-          })()}
-          {paths.map((p, pi) => p.nodes.map((n, ni) => <NodeMark key={`n${pi}:${ni}`} n={n} at={toScreen(n.x, n.y)} selected={selection.has(nodeKey(pi, ni))} first={ni === 0 && !p.closed} />))}
+          {showNodes && <>
+            {paths.map((p, pi) => p.nodes.map((n, ni) => {
+              if (isOn(n)) return null;
+              const owner = handleOwner(p, ni);
+              if (owner < 0) return null;
+              const a = toScreen(n.x, n.y), b = toScreen(p.nodes[owner].x, p.nodes[owner].y);
+              return <line key={`h${pi}:${ni}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="handle-line" />;
+            }))}
+            {pendingOut && lastPen && (() => {
+              const a = toScreen(lastPen.x, lastPen.y), b = toScreen(pendingOut.x, pendingOut.y);
+              return <g><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="handle-line" /><circle cx={b.x} cy={b.y} r={3} className="node-off" /></g>;
+            })()}
+            {paths.map((p, pi) => p.nodes.map((n, ni) => <NodeMark key={`n${pi}:${ni}`} n={n} at={toScreen(n.x, n.y)} selected={selection.has(nodeKey(pi, ni))} first={ni === 0 && !p.closed} />))}
+          </>}
           {/* Anchors: diamonds with their names, over the points. */}
           {showAnchors && anchors.map((a) => {
             const p = toScreen(a.x, a.y);
@@ -1122,12 +1456,94 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               </g>
             );
           })}
+          {/* Background anchors: shown while editing the background, but not editable there. */}
+          {editingBackground && (layer.background?.anchors ?? []).map((a) => {
+            const p = toScreen(a.x, a.y);
+            return (
+              <g key={`ba:${a.name}`} pointerEvents="none">
+                <rect x={-4.5} y={-4.5} width={9} height={9} transform={`translate(${p.x} ${p.y}) rotate(45)`} className="background-anchor" />
+                <text x={p.x + 8} y={p.y - 7} className="anchor-label">{a.name}</text>
+              </g>
+            );
+          })}
+          {/* Guides: global (master-wide) in red, local in purple; the draft follows the cursor. */}
+          {showGuides && [
+            ...globalGuides.map((g, index) => ({ g, scope: "global" as const, index })),
+            ...localGuides.map((g, index) => ({ g, scope: "local" as const, index })),
+            ...(guideDraft ? [{ g: guideDraft, scope: "local" as const, index: -1 }] : []),
+          ].map(({ g, scope, index }) => {
+            const p = toScreen(g.x, g.y);
+            const a = (g.angle * Math.PI) / 180;
+            const dx = Math.cos(a), dy = -Math.sin(a);
+            const L = size.w + size.h;
+            const sel = guideSel?.scope === scope && guideSel.index === index;
+            const snapped = snapGuide?.scope === scope && snapGuide.index === index;
+            const cls = `guide${scope === "global" ? " is-global" : ""}${sel ? " is-selected" : ""}${snapped ? " is-snapped" : ""}${g.locked ? " is-locked" : ""}${index === -1 ? " guide-draft" : ""}`;
+            return (
+              <g key={`${scope}:${index}`} className={cls} pointerEvents="none">
+                <line x1={p.x - dx * L} y1={p.y - dy * L} x2={p.x + dx * L} y2={p.y + dy * L} className="guide-line" />
+                <circle cx={p.x} cy={p.y} r={4} className="guide-handle" />
+                {(sel || g.name || g.locked) && (
+                  <text x={p.x + 8} y={p.y - 8} className="guide-label">
+                    {g.name || `${Math.round(g.angle * 10) / 10}°`}{scope === "global" ? ` · ${t("global")}` : ""}
+                  </text>
+                )}
+                {g.locked && (
+                  <g className="guide-lock" transform={`translate(${p.x - 24} ${p.y - 18}) scale(0.55)`}>
+                    <rect x="5" y="11" width="14" height="9" rx="2" />
+                    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                  </g>
+                )}
+              </g>
+            );
+          })}
+          {/* Bounding box of the drawing (control points included). */}
+          {showBoundingBox && (() => {
+            let b: Bounds | null = svgBounds(outline);
+            for (const c of comps) {
+              const cb = svgBounds(c.svg);
+              if (!cb) continue;
+              const nb = { minX: cb.minX + c.dx, minY: cb.minY + c.dy, maxX: cb.maxX + c.dx, maxY: cb.maxY + c.dy };
+              b = b === null ? nb : { minX: Math.min(b.minX, nb.minX), minY: Math.min(b.minY, nb.minY), maxX: Math.max(b.maxX, nb.maxX), maxY: Math.max(b.maxY, nb.maxY) };
+            }
+            if (!b) return null;
+            const bb = b as Bounds;
+            const p0 = toScreen(bb.minX, bb.maxY), p1 = toScreen(bb.maxX, bb.minY);
+            return <rect x={p0.x} y={p0.y} width={Math.max(0, p1.x - p0.x)} height={Math.max(0, p1.y - p0.y)} className="bbox-line" pointerEvents="none" />;
+          })()}
+          {/* Measure: the dragged line, square crossings, distances and the angle. */}
+          {measureLine && (() => {
+            const a = toScreen(measureLine.p0.x, measureLine.p0.y), b = toScreen(measureLine.p1.x, measureLine.p1.y);
+            const hits = measurement?.hits ?? [];
+            const fallbackAngle = Math.atan2(measureLine.p1.y - measureLine.p0.y, measureLine.p1.x - measureLine.p0.x) * 180 / Math.PI;
+            return (
+              <g pointerEvents="none">
+                <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="measure-line" />
+                {hits.map((h, i) => {
+                  const p = toScreen(h.x, h.y);
+                  return <rect key={`mh${i}`} x={p.x - 3.5} y={p.y - 3.5} width={7} height={7} className="measure-hit" />;
+                })}
+                {(measurement?.distances ?? []).map((dist, i) => {
+                  const h0 = hits[i], h1 = hits[i + 1];
+                  if (!h0 || !h1) return null;
+                  const m = toScreen((h0.x + h1.x) / 2, (h0.y + h1.y) / 2);
+                  return <text key={`md${i}`} x={m.x + 8} y={m.y - 8} className="measure-label">{Math.round(dist * 10) / 10}</text>;
+                })}
+                <text x={b.x + 8} y={b.y + 14} className="measure-label">{(measurement ? measurement.angle : fallbackAngle).toFixed(1)}°</text>
+              </g>
+            );
+          })()}
           {marquee && <rect className="marquee" x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)} />}
         </svg>
         {ctxMenu && (
           <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} role="menu">
-            <button type="button" role="menuitem" onClick={() => { addAnchorAt(ctxMenu.wx, ctxMenu.wy); setCtxMenu(null); }}>{t("Add Anchor")}</button>
+            {!editingBackground && <button type="button" role="menuitem" onClick={() => { addAnchorAt(ctxMenu.wx, ctxMenu.wy); setCtxMenu(null); }}>{t("Add Anchor")}</button>}
+            <button type="button" role="menuitem" onClick={() => { addGuideAt(ctxMenu.wx, ctxMenu.wy, 0); setCtxMenu(null); }}>{t("Add Horizontal Guide")}</button>
+            <button type="button" role="menuitem" onClick={() => { addGuideAt(ctxMenu.wx, ctxMenu.wy, 90); setCtxMenu(null); }}>{t("Add Vertical Guide")}</button>
           </div>
+        )}
+        {editingBackground && (
+          <div className="bg-banner" role="status">{t("Editing the background · Ctrl+B returns to the outline")}</div>
         )}
         {layer.issues.length > 0 && (
           <div className="notice notice-warning issues-banner k-label" role="status">
@@ -1141,16 +1557,40 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             <p className="k-caption muted">{t("Press P to draw with the pen, F for a rectangle, or Ctrl+Shift+C to add a component.")}</p>
           </div>
         )}
-        <div className="info-box" role="group" aria-label={t("Glyph info")}>
+        <div className="editor-bottom">
+        <div className="info-box in-stack" role="group" aria-label={t("Glyph info")}>
           <div className="info-title">
             <span className="k-body-strong">{layer.glyph}</span>
             <span className="k-code muted">{layer.unicode ? `U+${layer.unicode}` : ""}</span>
           </div>
-          <MetricField onInvalid={onError} label={t("LSB")} value={layer.lsb} disabled={layer.lsb === null} onCommit={(v) => setMetric("lsb", v)} metricKey={layer.metricsKeys?.left} onKey={(k) => setMetricsKey("lsb", k)} />
+          <MetricField onInvalid={onError} label={t("LSB")} value={layer.lsb} disabled={layer.lsb === null || editingBackground} onCommit={(v) => setMetric("lsb", v)} metricKey={editingBackground ? undefined : layer.metricsKeys?.left} onKey={(k) => setMetricsKey("lsb", k)} />
           <MetricField onInvalid={onError} label={t("Width")} value={layer.width} onCommit={(v) => setMetric("width", v)} metricKey={layer.metricsKeys?.width} onKey={(k) => setMetricsKey("width", k)} />
-          <MetricField onInvalid={onError} label={t("RSB")} value={layer.rsb} disabled={layer.rsb === null} onCommit={(v) => setMetric("rsb", v)} metricKey={layer.metricsKeys?.right} onKey={(k) => setMetricsKey("rsb", k)} />
+          <MetricField onInvalid={onError} label={t("RSB")} value={layer.rsb} disabled={layer.rsb === null || editingBackground} onCommit={(v) => setMetric("rsb", v)} metricKey={editingBackground ? undefined : layer.metricsKeys?.right} onKey={(k) => setMetricsKey("rsb", k)} />
           <span className="info-sep" />
-          {oneNode && one ? (
+          {selGuide && guideSel ? (
+            <>
+              <div className="info-title">
+                <span className="k-body-strong">{t("Guide")}</span>
+                <span className="k-caption muted">{guideSel.scope === "local" ? t("local · layer {name}", { name: currentLayer?.label ?? master }) : t("global · every glyph")}</span>
+              </div>
+              <MetricField onInvalid={onError} label="X" value={selGuide.x} onCommit={(v) => updateGuide(guideSel, { x: v })} />
+              <MetricField onInvalid={onError} label="Y" value={selGuide.y} onCommit={(v) => updateGuide(guideSel, { y: v })} />
+              <MetricField onInvalid={onError} decimals label={t("Angle")} value={selGuide.angle} onCommit={(v) => updateGuide(guideSel, { angle: v })} />
+              <button type="button" className={`align-toggle${selGuide.locked ? " is-manual" : " is-auto"}`} aria-pressed={selGuide.locked ?? false}
+                title={selGuide.locked ? t("Locked: this guide can't be moved. Click to unlock.") : t("Unlocked: this guide can be dragged. Click to lock.")}
+                onClick={() => updateGuide(guideSel, { locked: !selGuide.locked })}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <rect x="5" y="11" width="14" height="9" rx="2" />
+                  {selGuide.locked ? <path d="M8 11V7a4 4 0 0 1 8 0v4" /> : <path d="M8 11V7a4 4 0 0 1 7.5-2" />}
+                </svg>
+              </button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => switchGuideScope(guideSel)}
+                title={guideSel.scope === "local" ? t("Draw this guide in every glyph of this master") : t("Draw this guide only in this layer")}>
+                {guideSel.scope === "local" ? t("Make global") : t("Make local")}
+              </button>
+              <GuideNameField name={selGuide.name ?? ""} onRename={(n) => updateGuide(guideSel, { name: n || undefined })} />
+            </>
+          ) : oneNode && one ? (
             <>
               <MetricField onInvalid={onError} label="X" value={oneNode.x} onCommit={(v) => { const next = moveSelection(paths, selection, v - oneNode.x, 0); setPaths(next); commit(next); }} />
               <MetricField onInvalid={onError} label="Y" value={oneNode.y} onCommit={(v) => { const next = moveSelection(paths, selection, 0, v - oneNode.y); setPaths(next); commit(next); }} />
@@ -1183,6 +1623,43 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             <span className="k-caption muted info-count">{selectionLabel(selection.size, compSel.size, anchorSel.size)}</span>
           )}
         </div>
+        <div className="transform-panel">
+          <button type="button" className="transform-head" aria-expanded={transformOpen} onClick={() => setTransformOpen((o) => !o)}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+            {t("Transform")}
+          </button>
+          {transformOpen && (
+            <div className="transform-body">
+              <MetricField onInvalid={onError} decimals label={t("Scale X %")} value={tf.sx} onCommit={(v) => setTf({ ...tf, sx: v })} />
+              <MetricField onInvalid={onError} decimals label={t("Scale Y %")} value={tf.sy} onCommit={(v) => setTf({ ...tf, sy: v })} />
+              <MetricField onInvalid={onError} decimals label={t("Rotate °")} value={tf.rot} onCommit={(v) => setTf({ ...tf, rot: v })} />
+              <MetricField onInvalid={onError} decimals label={t("Skew X °")} value={tf.kx} onCommit={(v) => setTf({ ...tf, kx: v })} />
+              <MetricField onInvalid={onError} decimals label={t("Skew Y °")} value={tf.ky} onCommit={(v) => setTf({ ...tf, ky: v })} />
+              <button type="button" className={`align-toggle${tf.mh ? " is-auto" : " is-manual"}`} aria-pressed={tf.mh}
+                title={t("Mirror horizontally (flip left to right)")} aria-label={t("Mirror horizontally")}
+                onClick={() => setTf({ ...tf, mh: !tf.mh })}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 3v18" strokeDasharray="2 2" /><path d="M8 8l-4 4 4 4" /><path d="M16 8l4 4-4 4" /></svg>
+              </button>
+              <button type="button" className={`align-toggle${tf.mv ? " is-auto" : " is-manual"}`} aria-pressed={tf.mv}
+                title={t("Mirror vertically (flip top to bottom)")} aria-label={t("Mirror vertically")}
+                onClick={() => setTf({ ...tf, mv: !tf.mv })}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 12h18" strokeDasharray="2 2" /><path d="M8 8l4-4 4 4" /><path d="M8 16l4 4 4-4" /></svg>
+              </button>
+              <div className="origin-picker" role="radiogroup" aria-label={t("Transform origin")}>
+                {ORIGIN_LABELS.map((label, i) => (
+                  <button key={label} type="button" role="radio" aria-checked={tf.origin === i} className={`origin-dot${tf.origin === i ? " is-active" : ""}`}
+                    title={t(label)} aria-label={t(label)} onClick={() => setTf({ ...tf, origin: i })} />
+                ))}
+              </div>
+              <label className="check-row" title={t("Apply the transform to this layer in every master")}>
+                <input type="checkbox" checked={tf.allMasters} disabled={editingBackground} onChange={(e) => setTf({ ...tf, allMasters: e.target.checked })} />
+                <span className="k-body">{t("All masters")}</span>
+              </label>
+              <button type="button" className="btn btn-primary btn-sm" onClick={applyTransform}>{t("Apply")}</button>
+            </div>
+          )}
+        </div>
+        </div>
       </div>
       {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}
       {painting && layer?.paint && (
@@ -1196,6 +1673,66 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
 }
 
 const off = (p: Pt): EditNode => ({ x: p.x, y: p.y, kind: "offcurve", smooth: false });
+
+interface Bounds { minX: number; minY: number; maxX: number; maxY: number }
+
+/** Bounds of the coordinate pairs in an SVG path string; curve control points are included. */
+function svgBounds(d: string): Bounds | null {
+  const nums = d.match(/-?\d+(?:\.\d+)?/g);
+  if (!nums || nums.length < 2) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    const x = Number(nums[i]), y = Number(nums[i + 1]);
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/** Matrix product of two affines in [xx, xy, yx, yy, dx, dy] order (b acts first). */
+const mulAffine = (a: number[], b: number[]): number[] => [
+  a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1],
+  a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3],
+  a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5],
+];
+
+const ORIGIN_LABELS = ["Top left", "Top", "Top right", "Left", "Center", "Right", "Bottom left", "Bottom", "Bottom right"];
+
+/** The 9-point origin picker's point `i` (row-major from the top left) of a bounds box. */
+function originPoint(b: Bounds, i: number): Pt {
+  const xs = [b.minX, (b.minX + b.maxX) / 2, b.maxX];
+  const ys = [b.maxY, (b.minY + b.maxY) / 2, b.minY];
+  return { x: xs[i % 3], y: ys[Math.floor(i / 3)] };
+}
+
+/** The selected guide's name, editable in place; empty clears it. */
+function GuideNameField({ name, onRename }: { name: string; onRename: (n: string) => void }) {
+  const [text, setText] = useState(name);
+  useEffect(() => setText(name), [name]);
+  const commit = (raw: string) => {
+    const s = raw.trim();
+    if (s !== name) onRename(s);
+    else setText(name);
+  };
+  return (
+    <label className="info-field">
+      <span className="k-caption muted">{t("Name")}</span>
+      <input
+        className="metric-input anchor-name-input"
+        value={text}
+        aria-label={t("Guide name")}
+        placeholder={t("Unnamed")}
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={(e) => commit(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") { setText(name); (e.target as HTMLInputElement).value = name; (e.target as HTMLInputElement).blur(); }
+        }}
+      />
+    </label>
+  );
+}
 
 function selectionLabel(points: number, components: number, anchors: number): string {
   const parts: string[] = [];
@@ -1243,6 +1780,7 @@ function hint(tool: Tool): string {
     case "pen": return t("Click for corners, drag for curves · click the first point to close · Esc ends the path");
     case "rect": return t("Drag to draw a rectangle · Shift for a square");
     case "ellipse": return t("Drag to draw an ellipse · Shift for a circle");
+    case "measure": return t("Drag a line across the outline to measure distances and angles · Esc clears");
     case "hand": return t("Drag to pan · Ctrl+wheel zooms");
   }
 }
