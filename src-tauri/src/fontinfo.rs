@@ -30,6 +30,8 @@ pub struct FontInfoView {
     instances: Vec<Instance>,
     /// TrueType autohinting settings (the defaults if the font has none).
     hinting: Hinting,
+    /// Colour palettes (CSS colours `#rrggbbaa`), all the same length.
+    palettes: Vec<Vec<kernest_core::color::Color>>,
     default_master_id: String,
     /// Design-space problems that block interpolation or export.
     warnings: Vec<String>,
@@ -58,6 +60,7 @@ fn info_view(doc: &Document) -> FontInfoView {
             .collect(),
         instances: f.instances.clone(),
         hinting: f.info.hinting.unwrap_or_default(),
+        palettes: f.palettes.clone(),
         default_master_id: default_master(f).id.clone(),
         warnings: structure::warnings(f),
         incompatible: f
@@ -109,6 +112,14 @@ pub fn set_font_info(
 #[tauri::command]
 pub fn set_hinting(state: State<AppState>, hinting: Hinting) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_hinting(f, hinting))
+}
+
+#[tauri::command]
+pub fn set_palettes(
+    state: State<AppState>,
+    palettes: Vec<Vec<kernest_core::color::Color>>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| kernest_core::color::set_palettes(f, palettes))
 }
 
 #[tauri::command]

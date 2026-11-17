@@ -12,6 +12,32 @@ const AXIS_PRESETS: Axis[] = [
 
 const num = (s: string) => Number(s.trim().replace("−", "-"));
 
+/** One palette colour: a swatch that opens the colour picker, and the #rrggbbaa text. */
+function ColorCell({ value, label, onCommit }: { value: string; label: string; onCommit: (v: string) => unknown }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const alpha = value.length === 9 ? value.slice(7) : "ff";
+  // The native "change" event fires once the picker closes (React's onChange fires while dragging).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const done = () => onCommit(el.value + alpha);
+    el.addEventListener("change", done);
+    return () => el.removeEventListener("change", done);
+  }, [alpha, onCommit]);
+  return (
+    <span className="color-cell">
+      <input ref={ref} type="color" className="color-swatch" aria-label={label} defaultValue={value.slice(0, 7)} key={value} />
+      <Field label={label} value={value} width={96} numeric={false} onCommit={(v) => {
+        const hex = v.trim().toLowerCase();
+        if (!/^#([0-9a-f]{6}|[0-9a-f]{8})$/.test(hex)) { report(label); return false; }
+        return onCommit(hex);
+      }} />
+    </span>
+  );
+}
+
+let report: (label: string) => void = () => {};
+
 /** Where number fields report input that isn't a number. */
 const FieldError = createContext<(message: string) => void>(() => {});
 
@@ -83,6 +109,7 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
     }
   };
 
+  report = (label) => onError(t("{name}: enter a colour such as #ff8800.", { name: label }));
   if (!info) return <div className="fontinfo"><p className="k-caption muted editor-loading">{t("Loading Font Info…")}</p></div>;
 
   const axesDraft = axes ?? info.axes;
@@ -162,6 +189,60 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
               <span className="k-body">{t("Hint composites as whole glyphs")}</span>
             </label>
           </div>
+        </section>
+
+        <section className="fi-section" aria-labelledby="fi-palettes">
+          <div className="fi-head">
+            <h2 id="fi-palettes" className="k-subtitle">{t("Colour palettes")}</h2>
+            <span className="k-caption muted">{t("Colours for colour layers (COLR and CPAL). Palette 1 is the default; others, such as one for dark backgrounds, have the same number of colours.")}</span>
+            <span className="spacer" />
+            {info.palettes.length > 0 && (
+              <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setPalettes(info.palettes.map((p) => [...p, "#000000ff"])))}>
+                <AddIcon size={14} /> {t("Add colour")}
+              </button>
+            )}
+            <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setPalettes(
+              info.palettes.length ? [...info.palettes, [...info.palettes[0]]] : [["#e63946ff", "#1d3557ff"]],
+            ))}>
+              <AddIcon size={14} /> {t("Add palette")}
+            </button>
+          </div>
+          {info.palettes.length === 0 ? (
+            <p className="k-caption muted">{t("No palettes. Add one to draw colour glyphs: then use + Colour in the glyph editor.")}</p>
+          ) : (
+            <table className="fi-table">
+              <thead><tr>
+                <th>{t("Colour")}</th>
+                {info.palettes.map((_, p) => (
+                  <th key={p}>
+                    {t("Palette {n}", { n: p + 1 })}
+                    {p > 0 && (
+                      <button className="icon-btn" aria-label={t("Remove palette {n}", { n: p + 1 })} title={t("Remove palette {n}", { n: p + 1 })}
+                        onClick={() => apply(() => backend.setPalettes(info.palettes.filter((_, j) => j !== p)))}><CloseIcon size={12} /></button>
+                    )}
+                  </th>
+                ))}
+                <th aria-label={t("Actions")} />
+              </tr></thead>
+              <tbody>
+                {info.palettes[0].map((_, c) => (
+                  <tr key={c}>
+                    <td className="k-caption muted">{c + 1}</td>
+                    {info.palettes.map((pal, p) => (
+                      <td key={p}>
+                        <ColorCell value={pal[c]} label={t("Palette {p}, colour {c}", { p: p + 1, c: c + 1 })}
+                          onCommit={(v) => apply(() => backend.setPalettes(info.palettes.map((q, j) => (j === p ? q.map((x, k) => (k === c ? v : x)) : q))))} />
+                      </td>
+                    ))}
+                    <td>
+                      <button className="icon-btn" aria-label={t("Remove colour {n}", { n: c + 1 })} title={t("Remove colour {n}", { n: c + 1 })} disabled={info.palettes[0].length === 1}
+                        onClick={() => apply(() => backend.setPalettes(info.palettes.map((q) => q.filter((_, k) => k !== c))))}><CloseIcon size={14} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </section>
 
         <section className="fi-section" aria-labelledby="fi-axes">

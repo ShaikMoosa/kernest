@@ -323,6 +323,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         glyphs,
         kerning,
         features,
+        palettes: Vec::new(),
     };
     let master_ids: HashMap<String, String> = ids
         .iter()

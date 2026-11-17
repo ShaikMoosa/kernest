@@ -115,7 +115,7 @@ Kernest 1.0 is complete: every milestone above has shipped.
 |---|---|
 | Smart components: smart axes, pole layers, per-component values, Glyphs import | ✅ v1.1 |
 | Autohinting for TrueType fonts, static and variable (ttfautohint, via tilvisan) | ✅ v1.2 |
-| Colour fonts (COLRv1) | ⏳ planned |
+| Colour fonts (COLRv1 and CPAL): palettes, colour layers, solid and gradient paints | ✅ next release |
 | Python scripting and plug-ins | ⏳ planned |
 | Dark theme, ARM64 builds, Spanish and Arabic (right-to-left) interface | ✅ v1.3 |
 | Code-signed installer | ⏳ planned |

@@ -30,6 +30,10 @@ pub struct Font {
     /// OpenType feature code (AFDKO syntax).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub features: String,
+    /// Colour palettes (CPAL): every palette has the same number of colours, and
+    /// colour layers refer to them by index. Palette 0 is the default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub palettes: Vec<Vec<crate::color::Color>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -251,6 +255,10 @@ pub struct Layer {
     /// glyph's master layer is the pole at every axis' minimum.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smart: Option<BTreeMap<String, f64>>,
+    /// Colour layer: drawn in colour on top of the glyph's other colour layers of the
+    /// same master, in layer order (COLR). Every master has the same colour layers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<crate::color::ColorInfo>,
     pub width: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shapes: Vec<Shape>,
@@ -268,6 +276,7 @@ impl Layer {
             location: None,
             bracket: Vec::new(),
             smart: None,
+            color: None,
             width,
             shapes: Vec::new(),
             anchors: Vec::new(),
@@ -636,6 +645,7 @@ impl Font {
             instances: Vec::new(),
             kerning: BTreeMap::new(),
             features: String::new(),
+            palettes: Vec::new(),
         }
     }
 
@@ -653,6 +663,11 @@ impl Font {
 
     /// Checks structural invariants: unique names, layers reference real masters,
     /// every glyph has a layer for every master, components point at existing glyphs.
+    /// The number of colours in each palette (0 without palettes).
+    pub fn palette_size(&self) -> usize {
+        self.palettes.first().map_or(0, Vec::len)
+    }
+
     pub fn validate(&self) -> crate::Result<()> {
         use std::collections::HashSet;
         let bad = |m: String| Err(crate::Error::Invalid(m));
@@ -662,6 +677,9 @@ impl Font {
         let master_ids: HashSet<&str> = self.masters.iter().map(|m| m.id.as_str()).collect();
         if master_ids.len() != self.masters.len() {
             return bad("master ids must be unique".into());
+        }
+        if self.palettes.iter().any(|p| p.len() != self.palette_size()) {
+            return bad("every colour palette must have the same number of colours".into());
         }
         let mut names = HashSet::new();
         for g in &self.glyphs {
@@ -685,12 +703,25 @@ impl Font {
                     }
                     let kinds = usize::from(l.location.is_some())
                         + usize::from(!l.bracket.is_empty())
-                        + usize::from(l.smart.is_some());
+                        + usize::from(l.smart.is_some())
+                        + usize::from(l.color.is_some());
                     if kinds != 1 {
                         return bad(format!(
-                            "layer \"{id}\" of \"{}\" must be one of a brace, bracket or smart pole layer",
+                            "layer \"{id}\" of \"{}\" must be one of a brace, bracket, smart pole or colour layer",
                             g.name
                         ));
+                    }
+                    if let Some(c) = &l.color {
+                        if let Some(i) = c
+                            .paint
+                            .colors()
+                            .find(|i| *i as usize >= self.palette_size())
+                        {
+                            return bad(format!(
+                                "colour layer \"{id}\" of \"{}\" uses colour {i}, which the palette doesn't have",
+                                g.name
+                            ));
+                        }
                     }
                     if let Some(pole) = &l.smart {
                         if let Some(a) = pole
@@ -713,7 +744,11 @@ impl Font {
                             g.name
                         ));
                     }
-                } else if l.location.is_some() || !l.bracket.is_empty() || l.smart.is_some() {
+                } else if l.location.is_some()
+                    || !l.bracket.is_empty()
+                    || l.smart.is_some()
+                    || l.color.is_some()
+                {
                     return bad(format!(
                         "a brace or bracket layer of \"{}\" has no id",
                         g.name

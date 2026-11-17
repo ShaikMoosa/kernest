@@ -7,6 +7,7 @@
 //! - the `.kernest` package format: a folder with one JSON file per glyph,
 //!   so fonts diff and merge cleanly in Git.
 
+pub mod color;
 pub mod designspace;
 pub mod edit;
 pub mod error;

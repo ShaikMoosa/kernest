@@ -44,6 +44,28 @@ export interface GlyphSummary {
   svg: string;
   /** False when this glyph's masters can't be interpolated. */
   compatible: boolean;
+  /** Colour layers in this master, bottom to top (colour glyphs only). */
+  color?: ColorLayerView[];
+}
+
+/** A colour stop on a gradient: position 0–1, palette index, opacity 0–1. */
+export interface ColorStop {
+  offset: number;
+  color: number;
+  alpha: number;
+}
+
+/** How a colour layer is filled. Coordinates are in font units. */
+export type Paint =
+  | { type: "solid"; color: number; alpha: number }
+  | { type: "linear"; start: [number, number]; end: [number, number]; stops: ColorStop[] }
+  | { type: "radial"; center: [number, number]; radius: number; focus?: [number, number] | null; stops: ColorStop[] };
+
+/** A colour layer as drawn: its outline (SVG path data, font units, y up) and paint. */
+export interface ColorLayerView {
+  key: string;
+  svg: string;
+  paint: Paint;
 }
 
 export interface FontView {
@@ -54,6 +76,8 @@ export interface FontView {
   masterId: string;
   metrics: Metrics;
   glyphs: GlyphSummary[];
+  /** The default colour palette (CSS colours), for drawing colour glyphs. */
+  palette?: string[];
   status: DocStatus;
 }
 
@@ -98,6 +122,11 @@ export interface LayerView {
   smartAxes?: SmartAxis[];
   /** Why this glyph's masters can't be interpolated (empty when they can). */
   issues: string[];
+  /** This master's colour layers, bottom to top, and the default palette. */
+  colorLayers?: ColorLayerView[];
+  palette?: string[];
+  /** This layer's paint, when it is a colour layer. */
+  paint?: Paint;
   status: DocStatus;
 }
 
@@ -113,8 +142,10 @@ export interface AxisRange {
 export interface LayerInfo {
   /** Pass as `masterId` to the layer commands to edit this layer. */
   key: string;
-  kind: "master" | "brace" | "bracket" | "smart";
+  kind: "master" | "brace" | "bracket" | "smart" | "color";
   label: string;
+  /** A colour layer's paint. */
+  paint?: Paint;
   masterId: string;
   masterName: string;
   location?: Location;
@@ -166,6 +197,8 @@ export interface FontInfo {
   instances: Instance[];
   /** TrueType autohinting settings. */
   hinting: Hinting;
+  /** Colour palettes (CSS colours #rrggbbaa); every palette has the same length. */
+  palettes: string[][];
   defaultMasterId: string;
   /** Design-space problems that block interpolation or export. */
   warnings: string[];
@@ -204,12 +237,16 @@ export type TextItem =
       kernLeft: string | null;
       kernRight: string | null;
       svg: string;
+      /** Colour layers, bottom to top (colour glyphs only). */
+      color?: ColorLayerView[];
     }
   | { type: "missing"; text: string };
 
 export interface TextLayout {
   lines: TextItem[][];
   metrics: Metrics;
+  /** The default colour palette, for drawing colour glyphs. */
+  palette?: string[];
   status: DocStatus;
 }
 
@@ -283,6 +320,14 @@ export interface Backend {
   setAxes(axes: Axis[]): Promise<FontInfo>;
   /** Sets the TrueType autohinting settings. */
   setHinting(hinting: Hinting): Promise<FontInfo>;
+  /** Sets the colour palettes (#rrggbb or #rrggbbaa). */
+  setPalettes(palettes: string[][]): Promise<FontInfo>;
+  /** Adds a colour layer on top of the glyph's others, in every master. */
+  addColorLayer(glyph: string, masterId: string): Promise<{ key: string; status: DocStatus }>;
+  /** Sets a colour layer's paint (in every master). */
+  setColorPaint(glyph: string, key: string, paint: Paint): Promise<{ key: string; status: DocStatus }>;
+  /** Moves a colour layer up or down the stack. */
+  moveColorLayer(glyph: string, key: string, up: boolean): Promise<{ key: string; status: DocStatus }>;
   /** Adds a master copied from `copyFrom` (outlines, metrics, kerning). */
   addMaster(copyFrom: string, name: string, location: Location): Promise<FontInfo>;
   updateMaster(id: string, name: string, location: Location, metrics: Metrics): Promise<FontInfo>;
@@ -357,6 +402,10 @@ const tauriBackend: Backend = {
   fontInfo: () => invoke("font_info"),
   setFontInfo: (familyName, unitsPerEm, versionMajor, versionMinor) => invoke("set_font_info", { familyName, unitsPerEm, versionMajor, versionMinor }),
   setHinting: (hinting) => invoke("set_hinting", { hinting }),
+  setPalettes: (palettes) => invoke("set_palettes", { palettes }),
+  addColorLayer: (glyph, masterId) => invoke("add_color_layer", { glyph, masterId }),
+  setColorPaint: (glyph, key, paint) => invoke("set_color_paint", { glyph, key, paint }),
+  moveColorLayer: (glyph, key, up) => invoke("move_color_layer", { glyph, key, up }),
   setAxes: (axes) => invoke("set_axes", { axes }),
   addMaster: (copyFrom, name, location) => invoke("add_master", { copyFrom, name, location }),
   updateMaster: (id, name, location, metrics) => invoke("update_master", { id, name, location, metrics }),
@@ -632,7 +681,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, defaultMasterId: def.id, warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, palettes: [], defaultMasterId: def.id, warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -802,6 +851,18 @@ const mockBackend: Backend = {
   },
   async takeLaunchPaths() {
     return [];
+  },
+  async setPalettes() {
+    throw "Colour fonts need the desktop app (npm run tauri dev).";
+  },
+  async addColorLayer() {
+    throw "Colour fonts need the desktop app (npm run tauri dev).";
+  },
+  async setColorPaint() {
+    throw "Colour fonts need the desktop app (npm run tauri dev).";
+  },
+  async moveColorLayer() {
+    throw "Colour fonts need the desktop app (npm run tauri dev).";
   },
   async setSmartAxes() {
     throw "Smart components need the desktop app (npm run tauri dev).";

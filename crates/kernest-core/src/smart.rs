@@ -44,6 +44,7 @@ fn plain(l: &Layer, master_id: &str) -> Layer {
     out.location = None;
     out.bracket.clear();
     out.smart = None;
+    out.color = None;
     out
 }
 

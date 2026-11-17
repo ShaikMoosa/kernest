@@ -93,6 +93,44 @@ pub struct GlyphSummary {
     svg: String,
     /// False when this glyph's masters can't be interpolated.
     compatible: bool,
+    /// Colour layers in this master, bottom to top (empty for black-and-white glyphs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    color: Vec<ColorLayerView>,
+}
+
+/// A colour layer as the UI draws it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColorLayerView {
+    key: String,
+    /// Outline as SVG path data in font units (y up).
+    svg: String,
+    paint: kernest_core::color::Paint,
+}
+
+/// `glyph`'s colour layers in master `master_id`, bottom to top.
+pub(crate) fn color_views(
+    font: &Font,
+    g: &kernest_core::Glyph,
+    master_id: &str,
+) -> Vec<ColorLayerView> {
+    g.color_layers(master_id)
+        .filter_map(|l| {
+            Some(ColorLayerView {
+                key: l.key().to_string(),
+                svg: svg_path(font, l),
+                paint: l.color.as_ref()?.paint.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Palette 0 as CSS colours (`#rrggbbaa`).
+pub(crate) fn css_palette(font: &Font) -> Vec<String> {
+    font.palettes
+        .first()
+        .map(|p| p.iter().map(|c| c.to_string()).collect())
+        .unwrap_or_default()
 }
 
 #[derive(Serialize)]
@@ -121,6 +159,8 @@ pub struct FontView {
     master_id: String,
     metrics: Metrics,
     glyphs: Vec<GlyphSummary>,
+    /// The default colour palette, for drawing colour glyphs.
+    palette: Vec<String>,
     status: DocStatus,
 }
 
@@ -221,6 +261,13 @@ pub struct LayerView {
     smart_axes: Vec<SmartAxis>,
     /// Why this glyph's masters can't be interpolated (empty when they can).
     issues: Vec<String>,
+    /// This master's colour layers, bottom to top, and the default palette.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    color_layers: Vec<ColorLayerView>,
+    palette: Vec<String>,
+    /// The paint of this layer, when it is a colour layer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paint: Option<kernest_core::color::Paint>,
     status: DocStatus,
 }
 
@@ -250,6 +297,7 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
                 rsb: sb.map(|s| s.1),
                 svg: layer.map(|l| svg_path(font, l)).unwrap_or_default(),
                 compatible: check_glyph(font, &g.name).is_empty(),
+                color: color_views(font, g, &master.id),
             }
         })
         .collect();
@@ -268,6 +316,7 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
         master_id: master.id.clone(),
         metrics: master.metrics,
         glyphs,
+        palette: css_palette(font),
         status: status(doc),
     })
 }
@@ -340,6 +389,9 @@ fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<Laye
         metrics_keys: layer.metrics_keys.clone(),
         smart_axes: g.smart_axes.clone(),
         issues: check_glyph(font, glyph),
+        color_layers: color_views(font, g, &layer.master_id),
+        palette: css_palette(font),
+        paint: layer.color.as_ref().map(|c| c.paint.clone()),
         status: status(doc),
     })
 }

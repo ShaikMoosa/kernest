@@ -8,6 +8,7 @@
 pub mod cff;
 pub mod cff2;
 mod charstring;
+mod colr;
 mod hint;
 pub mod ufo;
 pub mod woff2;
@@ -275,6 +276,27 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     } else {
         font
     };
+    // Colour layers become ordinary glyphs; COLR and CPAL are added to each file.
+    let (split, colored) = kernest_core::color::split_color_layers(font);
+    let font = &split;
+    let colorize =
+        |report: &mut ExportReport, label: &str, ids_from: &[u8], bytes: Vec<u8>| -> Vec<u8> {
+            if colored.is_empty() {
+                return bytes;
+            }
+            let with = colr::glyph_ids(ids_from)
+                .and_then(|ids| colr::tables(&colored, &font.palettes, &ids))
+                .and_then(|(c, p)| colr::add_tables(&bytes, &c, &p));
+            match with {
+                Ok(b) => b,
+                Err(e) => {
+                    report
+                        .problems
+                        .push(format!("{label}: {e}; exported without colour."));
+                    bytes
+                }
+            }
+        };
     let hinting = font.info.hinting.unwrap_or_default();
     // The TrueType bytes for TTF and WOFF2: hinted if asked (a failure is reported and
     // the unhinted font is used).
@@ -314,6 +336,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
         match variable(font, tmp.path()) {
             Ok(bytes) => {
                 let tt = truetype(&mut report, "Variable font", "vf", &bytes);
+                let tt = colorize(&mut report, "Variable font", &bytes, tt);
                 if opts.ttf {
                     emit(
                         &mut report,
@@ -338,7 +361,9 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     }
                 }
                 if opts.otf {
-                    match variable_otf(font, &bytes) {
+                    match variable_otf(font, &bytes)
+                        .map(|o| colorize(&mut report, "Variable font (OTF)", &bytes, o))
+                    {
                         Ok(o) => emit(
                             &mut report,
                             "variable",
@@ -385,6 +410,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                 Ok((bytes, ufo)) => {
                     let stem = format!("{family}-{}", file_stem(style));
                     let tt = truetype(&mut report, style, &format!("instance{i}"), &bytes);
+                    let tt = colorize(&mut report, style, &bytes, tt);
                     if opts.ttf {
                         emit(
                             &mut report,
@@ -396,7 +422,9 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                         )?;
                     }
                     if opts.otf {
-                        match cff::ttf_to_otf(&bytes, &ufo, &font.info.family_name, style) {
+                        match cff::ttf_to_otf(&bytes, &ufo, &font.info.family_name, style)
+                            .map(|o| colorize(&mut report, &format!("{style} (OTF)"), &bytes, o))
+                        {
                             Ok(otf) => emit(
                                 &mut report,
                                 "static",
@@ -1320,6 +1348,137 @@ pub(crate) mod tests {
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
         assert!(r.files.iter().all(|x| !fpgm(&x.path)));
+    }
+
+    #[test]
+    fn colour_fonts_export_colr_and_cpal() {
+        use kernest_core::color::{self, Color, ColorStop, Paint};
+        use write_fonts::read::tables::colr::Paint as RPaint;
+        use write_fonts::types::Tag;
+        let f = color::set_palettes(
+            &two_masters(),
+            vec![vec![
+                Color::parse("#e63946").unwrap(),
+                Color::parse("#1d3557").unwrap(),
+            ]],
+        )
+        .unwrap();
+        let (f, _) = color::add_color_layer(&f, "H", "m01").unwrap();
+        let (f, top) = color::add_color_layer(&f, "H", "m01").unwrap();
+        // The top layer: a bar with a gradient, in both masters.
+        let mut f = f;
+        for l in f
+            .glyph_mut("H")
+            .unwrap()
+            .layers
+            .iter_mut()
+            .filter(|l| l.color.is_some())
+        {
+            if l.shapes.is_empty() {
+                l.shapes = vec![Shape::Path(kernest_core::Path {
+                    closed: true,
+                    nodes: [(0.0, 300.0), (600.0, 300.0), (600.0, 400.0), (0.0, 400.0)]
+                        .into_iter()
+                        .map(|(x, y)| kernest_core::Node::new(x, y, NodeKind::Line))
+                        .collect(),
+                })];
+            }
+        }
+        let grad = Paint::Linear {
+            start: [0.0, 0.0],
+            end: [600.0, 0.0],
+            stops: vec![
+                ColorStop {
+                    offset: 0.0,
+                    color: 0,
+                    alpha: 1.0,
+                },
+                ColorStop {
+                    offset: 1.0,
+                    color: 1,
+                    alpha: 0.5,
+                },
+            ],
+        };
+        let f = color::set_paint(&f, "H", &top, grad).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let opts = ExportOptions {
+            otf: true,
+            ..ExportOptions::ttf(true, true, out.path())
+        };
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        for file in &r.files {
+            let bytes = std::fs::read(&file.path).unwrap();
+            let font = FontRef::new(&bytes).unwrap();
+            let colr = font
+                .colr()
+                .unwrap_or_else(|e| panic!("{}: no COLR: {e}", file.path));
+            assert_eq!(colr.version(), 1);
+            let cpal = font.cpal().unwrap();
+            assert_eq!((cpal.num_palettes(), cpal.num_palette_entries()), (1, 2));
+            let rec = cpal.color_records_array().unwrap().unwrap()[0];
+            assert_eq!((rec.red(), rec.green(), rec.blue()), (0xe6, 0x39, 0x46));
+            assert!(font.table_data(Tag::new(b"COLR")).is_some());
+            // H has a v1 paint: two layers, the second a linear gradient on H.color1.
+            let gid = font.cmap().unwrap().map_codepoint('H').unwrap();
+            let list = colr.base_glyph_list().unwrap().unwrap();
+            let rec = list
+                .base_glyph_paint_records()
+                .iter()
+                .find(|r| r.glyph_id().to_u32() == gid.to_u32())
+                .expect("H is a colour glyph");
+            let RPaint::ColrLayers(layers) = rec.paint(list.offset_data()).unwrap() else {
+                panic!("layers")
+            };
+            assert_eq!(layers.num_layers(), 2);
+            let ll = colr.layer_list().unwrap().unwrap();
+            let RPaint::Glyph(top) = ll
+                .paints()
+                .get(layers.first_layer_index() as usize + 1)
+                .unwrap()
+            else {
+                panic!("glyph paint")
+            };
+            assert!(
+                matches!(top.paint().unwrap(), RPaint::LinearGradient(_)),
+                "{}",
+                file.path
+            );
+            // A gradient layer means no v0 fallback record for H.
+            assert_eq!(colr.num_base_glyph_records(), 0);
+        }
+        // Variable fonts vary the colour layers too (the layer glyphs are in gvar).
+        let vf = r
+            .files
+            .iter()
+            .find(|x| x.kind == "variable" && x.format == "ttf")
+            .unwrap();
+        let bytes = std::fs::read(&vf.path).unwrap();
+        assert!(FontRef::new(&bytes).unwrap().gvar().is_ok());
+    }
+
+    #[test]
+    fn solid_colour_glyphs_also_get_colr_v0() {
+        use kernest_core::color::{self, Color};
+        let f = color::set_palettes(&sample_font(), vec![vec![Color::parse("#2a9d8f").unwrap()]])
+            .unwrap();
+        let (f, _) = color::add_color_layer(&f, "O", "m01").unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let colr = font.colr().unwrap();
+        assert_eq!(
+            colr.num_base_glyph_records(),
+            1,
+            "O has a v0 record for older apps"
+        );
+        let gid = font.cmap().unwrap().map_codepoint('O').unwrap();
+        let rec = colr.base_glyph_records().unwrap().unwrap()[0];
+        assert_eq!(rec.glyph_id().to_u32(), gid.to_u32());
+        assert_eq!(rec.num_layers(), 1);
     }
 
     #[test]

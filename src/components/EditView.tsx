@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, type Axis, type ComponentEdit, type ComponentView, type DocStatus, type LayerInfo, type LayerView, type MetricName } from "../lib/backend";
+import { backend, type Axis, type ComponentEdit, type ComponentView, type DocStatus, type LayerInfo, type LayerView, type MetricName, type Paint } from "../lib/backend";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
 import {
@@ -8,6 +8,8 @@ import {
 } from "../lib/outline";
 import { CloseIcon, SearchIcon } from "./Icons";
 import { t, tn, translateMessage } from "../lib/i18n";
+import { ColorGlyph } from "./ColorGlyph";
+import { PaintDialog } from "./PaintDialog";
 
 type Tool = "select" | "pen" | "rect" | "ellipse" | "hand";
 interface Pt { x: number; y: number }
@@ -226,6 +228,36 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       onPickLayer?.(r.key);
     }
   }, [smartDialog, glyph, masterId, master, onCommitted, onPickLayer, onError]);
+
+  // ---------- Colour layers ----------
+  const [painting, setPainting] = useState(false);
+  const addColorLayer = useCallback(async () => {
+    try {
+      const r = await backend.addColorLayer(glyph, master);
+      onCommitted(r.status);
+      setLayersVersion((n) => n + 1);
+      onPickLayer?.(r.key);
+    } catch (e) {
+      onError(e);
+    }
+  }, [glyph, master, onCommitted, onPickLayer, onError]);
+  const moveColorLayer = useCallback(async (up: boolean) => {
+    try {
+      const r = await backend.moveColorLayer(glyph, masterId, up);
+      onCommitted(r.status);
+      setLayersVersion((n) => n + 1);
+      backend.glyphLayer(glyph, masterId).then(setLayer, onError);
+    } catch (e) {
+      onError(e);
+    }
+  }, [glyph, masterId, onCommitted, onError]);
+  const savePaint = useCallback(async (paint: Paint) => {
+    const r = await backend.setColorPaint(glyph, masterId, paint);
+    setPainting(false);
+    onCommitted(r.status);
+    setLayersVersion((n) => n + 1);
+    backend.glyphLayer(glyph, masterId).then(setLayer, onError);
+  }, [glyph, masterId, onCommitted, onError]);
 
   const removeCurrentLayer = useCallback(async () => {
     try {
@@ -824,7 +856,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               .filter((l) => (l.kind === "master" ? l.key === master : l.kind === "brace" || l.masterId === master))
               .map((l) => (
                 <option key={l.key} value={l.key}>
-                  {l.kind === "master" ? t("{name} (master)", { name: l.label }) : l.kind === "brace" ? t("Intermediate {name}", { name: l.label }) : l.kind === "smart" ? t("Smart {name}", { name: l.label }) : t("Alternate {name}", { name: l.label })}
+                  {l.kind === "master" ? t("{name} (master)", { name: l.label }) : l.kind === "brace" ? t("Intermediate {name}", { name: l.label }) : l.kind === "smart" ? t("Smart {name}", { name: l.label }) : l.kind === "color" ? t("Colour {n}", { n: l.label }) : t("Alternate {name}", { name: l.label })}
                 </option>
               ))}
           </select>
@@ -832,6 +864,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("brace", false)} title={t("Add an intermediate (brace) layer")}>{t("+ Intermediate")}</button>
         <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("bracket", false)} title={t("Add an alternate design (bracket layers)")}>{t("+ Alternate")}</button>
         <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "axes", axes: layer?.smartAxes ?? [] })} title={t("Make this a smart glyph: components of it get their own axes")}>{t("Smart…")}</button>
+        <button className="btn btn-secondary btn-sm" onClick={addColorLayer} title={t("Add a colour layer (colour fonts): a drawing filled with a palette colour or gradient")}>{t("+ Colour")}</button>
         {(layer?.smartAxes?.length ?? 0) > 0 && (
           <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "pole", axes: layer?.smartAxes ?? [] })} title={t("Add the shape at another position on the smart axes")}>{t("+ Pole")}</button>
         )}
@@ -840,7 +873,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             {(currentLayer.kind === "brace" || currentLayer.kind === "bracket") && (
               <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog(currentLayer.kind as "brace" | "bracket", true)}>{currentLayer.kind === "brace" ? t("Move…") : t("Ranges…")}</button>
             )}
-            <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? t("Removes this alternate from every master") : currentLayer.kind === "smart" ? t("Removes this pole") : t("Removes this intermediate layer")}>{t("Remove")}</button>
+            {currentLayer.kind === "color" && (
+              <>
+                <button className="btn btn-secondary btn-sm" onClick={() => setPainting(true)} title={t("Choose this layer's colour or gradient")}>{t("Paint…")}</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => moveColorLayer(false)} title={t("Move this colour layer down (drawn earlier)")} aria-label={t("Move down")}>↓</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => moveColorLayer(true)} title={t("Move this colour layer up (drawn later, on top)")} aria-label={t("Move up")}>↑</button>
+              </>
+            )}
+            <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? t("Removes this alternate from every master") : currentLayer.kind === "smart" ? t("Removes this pole") : currentLayer.kind === "color" ? t("Removes this colour layer from every master") : t("Removes this intermediate layer")}>{t("Remove")}</button>
           </>
         )}
         <span className="toolbar-hint k-caption muted">{hint(activeTool)}</span>
@@ -880,6 +920,13 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             <path d={outline} className="glyph-fill" fillRule="nonzero" />
             {preview && <path d={pathsToSvg([preview])} className="preview-outline" />}
           </g>
+          {/* Colour layers, over the glyph's fill, under its points */}
+          {(layer?.colorLayers?.length ?? 0) > 0 && (
+            <g transform={`translate(${view.ox} ${view.oy}) scale(${view.s} ${view.s})`} pointerEvents="none">
+              <ColorGlyph layers={layer?.colorLayers ?? []} palette={layer?.palette ?? []}
+                opacity={currentLayer?.kind === "color" ? 0.55 : 0.35} highlight={currentLayer?.kind === "color" ? masterId : undefined} />
+            </g>
+          )}
           {/* Component labels */}
           {comps.map((c, i) => {
             const at = toScreen(c.transform[4] + c.dx, c.transform[5] + c.dy);
@@ -942,6 +989,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         </div>
       </div>
       {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}
+      {painting && layer?.paint && (
+        <PaintDialog glyph={glyph} paint={layer.paint} palette={layer.palette ?? []} width={layer.width}
+          height={layer.metrics.capHeight} onCancel={() => setPainting(false)} onSave={savePaint} />
+      )}
       {smartDialog && <SmartDialog glyph={glyph} mode={smartDialog} onCancel={() => setSmartDialog(null)} onSave={saveSmartDialog} />}
       {layerDialog && <LayerDialog glyph={glyph} axes={layerDialog.axes} mode={layerDialog.mode} onCancel={() => setLayerDialog(null)} onSave={saveLayerDialog} />}
     </div>

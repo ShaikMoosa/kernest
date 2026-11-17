@@ -15,6 +15,7 @@ use crate::commands::{doc_mut, lock, status, AppState, CmdResult, DocStatus, Doc
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[allow(clippy::large_enum_variant)] // only built to send to the UI
 pub enum TextItem {
     #[serde(rename_all = "camelCase")]
     Glyph {
@@ -34,6 +35,9 @@ pub enum TextItem {
         kern_left: Option<String>,
         kern_right: Option<String>,
         svg: String,
+        /// Colour layers (from the master), bottom to top.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        color: Vec<crate::commands::ColorLayerView>,
     },
     Missing {
         text: String,
@@ -45,6 +49,8 @@ pub enum TextItem {
 pub struct TextLayout {
     lines: Vec<Vec<TextItem>>,
     metrics: Metrics,
+    /// The default colour palette, for drawing colour glyphs.
+    palette: Vec<String>,
     status: DocStatus,
 }
 
@@ -97,6 +103,7 @@ fn interpolated_font(
         glyphs,
         kerning: Default::default(),
         features: String::new(),
+        palettes: Vec::new(),
     };
     (scratch, bad)
 }
@@ -225,6 +232,7 @@ fn layout(
                             kern_left: kern.as_ref().map(|k| k.2.clone()),
                             kern_right: kern.as_ref().map(|k| k.3.clone()),
                             svg,
+                            color: crate::commands::color_views(font, g, master_id),
                         }
                     }
                 })
@@ -234,6 +242,7 @@ fn layout(
     Ok(TextLayout {
         lines,
         metrics,
+        palette: crate::commands::css_palette(font),
         status: status(doc),
     })
 }

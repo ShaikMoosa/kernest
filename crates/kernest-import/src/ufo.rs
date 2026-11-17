@@ -476,6 +476,7 @@ fn build(
         glyphs,
         kerning,
         features: def.features.clone(),
+        palettes: Vec::new(),
     }
 }
 

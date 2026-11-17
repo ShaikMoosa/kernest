@@ -100,6 +100,29 @@ pub fn check_glyph(font: &Font, glyph: &str) -> Vec<String> {
             issues.extend(compare(&name, master, &m.name, l));
         }
     }
+    // Colour layers: the same number in every master, each matching its counterpart.
+    let def_colors: Vec<&Layer> = g.color_layers(&def.id).collect();
+    for m in font.masters.iter().filter(|m| m.id != def.id) {
+        let colors: Vec<&Layer> = g.color_layers(&m.id).collect();
+        if colors.len() != def_colors.len() {
+            issues.push(format!(
+                "{}: {} colour layers, {} has {}",
+                m.name,
+                colors.len(),
+                def.name,
+                def_colors.len()
+            ));
+            continue;
+        }
+        for (i, (a, b)) in def_colors.iter().zip(&colors).enumerate() {
+            issues.extend(compare(
+                &format!("{} · colour layer {}", m.name, i + 1),
+                a,
+                &format!("{} · colour layer {}", def.name, i + 1),
+                b,
+            ));
+        }
+    }
     for ranges in g.bracket_groups() {
         let alt = |m: &Master| {
             g.bracket_layers()

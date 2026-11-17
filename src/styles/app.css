@@ -381,3 +381,16 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 }
 [dir="rtl"] .metric-input, [dir="rtl"] .side-input { text-align: end; }
 [dir="rtl"] .text-field { direction: rtl; text-align: start; }
+
+/* Colour fonts: palette swatches, the paint dialog and Font Info's palette table. */
+.swatches { display: inline-flex; flex-wrap: wrap; gap: var(--k-space-4); }
+.swatch { width: 22px; height: 22px; border-radius: var(--k-radius-sm); border: 1px solid var(--k-border-strong); padding: 0; cursor: pointer; }
+.swatch.is-selected { outline: 2px solid var(--k-border-focus); outline-offset: 1px; }
+.paint-dialog { width: 560px; }
+.paint-dialog .segmented { align-self: flex-start; margin-bottom: var(--k-space-8); }
+.paint-point { display: inline-flex; align-items: center; gap: var(--k-space-4); margin-inline-end: var(--k-space-12); }
+.paint-point .metric-input, .paint-stop .metric-input, .paint-alpha .metric-input { width: 64px; }
+.paint-stop { gap: var(--k-space-8); align-items: center; margin-bottom: var(--k-space-6); }
+.paint-stop label, .paint-alpha { display: inline-flex; align-items: center; gap: var(--k-space-4); }
+.color-cell { display: inline-flex; align-items: center; gap: var(--k-space-4); }
+.color-swatch { width: 28px; height: 24px; padding: 0; border: 1px solid var(--k-border-strong); border-radius: var(--k-radius-sm); background: none; cursor: pointer; }

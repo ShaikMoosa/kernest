@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use kernest_core::color::{self, Paint};
 use kernest_core::{layers, smart, AxisRange, Font, SmartAxis};
 use serde::Serialize;
 use tauri::State;
@@ -14,7 +15,7 @@ use crate::commands::{doc_mut, lock, status, AppState, CmdResult, DocStatus};
 pub struct LayerInfo {
     /// What Edit View and the other layer commands use to address this layer.
     key: String,
-    /// "master" | "brace" | "bracket"
+    /// "master" | "brace" | "bracket" | "smart" | "color"
     kind: &'static str,
     /// e.g. "Regular", "{wght 550}", "[wght 600–]"
     label: String,
@@ -24,6 +25,9 @@ pub struct LayerInfo {
     location: Option<BTreeMap<String, f64>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     bracket: Vec<AxisRange>,
+    /// A colour layer's paint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paint: Option<Paint>,
 }
 
 /// Every layer of a glyph: master layers in master order, then brace and bracket layers.
@@ -47,28 +51,37 @@ pub fn glyph_layers(state: State<AppState>, glyph: String) -> CmdResult<Vec<Laye
             master_name: master_name(&l.master_id),
             location: None,
             bracket: Vec::new(),
+            paint: None,
         })
         .collect();
-    out.extend(
-        g.layers
-            .iter()
-            .filter(|l| !l.is_master())
-            .map(|l| LayerInfo {
-                key: l.key().to_string(),
-                kind: if l.location.is_some() {
-                    "brace"
-                } else if l.smart.is_some() {
-                    "smart"
-                } else {
-                    "bracket"
-                },
-                label: l.label().unwrap_or_default(),
-                master_id: l.master_id.clone(),
-                master_name: master_name(&l.master_id),
-                location: l.location.clone(),
-                bracket: l.bracket.clone(),
-            }),
-    );
+    out.extend(g.layers.iter().filter(|l| !l.is_master()).map(|l| {
+        LayerInfo {
+            key: l.key().to_string(),
+            kind: if l.location.is_some() {
+                "brace"
+            } else if l.smart.is_some() {
+                "smart"
+            } else if l.color.is_some() {
+                "color"
+            } else {
+                "bracket"
+            },
+            // Colour layers are numbered from the bottom of their master's stack.
+            label: match &l.color {
+                Some(_) => g
+                    .color_layers(&l.master_id)
+                    .position(|x| x.key() == l.key())
+                    .map(|i| (i + 1).to_string())
+                    .unwrap_or_default(),
+                None => l.label().unwrap_or_default(),
+            },
+            master_id: l.master_id.clone(),
+            master_name: master_name(&l.master_id),
+            location: l.location.clone(),
+            bracket: l.bracket.clone(),
+            paint: l.color.as_ref().map(|c| c.paint.clone()),
+        }
+    }));
     Ok(out)
 }
 
@@ -172,4 +185,40 @@ pub fn remove_layer(state: State<AppState>, glyph: String, key: String) -> CmdRe
         Ok((layers::remove_layer(f, &glyph, &key)?, String::new()))
     })?;
     Ok(r.status)
+}
+
+/// Adds a colour layer on top of the glyph's others, in every master.
+#[tauri::command]
+pub fn add_color_layer(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+) -> CmdResult<LayerAdded> {
+    apply(&state, |f| color::add_color_layer(f, &glyph, &master_id))
+}
+
+/// Sets a colour layer's paint (in every master).
+#[tauri::command]
+pub fn set_color_paint(
+    state: State<AppState>,
+    glyph: String,
+    key: String,
+    paint: Paint,
+) -> CmdResult<LayerAdded> {
+    apply(&state, |f| {
+        Ok((color::set_paint(f, &glyph, &key, paint)?, key.clone()))
+    })
+}
+
+/// Moves a colour layer up or down the stack (in every master).
+#[tauri::command]
+pub fn move_color_layer(
+    state: State<AppState>,
+    glyph: String,
+    key: String,
+    up: bool,
+) -> CmdResult<LayerAdded> {
+    apply(&state, |f| {
+        Ok((color::move_color_layer(f, &glyph, &key, up)?, key.clone()))
+    })
 }

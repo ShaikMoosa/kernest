@@ -8,6 +8,7 @@ Kernest is a font editor for Windows. It works offline, and your fonts are plain
 - [Spacing and kerning](#spacing-and-kerning)
 - [Masters, axes and instances](#masters-axes-and-instances)
 - [Export](#export)
+- [Colour fonts](#colour-fonts)
 - [Import](#import)
 - [Theme and language](#theme-and-language)
 - [Keyboard shortcuts](#keyboard-shortcuts)
@@ -150,6 +151,22 @@ And what happens before building:
 - **Autohint** adds TrueType hinting instructions to TTF and WOFF2 files, static and variable, using the settings in Font Info › Hinting. Hinting makes text crisper at small sizes on Windows. OTF files aren't affected. Kernest hints with [tilvisan](https://github.com/simoncozens/tilvisan), a Rust port of ttfautohint.
 
 Kerning and kerning groups are compiled into GPOS, and your feature code is included. Glyphs that aren't set to export are left out.
+
+## Colour fonts
+
+Kernest makes colour fonts in the **COLRv1** format: glyphs built from coloured layers, each filled with a palette colour or a gradient. Windows 11, current browsers and design apps show them in colour. The glyph's normal outline is the black-and-white fallback for apps that don't support colour.
+
+1. **Palettes:** in Font Info › Colour palettes, choose **Add palette**, then set its colours with the swatches or as `#rrggbb` / `#rrggbbaa` (the last two digits are the opacity). Extra palettes, for example one for dark backgrounds, have the same number of colours as palette 1, which is the default.
+2. **Colour layers:** in the glyph editor, **+ Colour** adds a colour layer in every master. The first one starts as a copy of the glyph's outline; later ones start empty. Pick a colour layer in the **Layer** list and draw it like any other layer. Layers stack from Colour 1 at the bottom upwards; **↓** and **↑** change the order.
+3. **Paint…** chooses how the layer is filled:
+   - **Solid colour:** a palette colour, with an opacity.
+   - **Linear gradient:** from a start point to an end point, in font units.
+   - **Radial gradient:** outwards from a centre, up to a radius.
+   - Gradients go through two or more colour stops, each with a palette colour, a position and an opacity.
+
+The paint of a colour layer is the same in every master, but its drawing can differ: colour layers must match point for point across masters, like the outlines, and they interpolate in variable fonts.
+
+On export, every colour layer becomes a glyph of its own (`O.color0`, `O.color1`, …), and Kernest writes the `COLR` and `CPAL` tables into TTF, OTF and WOFF2 files, static and variable. Glyphs whose layers are all solid, opaque colours also get a COLRv0 record, so Windows 10 and older apps can show them in colour too.
 
 ## Import
 

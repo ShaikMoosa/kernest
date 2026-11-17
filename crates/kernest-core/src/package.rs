@@ -27,7 +27,10 @@ use crate::error::{Error, IoContext, Result};
 use crate::model::{Axis, Font, FontInfo, Glyph, Instance, KernPair, Master};
 
 /// Format version written by this build.
-pub const FORMAT_VERSION: u32 = 1;
+/// The newest format this version reads and writes. Version 2 adds colour palettes and
+/// colour layers; fonts without colour are still written as version 1, so older
+/// Kernest versions keep opening them.
+pub const FORMAT_VERSION: u32 = 2;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -42,6 +45,8 @@ struct FontFile {
     masters: Vec<Master>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     instances: Vec<Instance>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    palettes: Vec<Vec<crate::color::Color>>,
     glyph_order: Vec<String>,
 }
 
@@ -144,12 +149,17 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
     // font.json last: a package with a font.json is a complete package.
     let font_path = dir.join("font.json");
     let file = FontFile {
-        format_version: FORMAT_VERSION,
+        format_version: if font.palettes.is_empty() && !font.glyphs.iter().any(|g| g.is_color()) {
+            1
+        } else {
+            FORMAT_VERSION
+        },
         generator: format!("Kernest {}", env!("CARGO_PKG_VERSION")),
         info: font.info.clone(),
         axes: font.axes.clone(),
         masters: font.masters.clone(),
         instances: font.instances.clone(),
+        palettes: font.palettes.clone(),
         glyph_order: font.glyphs.iter().map(|g| g.name.clone()).collect(),
     };
     write_atomic(&font_path, &to_json(&file, &font_path)?)
@@ -224,6 +234,7 @@ pub fn open(dir: &Path) -> Result<Font> {
         glyphs,
         kerning,
         features,
+        palettes: file.palettes,
     };
     font.validate()?;
     Ok(font)

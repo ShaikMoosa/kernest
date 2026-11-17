@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { backend, type DocStatus, type FontInfo, type KernMode, type Location, type MetricName, type TextItem, type TextLayout } from "../lib/backend";
 import { t } from "../lib/i18n";
+import { ColorGlyph } from "./ColorGlyph";
 
 const PRESETS = ["HOHOHAVATAR To LT", "nnonnoonon HHOHHOOHOH", "Hamburgefontsiv", "/H/O/H/n/o/n LTLTLT ToTo"];
 const MISSING_WIDTH = 500;
@@ -272,9 +273,13 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
                 {ln.map((it, i) => it.type === "glyph" ? (
                   <g key={i}>
                     {showMetrics && <rect x={xs[i]} y={by - (metrics?.ascender ?? 800) * scale} width={it.width * scale} height={((metrics?.ascender ?? 800) - (metrics?.descender ?? -200)) * scale} className="sb-box" />}
-                    {it.svg ? (
-                      <path d={it.svg} transform={`translate(${xs[i]} ${by}) scale(${scale} ${-scale})`} className={it.incompatible ? "text-glyph is-incompatible" : "text-glyph"}><title>{it.incompatible ? `${it.name}: masters can't be interpolated (default master shown)` : it.name}</title></path>
-                    ) : (
+                    {it.svg ? (<>
+                      {it.color?.length ? (
+                        <g transform={`translate(${xs[i]} ${by}) scale(${scale} ${scale})`}><title>{it.name}</title><ColorGlyph layers={it.color} palette={layout?.palette ?? []} /></g>
+                      ) : (
+                        <path d={it.svg} transform={`translate(${xs[i]} ${by}) scale(${scale} ${-scale})`} className={it.incompatible ? "text-glyph is-incompatible" : "text-glyph"}><title>{it.incompatible ? t("{name}: masters can't be interpolated (default master shown)", { name: it.name }) : it.name}</title></path>
+                      )}
+                    </>) : (
                       <text x={xs[i] + (it.width * scale) / 2} y={by} className="text-placeholder" fontSize={size * 0.7}>{it.unicode ? String.fromCodePoint(parseInt(it.unicode, 16)) : "?"}</text>
                     )}
                     {it.kern !== 0 && (

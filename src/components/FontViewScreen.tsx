@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { FontView, GlyphSummary } from "../lib/backend";
 import { SearchIcon } from "./Icons";
 import { t, tn } from "../lib/i18n";
+import { ColorGlyph } from "./ColorGlyph";
 
 const CATEGORY_ORDER = ["Uppercase", "Lowercase", "Letter", "Number", "Punctuation", "Symbol", "Separator", "Mark", "Other"];
 
@@ -18,7 +19,9 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen }: { glyph: GlyphSu
           <span className="glyph-placeholder">{glyph.character?.trim() ? glyph.character : ""}</span>
         ) : (
           <svg viewBox={`${x0} ${-ascender} ${h} ${h}`} aria-hidden="true">
-            <path d={glyph.svg} transform="scale(1,-1)" />
+            {glyph.color?.length
+              ? <ColorGlyph layers={glyph.color} palette={font.palette ?? []} />
+              : <path d={glyph.svg} transform="scale(1,-1)" />}
           </svg>
         )}
       </span>

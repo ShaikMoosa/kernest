@@ -114,7 +114,11 @@ pub fn set_axes(font: &Font, axes: Vec<Axis>) -> R<Font> {
             l.bracket.retain(|r| axes.iter().any(|a| a.tag == r.tag));
         }
         g.layers.retain(|l| {
-            l.is_master() || (l.location.is_some() && !axes.is_empty()) || !l.bracket.is_empty()
+            l.is_master()
+                || (l.location.is_some() && !axes.is_empty())
+                || !l.bracket.is_empty()
+                || l.smart.is_some()
+                || l.color.is_some()
         });
     }
     f.axes = axes;

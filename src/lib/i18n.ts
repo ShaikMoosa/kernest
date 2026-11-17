@@ -139,7 +139,7 @@ export function translateMessage(msg: string, depth = 0): string {
     tpl.names.forEach((name, i) => {
       const v = m[i + 1];
       if (NESTED.has(name)) vars[name] = translateMessage(v, depth + 1);
-      else if (NAMES.has(name) && typeof dict[v] === "string") vars[name] = dict[v] as string;
+      else if (NAMES.has(name)) vars[name] = translateMessage(v, depth + 1);
       else vars[name] = v;
     });
     // A list of issues joined with "; " is translated item by item.
