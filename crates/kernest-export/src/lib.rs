@@ -264,7 +264,9 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     }
     // Smart components become outlines; the compiler only sees plain shapes.
     let flat = kernest_core::smart::flatten_font(font);
-    let font = &flat;
+    // Components sit where their anchors say, so exported positions are current.
+    let aligned = kernest_core::anchors::align_all(&flat);
+    let font = &aligned;
     let keyed;
     let font = if opts.apply_metrics_keys {
         let (f, problems) = kernest_core::metricskeys::apply_all(font);
@@ -1271,6 +1273,7 @@ pub(crate) mod tests {
                 base: "_stem".into(),
                 transform: [1.0, 0.0, 0.0, 1.0, 80.0, 0.0],
                 smart: BTreeMap::from([("Height".into(), h)]),
+                align: true,
             }];
         }
         let out = tempfile::tempdir().unwrap();
@@ -1487,5 +1490,221 @@ pub(crate) mod tests {
         let r = export(&sample_font(), &ExportOptions::ttf(true, false, out.path())).unwrap();
         assert!(r.files.is_empty());
         assert!(r.problems[0].contains("two masters"));
+    }
+
+    /// A font ready for mark attachment: a drawn `a`, zero-width marks with default
+    /// anchors, and the composites `aacute` and `acircumflexacute` built from them.
+    fn with_anchor_marks(mut f: Font) -> Font {
+        use kernest_core::anchors::{create_composites, set_default_anchors};
+        use kernest_core::glyphset::{add_glyphs, NewGlyph};
+        f = add_glyphs(
+            &f,
+            &[
+                NewGlyph {
+                    name: "a".into(),
+                    codepoint: Some(0x61),
+                },
+                NewGlyph {
+                    name: "circumflexcomb".into(),
+                    codepoint: Some(0x302),
+                },
+                NewGlyph {
+                    name: "acutecomb".into(),
+                    codepoint: Some(0x301),
+                },
+            ],
+        )
+        .unwrap()
+        .font;
+        let rect = |x0: f64, y0: f64, x1: f64, y1: f64| {
+            Shape::Path(kernest_core::Path {
+                closed: true,
+                nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+                    .into_iter()
+                    .map(|(x, y)| kernest_core::Node::new(x, y, NodeKind::Line))
+                    .collect(),
+            })
+        };
+        let ids: Vec<String> = f.masters.iter().map(|m| m.id.clone()).collect();
+        for id in &ids {
+            let l = f.glyph_mut("a").unwrap().layer_mut(id).unwrap();
+            l.width = 580.0;
+            l.shapes = vec![rect(0.0, 0.0, 580.0, 500.0)];
+            let l = f
+                .glyph_mut("circumflexcomb")
+                .unwrap()
+                .layer_mut(id)
+                .unwrap();
+            l.width = 0.0;
+            l.shapes = vec![rect(-100.0, 500.0, 100.0, 650.0)];
+            let l = f.glyph_mut("acutecomb").unwrap().layer_mut(id).unwrap();
+            l.width = 0.0;
+            l.shapes = vec![rect(-80.0, 700.0, 80.0, 780.0)];
+        }
+        let f = set_default_anchors(
+            &f,
+            &["a".into(), "circumflexcomb".into(), "acutecomb".into()],
+        )
+        .unwrap();
+        create_composites(&f, &["aacute".into(), "acircumflexacute".into()])
+            .unwrap()
+            .font
+    }
+
+    #[test]
+    fn anchors_export_mark_and_mkmk_positioning() {
+        use write_fonts::read::tables::gpos::PositionLookup;
+        let f = with_anchor_marks(sample_font());
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let gpos = font.gpos().expect("anchors compile into GPOS");
+        let (mut mark_base, mut mark_mark) = (0, 0);
+        for l in gpos.lookup_list().unwrap().lookups().iter() {
+            match l.unwrap() {
+                PositionLookup::MarkToBase(_) => mark_base += 1,
+                PositionLookup::MarkToMark(_) => mark_mark += 1,
+                _ => {}
+            }
+        }
+        assert!(mark_base > 0, "mark lookup");
+        assert!(mark_mark > 0, "mkmk lookup for stacked marks");
+        let gdef = font.gdef().expect("categories compile into GDEF");
+        let classes = gdef.glyph_class_def().unwrap().unwrap();
+        let cmap = font.cmap().unwrap();
+        assert_eq!(classes.get(cmap.map_codepoint('a').unwrap()), 1);
+        assert_eq!(classes.get(cmap.map_codepoint(0x301u32).unwrap()), 3);
+        assert_eq!(
+            classes.get(cmap.map_codepoint(0x1EA5u32).unwrap()),
+            1,
+            "the composite is a base, so it can take further marks"
+        );
+    }
+
+    #[test]
+    fn caret_anchors_export_lig_caret_list() {
+        use kernest_core::glyphset::{add_glyphs, parse_glyph_list};
+        use kernest_core::Anchor;
+        use write_fonts::read::tables::gdef::CaretValue;
+        use write_fonts::types::GlyphId16;
+        let f = sample_font();
+        let mut f = add_glyphs(&f, &parse_glyph_list("f_i").unwrap())
+            .unwrap()
+            .font;
+        let l = f.glyph_mut("f_i").unwrap().layer_mut("m01").unwrap();
+        l.width = 600.0;
+        let stem = |x: f64| {
+            Shape::Path(kernest_core::Path {
+                closed: true,
+                nodes: [(x, 0.0), (x + 100.0, 0.0), (x + 100.0, 700.0), (x, 700.0)]
+                    .into_iter()
+                    .map(|(x, y)| kernest_core::Node::new(x, y, NodeKind::Line))
+                    .collect(),
+            })
+        };
+        l.shapes = vec![stem(50.0), stem(400.0)];
+        l.anchors = vec![Anchor {
+            name: "caret_1".into(),
+            x: 300.0,
+            y: 0.0,
+        }];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let gdef = font.gdef().unwrap();
+        let carets = gdef
+            .lig_caret_list()
+            .expect("caret_1 compiles into LigCaretList")
+            .unwrap();
+        assert_eq!(carets.lig_glyph_count(), 1);
+        let lig = carets.lig_glyphs().iter().next().unwrap().unwrap();
+        assert_eq!(lig.caret_count(), 1);
+        let CaretValue::Format1(c) = lig.caret_values().iter().next().unwrap().unwrap() else {
+            panic!("expected a coordinate caret")
+        };
+        assert_eq!(c.coordinate(), 300);
+        let post = font.post().unwrap();
+        let gid = (0..font.maxp().unwrap().num_glyphs())
+            .map(GlyphId16::new)
+            .find(|g| post.glyph_name(*g).unwrap() == "f_i")
+            .unwrap();
+        let classes = gdef.glyph_class_def().unwrap().unwrap();
+        assert_eq!(classes.get(gid), 2, "f_i is a ligature");
+    }
+
+    #[test]
+    fn entry_exit_anchors_export_cursive() {
+        use kernest_core::anchors::set_default_anchors;
+        use kernest_core::glyphset::{add_glyphs, NewGlyph};
+        use write_fonts::read::tables::gpos::PositionLookup;
+        let f = sample_font();
+        let mut f = add_glyphs(
+            &f,
+            &[
+                NewGlyph {
+                    name: "uni0628".into(),
+                    codepoint: Some(0x628),
+                },
+                NewGlyph {
+                    name: "uni0627".into(),
+                    codepoint: Some(0x627),
+                },
+            ],
+        )
+        .unwrap()
+        .font;
+        for (n, x0, x1) in [("uni0628", 50.0, 550.0), ("uni0627", 200.0, 300.0)] {
+            let l = f.glyph_mut(n).unwrap().layer_mut("m01").unwrap();
+            l.shapes = vec![Shape::Path(kernest_core::Path {
+                closed: true,
+                nodes: [(x0, 0.0), (x1, 0.0), (x1, 500.0), (x0, 500.0)]
+                    .into_iter()
+                    .map(|(x, y)| kernest_core::Node::new(x, y, NodeKind::Line))
+                    .collect(),
+            })];
+        }
+        let f = set_default_anchors(&f, &["uni0628".into(), "uni0627".into()]).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let gpos = font.gpos().expect("entry/exit compile into GPOS");
+        let cursive = gpos
+            .lookup_list()
+            .unwrap()
+            .lookups()
+            .iter()
+            .filter(|l| matches!(l, Ok(PositionLookup::Cursive(_))))
+            .count();
+        assert!(cursive > 0, "cursive lookup");
+    }
+
+    #[test]
+    fn variable_font_keeps_mark_positioning() {
+        use write_fonts::read::tables::gpos::PositionLookup;
+        let f = with_anchor_marks(two_masters());
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let gpos = font.gpos().expect("variable font keeps GPOS");
+        let marks = gpos
+            .lookup_list()
+            .unwrap()
+            .lookups()
+            .iter()
+            .filter(|l| matches!(l, Ok(PositionLookup::MarkToBase(_))))
+            .count();
+        assert!(marks > 0);
+        let gdef = font.gdef().unwrap();
+        let classes = gdef.glyph_class_def().unwrap().unwrap();
+        let cmap = font.cmap().unwrap();
+        assert_eq!(classes.get(cmap.map_codepoint(0x301u32).unwrap()), 3);
     }
 }

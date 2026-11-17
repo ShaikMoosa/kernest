@@ -98,6 +98,13 @@ export const ENGINE_MESSAGES = [
   "\"{glyph}\" has no layer \"{key}\".",
   "There is no such component.",
   "{name}: enter a number.",
+  // kernest-core: anchors
+  "An anchor name can't be empty.",
+  "Anchor names can't contain spaces.",
+  "\"{name}\" is used for two anchors.",
+  "\"{glyph}\" has no anchor named \"{old}\".",
+  "\"{glyph}\" already has an anchor named \"{new}\".",
+  "An anchor has an invalid coordinate.",
   // kernest-export
   "could not read the compiled font: {e}",
   "could not read the variable font: {e}",

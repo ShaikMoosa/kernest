@@ -136,9 +136,9 @@ pub(crate) fn css_palette(font: &Font) -> Vec<String> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocStatus {
-    dirty: bool,
-    can_undo: bool,
-    can_redo: bool,
+    pub(crate) dirty: bool,
+    pub(crate) can_undo: bool,
+    pub(crate) can_redo: bool,
 }
 
 pub(crate) fn status(doc: &Document) -> DocStatus {
@@ -222,6 +222,8 @@ pub struct ComponentDto {
     /// Values on the base glyph's smart axes (smart components only).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     smart: BTreeMap<String, f64>,
+    /// Whether anchors place this component (false once it is moved by hand).
+    pub(crate) align: bool,
     /// The base glyph's smart axes, if it is a smart glyph.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     smart_axes: Vec<SmartAxis>,
@@ -237,6 +239,12 @@ pub struct ComponentInput {
     transform: [f64; 6],
     #[serde(default)]
     smart: BTreeMap<String, f64>,
+    #[serde(default = "aligned")]
+    align: bool,
+}
+
+fn aligned() -> bool {
+    true
 }
 
 #[derive(Serialize)]
@@ -250,10 +258,10 @@ pub struct LayerView {
     lsb: Option<f64>,
     rsb: Option<f64>,
     paths: Vec<PathDto>,
-    components: Vec<ComponentDto>,
+    pub(crate) components: Vec<ComponentDto>,
     /// All components resolved to outlines, as SVG path data in font units (y up).
     component_svg: String,
-    anchors: Vec<Anchor>,
+    pub(crate) anchors: Vec<Anchor>,
     /// Metrics keys of this layer, e.g. `=n` for the left sidebearing.
     metrics_keys: kernest_core::MetricsKeys,
     /// This glyph's smart axes, if it is a smart glyph.
@@ -268,7 +276,7 @@ pub struct LayerView {
     /// The paint of this layer, when it is a colour layer.
     #[serde(skip_serializing_if = "Option::is_none")]
     paint: Option<kernest_core::color::Paint>,
-    status: DocStatus,
+    pub(crate) status: DocStatus,
 }
 
 fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> {
@@ -321,7 +329,7 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
     })
 }
 
-fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<LayerView> {
+pub(crate) fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<LayerView> {
     let font = &doc.font;
     let g = font
         .glyph(glyph)
@@ -355,6 +363,7 @@ fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<Laye
                 base,
                 transform,
                 smart,
+                align,
             } => {
                 let mut single = Layer::new(&layer.master_id, layer.width);
                 single.location = layer.location.clone();
@@ -363,6 +372,7 @@ fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<Laye
                     base: base.clone(),
                     transform: *transform,
                     smart: smart.clone(),
+                    align: *align,
                     smart_axes: font
                         .glyph(base)
                         .map(|b| b.smart_axes.clone())
@@ -466,6 +476,7 @@ fn to_component(font: &Font, glyph: &str, c: ComponentInput) -> CmdResult<Shape>
         base: c.base,
         transform: c.transform,
         smart: c.smart,
+        align: c.align,
     })
 }
 
@@ -979,24 +990,28 @@ mod component_tests {
             base: "H".into(),
             transform: kernest_core::IDENTITY,
             smart: BTreeMap::new(),
+            align: true,
         };
         assert!(to_component(&font, "A", ok).is_ok());
         let missing = ComponentInput {
             base: "nope".into(),
             transform: kernest_core::IDENTITY,
             smart: BTreeMap::new(),
+            align: true,
         };
         assert!(to_component(&font, "A", missing).is_err());
         let selfref = ComponentInput {
             base: "A".into(),
             transform: kernest_core::IDENTITY,
             smart: BTreeMap::new(),
+            align: true,
         };
         assert!(to_component(&font, "A", selfref).is_err());
         let bad = ComponentInput {
             base: "H".into(),
             transform: [1.0, 0.0, 0.0, 1.0, f64::INFINITY, 0.0],
             smart: BTreeMap::new(),
+            align: true,
         };
         assert!(to_component(&font, "A", bad).is_err());
     }

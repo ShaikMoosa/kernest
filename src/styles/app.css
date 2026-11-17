@@ -258,6 +258,31 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .component-label { font: 500 11px var(--k-font-ui); fill: var(--k-text-accent); pointer-events: none; }
 .toolbar-sep { width: 1px; height: 20px; background: var(--k-border-default); margin: 0 var(--k-space-6); }
 .info-comp { align-self: center; color: var(--k-text-accent); white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- Anchors & component alignment ---------- */
+.anchor-mark { fill: var(--k-bg-surface); stroke: var(--k-editor-anchor); stroke-width: 1.5; }
+.anchor-mark.is-selected { fill: var(--k-editor-anchor); }
+.anchor-label { font: 500 10px var(--k-font-ui); fill: var(--k-editor-anchor); pointer-events: none; }
+.anchor-name-input { width: 96px; }
+.component-missing { fill: none; stroke: var(--k-status-danger); stroke-width: 1.2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.component-label.is-missing { fill: var(--k-text-danger); }
+.align-toggle {
+  display: inline-flex; align-items: center; justify-content: center; align-self: center;
+  width: var(--k-control-md); height: var(--k-control-md); padding: 0;
+  border: 1px solid var(--k-border-strong); border-radius: var(--k-radius-md); background: var(--k-bg-surface); cursor: pointer;
+}
+.align-toggle.is-auto { color: var(--k-status-success); border-color: var(--k-status-success); }
+.align-toggle.is-manual { color: var(--k-text-muted); }
+.align-toggle:hover { background: var(--k-bg-hover); }
+.ctx-menu {
+  position: absolute; z-index: 5; min-width: 140px; padding: var(--k-space-4);
+  background: var(--k-bg-surface); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-md); box-shadow: var(--k-shadow-l);
+}
+.ctx-menu button {
+  display: block; width: 100%; padding: var(--k-space-6) var(--k-space-8); border: 0; border-radius: var(--k-radius-sm);
+  background: none; text-align: start; font: 400 12px var(--k-font-ui); color: var(--k-text-primary); cursor: pointer;
+}
+.ctx-menu button:hover { background: var(--k-bg-hover); }
 .dialog-sm { width: 380px; }
 .picker-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; }
 .picker-list .list-item { font-family: var(--k-font-code); font-size: 12px; }
@@ -376,11 +401,13 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 
 /* Right-to-left (Arabic): the interface mirrors, but drawing areas, glyph cells,
    numbers, glyph names and code stay left to right. */
-.canvas-wrap, .text-canvas, .glyph-cell, .metric-input, .k-code, .kern-table .side, .side-input, .dest-input, .add-glyphs-text, .component-label {
+.canvas-wrap, .text-canvas, .glyph-cell, .metric-input, .k-code, .kern-table .side, .side-input, .dest-input, .add-glyphs-text, .component-label, .anchor-label, .anchor-name-input, .info-comp {
   direction: ltr;
 }
 [dir="rtl"] .metric-input, [dir="rtl"] .side-input { text-align: end; }
 [dir="rtl"] .text-field { direction: rtl; text-align: start; }
+/* The info box and context menu are interface, not drawing: they mirror. */
+[dir="rtl"] .info-box, [dir="rtl"] .ctx-menu { direction: rtl; }
 
 /* Colour fonts: palette swatches, the paint dialog and Font Info's palette table. */
 .swatches { display: inline-flex; flex-wrap: wrap; gap: var(--k-space-4); }

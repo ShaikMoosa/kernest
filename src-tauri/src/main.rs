@@ -1,6 +1,7 @@
 // Hide the console window in release builds on Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod anchors;
 mod commands;
 mod export;
 mod fontinfo;
@@ -70,6 +71,13 @@ fn main() {
             layers::set_smart_axes,
             layers::add_smart_pole,
             commands::set_component_smart,
+            anchors::add_anchor,
+            anchors::move_anchors,
+            anchors::rename_anchor,
+            anchors::remove_anchors,
+            anchors::set_default_anchors,
+            anchors::set_component_align,
+            anchors::create_composites,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kernest");

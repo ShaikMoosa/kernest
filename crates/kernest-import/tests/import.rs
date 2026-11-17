@@ -518,6 +518,7 @@ fn check_glyphs_font(imp: &kernest_import::Imported) {
         base,
         transform,
         smart,
+        ..
     } = &il.shapes[0]
     else {
         panic!(

@@ -46,6 +46,8 @@ export const ar: Dict = {
   "Glyph": "حرف",
   "Add Glyphs…": "إضافة حروف…",
   "Add Component…": "إضافة مكوّن…",
+  "Set Anchors": "تعيين المراسي",
+  "Create Composites…": "إنشاء حروف مركّبة…",
   "Update Metrics": "تحديث المقاييس",
   "Path": "مسار",
   "Correct Path Direction": "تصحيح اتجاه المسارات",
@@ -53,6 +55,7 @@ export const ar: Dict = {
   "Remove Overlap": "إزالة التداخل",
   "View": "عرض",
   "Show Metrics": "إظهار المقاييس",
+  "Show Anchors": "إظهار المراسي",
   "Theme: System": "السمة: النظام",
   "Theme: Light": "السمة: فاتحة",
   "Theme: Dark": "السمة: داكنة",
@@ -103,6 +106,25 @@ export const ar: Dict = {
   "Added {n} glyphs": {
     zero: "تمت إضافة {n} حرف", one: "تمت إضافة حرف واحد", two: "تمت إضافة حرفين", few: "تمت إضافة {n} أحرف", many: "تمت إضافة {n} حرفًا", other: "تمت إضافة {n} حرف",
   },
+  "Set anchors on {n} glyphs": {
+    zero: "تم تعيين المراسي على {n} حرف", one: "تم تعيين المراسي على حرف واحد", two: "تم تعيين المراسي على حرفين", few: "تم تعيين المراسي على {n} أحرف", many: "تم تعيين المراسي على {n} حرفًا", other: "تم تعيين المراسي على {n} حرف",
+  },
+  "These glyphs take no default anchors.": "هذه الحروف لا تقبل مراسي افتراضية.",
+  "Built {n} composites": {
+    zero: "تم إنشاء {n} حرف مركّب", one: "تم إنشاء حرف مركّب واحد", two: "تم إنشاء حرفين مركّبين", few: "تم إنشاء {n} حروف مركّبة", many: "تم إنشاء {n} حرفًا مركّبًا", other: "تم إنشاء {n} حرف مركّب",
+  },
+  "{n} skipped (no recipe, missing parts or already drawn)": {
+    zero: "تم تخطي {n} (لا وصفة، أو أجزاء ناقصة، أو مرسوم مسبقًا)",
+    one: "تم تخطي واحد (لا وصفة، أو أجزاء ناقصة، أو مرسوم مسبقًا)",
+    two: "تم تخطي اثنين (لا وصفة، أو أجزاء ناقصة، أو مرسوم مسبقًا)",
+    few: "تم تخطي {n} (لا وصفة، أو أجزاء ناقصة، أو مرسومة مسبقًا)",
+    many: "تم تخطي {n} (لا وصفة، أو أجزاء ناقصة، أو مرسومة مسبقًا)",
+    other: "تم تخطي {n} (لا وصفة، أو أجزاء ناقصة، أو مرسومة مسبقًا)",
+  },
+  "Nothing built: no recipes, missing parts, or the glyphs already have outlines.": "لم يُنشأ شيء: لا وصفات، أو أجزاء ناقصة، أو أن الحروف لها مخططات مسبقًا.",
+  "built {n} composites": {
+    zero: "تم إنشاء {n} حرف مركّب", one: "تم إنشاء حرف مركّب واحد", two: "تم إنشاء حرفين مركّبين", few: "تم إنشاء {n} حروف مركّبة", many: "تم إنشاء {n} حرفًا مركّبًا", other: "تم إنشاء {n} حرف مركّب",
+  },
   "Nothing added: all {n} already in the font": {
     zero: "لم يُضف شيء: كلها موجودة مسبقًا في الخط", one: "لم يُضف شيء: الحرف موجود مسبقًا في الخط", two: "لم يُضف شيء: الحرفان موجودان مسبقًا في الخط", few: "لم يُضف شيء: الأحرف الـ{n} كلها موجودة مسبقًا في الخط", many: "لم يُضف شيء: الحروف الـ{n} كلها موجودة مسبقًا في الخط", other: "لم يُضف شيء: الحروف الـ{n} كلها موجودة مسبقًا في الخط",
   },
@@ -119,6 +141,13 @@ export const ar: Dict = {
   "Add Glyphs": "إضافة حروف",
   "Glyph names, characters or code points": "أسماء حروف أو محارف أو نقاط ترميز",
   "Separate with spaces, commas or new lines. Glyphs already in the font are skipped.": "افصل بينها بمسافات أو فواصل أو أسطر جديدة. يتم تخطي الحروف الموجودة مسبقًا في الخط.",
+  "Build composites from their parts": "إنشاء الحروف المركّبة من أجزائها",
+  "Aacute becomes A + acutecomb, placed by anchors, when both parts are in the font.": "يصبح Aacute عبارة عن A + acutecomb، يوضع بالمراسي، عندما يكون كلا الجزأين في الخط.",
+  "Create Composites": "إنشاء حروف مركّبة",
+  "Glyph names": "أسماء الحروف",
+  "Type the glyph names to build.": "اكتب أسماء الحروف المراد إنشاؤها.",
+  "Each glyph is built from its parts: Aacute from A and acutecomb. The parts must already be in the font.": "يُنشأ كل حرف من أجزائه: Aacute من A وacutecomb. يجب أن تكون الأجزاء موجودة مسبقًا في الخط.",
+  "Glyphs that already have outlines are left alone.": "الحروف التي لها مخططات مسبقًا تُترك كما هي.",
   "Add glyph sets": "إضافة مجموعات حروف",
   "New glyphs get a layer in every master.": "تحصل الحروف الجديدة على طبقة في كل نسخة رئيسية.",
   "{n} glyphs": {
@@ -207,7 +236,7 @@ export const ar: Dict = {
   "Width": "العرض",
   "RSB": "RSB",
   "Selected component": "المكوّن المحدد",
-  "Selected: {points} · {components}": "المحدد: {points} · {components}",
+  "Selected: {list}": "المحدد: {list}",
   "No selection": "لا يوجد تحديد",
   "Click or drag to select · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes": "انقر أو اسحب للتحديد · اسحب للنقل · الأسهم للتحريك (Shift ×10) · Enter ناعمة/زاوية · Delete للحذف",
   "Click for corners, drag for curves · click the first point to close · Esc ends the path": "انقر للزوايا واسحب للمنحنيات · انقر النقطة الأولى للإغلاق · Esc لإنهاء المسار",
@@ -226,6 +255,18 @@ export const ar: Dict = {
   "{n} components selected": {
     zero: "تم تحديد {n} مكوّن", one: "تم تحديد مكوّن واحد", two: "تم تحديد مكوّنين", few: "تم تحديد {n} مكوّنات", many: "تم تحديد {n} مكوّنًا", other: "تم تحديد {n} مكوّن",
   },
+  "{n} anchors": {
+    zero: "{n} مرساة", one: "مرساة واحدة", two: "مرساتان", few: "{n} مراسي", many: "{n} مرساة", other: "{n} مرساة",
+  },
+  "{n} anchors selected": {
+    zero: "تم تحديد {n} مرساة", one: "تم تحديد مرساة واحدة", two: "تم تحديد مرساتين", few: "تم تحديد {n} مراسي", many: "تم تحديد {n} مرساة", other: "تم تحديد {n} مرساة",
+  },
+  "Anchor": "مرساة",
+  "Anchor name": "اسم المرساة",
+  "Add Anchor": "إضافة مرساة",
+  "Missing glyph: {name}": "حرف مفقود: {name}",
+  "Placed by its anchors. Click to place it by hand.": "موضوع بمراسيه. انقر لوضعه يدويًا.",
+  "Placed by hand. Click to place it by its anchors.": "موضوع يدويًا. انقر لوضعه بمراسيه.",
 
   // ---------- Export ----------
   "Needs at least two masters and an axis (Font Info).": "يحتاج إلى نسختين رئيسيتين ومحور على الأقل (معلومات الخط).",
@@ -554,6 +595,12 @@ export const ar: Dict = {
   "\"{glyph}\" has no layer \"{key}\".": "ليس للحرف «{glyph}» الطبقة «{key}».",
   "There is no such component.": "لا يوجد مكوّن كهذا.",
   "{name}: enter a number.": "{name}: أدخل رقمًا.",
+  "An anchor name can't be empty.": "لا يمكن أن يكون اسم المرساة فارغًا.",
+  "Anchor names can't contain spaces.": "لا يمكن أن تحتوي أسماء المراسي على مسافات.",
+  "\"{name}\" is used for two anchors.": "«{name}» مستخدم لمرساتين.",
+  "\"{glyph}\" has no anchor named \"{old}\".": "«{glyph}» ليس فيه مرساة باسم «{old}».",
+  "\"{glyph}\" already has an anchor named \"{new}\".": "«{glyph}» فيه بالفعل مرساة باسم «{new}».",
+  "An anchor has an invalid coordinate.": "إحدى المراسي لها إحداثي غير صالح.",
   "could not read the compiled font: {e}": "تعذّرت قراءة الخط المبني: {e}",
   "could not read the variable font: {e}": "تعذّرت قراءة الخط المتغير: {e}",
   "could not write the variation store: {e}": "تعذّرت كتابة مخزن التغييرات: {e}",

@@ -87,6 +87,8 @@ export interface ComponentEdit {
   transform: number[];
   /** Values on the base glyph's smart axes (smart components only). */
   smart?: Record<string, number>;
+  /** Whether anchors place this component; false once it is moved by hand (default true). */
+  align?: boolean;
 }
 
 /** An axis of a smart glyph, such as Width 0–100. */
@@ -97,6 +99,8 @@ export interface SmartAxis {
 }
 
 export interface ComponentView extends ComponentEdit {
+  /** Whether anchors place this component (false once it is moved by hand). */
+  align: boolean;
   /** This component's resolved outline, SVG path data in font units. */
   svg: string;
   /** The base glyph's smart axes, if it is a smart glyph. */
@@ -283,6 +287,26 @@ export interface AddGlyphsResult {
   status: DocStatus;
 }
 
+/** One anchor's move, in font units. */
+export interface AnchorMove {
+  name: string;
+  dx: number;
+  dy: number;
+}
+
+export interface DefaultAnchorsResult {
+  /** How many of the named glyphs received anchors. */
+  updated: number;
+  status: DocStatus;
+}
+
+export interface CompositesResult {
+  built: string[];
+  /** No recipe, missing parts, or already drawn. */
+  skipped: string[];
+  status: DocStatus;
+}
+
 export interface ImportResult {
   view: FontView;
   /** What was left out or changed while converting. */
@@ -362,6 +386,14 @@ export interface Backend {
   addSmartPole(glyph: string, masterId: string, pole: Record<string, number>): Promise<{ key: string; status: DocStatus }>;
   /** Sets a component's smart values (component `index` among the layer's components). */
   setComponentSmart(glyph: string, masterId: string, index: number, values: Record<string, number>): Promise<LayerView>;
+
+  addAnchor(glyph: string, masterId: string, name: string, x: number, y: number, allMasters: boolean): Promise<LayerView>;
+  moveAnchors(glyph: string, masterId: string, moves: AnchorMove[], allMasters: boolean): Promise<LayerView>;
+  renameAnchor(glyph: string, masterId: string, oldName: string, newName: string, allMasters: boolean): Promise<LayerView>;
+  removeAnchors(glyph: string, masterId: string, names: string[], allMasters: boolean): Promise<LayerView>;
+  setDefaultAnchors(glyphs: string[]): Promise<DefaultAnchorsResult>;
+  setComponentAlign(glyph: string, masterId: string, index: number, align: boolean): Promise<LayerView>;
+  createComposites(names: string[]): Promise<CompositesResult>;
   /** Paths Kernest was started with (Explorer's "Open in Kernest", "Open with"); once. */
   takeLaunchPaths(): Promise<string[]>;
 }
@@ -429,6 +461,13 @@ const tauriBackend: Backend = {
   setSmartAxes: (glyph, axes) => invoke("set_smart_axes", { glyph, axes }),
   addSmartPole: (glyph, masterId, pole) => invoke("add_smart_pole", { glyph, masterId, pole }),
   setComponentSmart: (glyph, masterId, index, values) => invoke("set_component_smart", { glyph, masterId, index, values }),
+  addAnchor: (glyph, masterId, name, x, y, allMasters) => invoke("add_anchor", { glyph, masterId, name, x, y, allMasters }),
+  moveAnchors: (glyph, masterId, moves, allMasters) => invoke("move_anchors", { glyph, masterId, moves, allMasters }),
+  renameAnchor: (glyph, masterId, oldName, newName, allMasters) => invoke("rename_anchor", { glyph, masterId, oldName, newName, allMasters }),
+  removeAnchors: (glyph, masterId, names, allMasters) => invoke("remove_anchors", { glyph, masterId, names, allMasters }),
+  setDefaultAnchors: (glyphs) => invoke("set_default_anchors", { glyphs }),
+  setComponentAlign: (glyph, masterId, index, align) => invoke("set_component_align", { glyph, masterId, index, align }),
+  createComposites: (names) => invoke("create_composites", { names }),
 };
 
 // ---------- Browser preview mock ----------
@@ -573,7 +612,7 @@ function mockFontView(d: MockDoc, masterId?: string): FontView {
 }
 
 function mockLayer(d: MockDoc, g: MockGlyph): LayerView {
-  const components = g.components.map((c) => ({ base: c.base, transform: [...c.transform], svg: pathsToSvg(resolveComponent(d, c)) }));
+  const components = g.components.map((c) => ({ base: c.base, transform: [...c.transform], align: true, svg: pathsToSvg(resolveComponent(d, c)) }));
   return {
     glyph: g.name, unicode: g.unicode, masterId: "m01", metrics: METRICS, width: g.width, ...sb(d, g),
     paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], metricsKeys: {}, issues: [], status: status(d),
@@ -872,6 +911,27 @@ const mockBackend: Backend = {
   },
   async setComponentSmart() {
     throw "Smart components need the desktop app (npm run tauri dev).";
+  },
+  async addAnchor() {
+    throw "Anchors need the desktop app (npm run tauri dev).";
+  },
+  async moveAnchors() {
+    throw "Anchors need the desktop app (npm run tauri dev).";
+  },
+  async renameAnchor() {
+    throw "Anchors need the desktop app (npm run tauri dev).";
+  },
+  async removeAnchors() {
+    throw "Anchors need the desktop app (npm run tauri dev).";
+  },
+  async setDefaultAnchors() {
+    throw "Anchors need the desktop app (npm run tauri dev).";
+  },
+  async setComponentAlign() {
+    throw "Anchors need the desktop app (npm run tauri dev).";
+  },
+  async createComposites() {
+    throw "Building composites needs the desktop app (npm run tauri dev).";
   },
   async compatibility() {
     return [];

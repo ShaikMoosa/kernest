@@ -243,6 +243,7 @@ fn flatten(
                 base: inner,
                 transform,
                 smart,
+                align,
             } => {
                 let ct = compose(t, *transform);
                 if gone.contains(inner.as_str()) {
@@ -252,6 +253,7 @@ fn flatten(
                         base: inner.clone(),
                         transform: ct,
                         smart: smart.clone(),
+                        align: *align,
                     });
                 }
             }

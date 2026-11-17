@@ -126,7 +126,7 @@ The rest of the plan, in order. Each phase is built, tested, checked in the app,
 | Phase | Release | What it adds | Status |
 |---|---|---|---|
 | 1 | 1.4 | Ship colour fonts | ✅ v1.4 |
-| 2 | 1.5 | Anchors in the editor (marks, ligature carets, cursive), components that align to anchors, composites from recipes | ⏳ next |
+| 2 | 1.5 | Anchors in the editor (marks, ligature carets, cursive), components that align to anchors, composites from recipes | ✅ next release |
 | 3 | 1.6 | Features editor with error checking and generated features; designer, vendor, copyright, weight/width class and style linking in Font Info; notes | ⏳ planned |
 | 4 | 1.7 | Guides, background layer, transform panel (scale, rotate, mirror, skew), measure tool, snap to grid | ⏳ planned |
 | 5 | 1.8 | Knife, open corners, reconnect and tidy up paths, lock and focus; Filter menu (Round Corners, Offset Curve) | ⏳ planned |

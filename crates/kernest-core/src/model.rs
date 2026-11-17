@@ -401,16 +401,20 @@ pub enum Shape {
         /// (axes left out sit at their minimum).
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         smart: BTreeMap<String, f64>,
+        /// Whether the component is placed by its anchors (true) or by hand (false).
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        align: bool,
     },
 }
 
 impl Shape {
-    /// A plain component of `base`.
+    /// A plain component of `base`, aligned by its anchors.
     pub fn component(base: impl Into<String>, transform: [f64; 6]) -> Shape {
         Shape::Component {
             base: base.into(),
             transform,
             smart: BTreeMap::new(),
+            align: true,
         }
     }
 }

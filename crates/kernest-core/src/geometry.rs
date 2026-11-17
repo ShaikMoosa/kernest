@@ -76,6 +76,7 @@ fn for_each_path(
                 base,
                 transform,
                 smart,
+                ..
             } => {
                 let Some(g) = font.glyph(base) else { continue };
                 if g.is_smart() {

@@ -152,6 +152,7 @@ fn push_flat(
                 base,
                 transform,
                 smart,
+                align,
             } => {
                 let ct = compose(&t, transform);
                 let is_smart = font.glyph(base).is_some_and(|g| g.is_smart());
@@ -160,7 +161,12 @@ fn push_flat(
                     .flatten()
                 {
                     Some(inst) => push_flat(font, owner, &inst.shapes, ct, depth + 1, out),
-                    None => out.push(Shape::component(base.clone(), ct)),
+                    None => out.push(Shape::Component {
+                        base: base.clone(),
+                        transform: ct,
+                        smart: BTreeMap::new(),
+                        align: *align,
+                    }),
                 }
             }
         }
@@ -409,6 +415,7 @@ mod tests {
             base: "_stem".into(),
             transform: [1.0, 0.0, 0.0, 1.0, 85.0, 0.0],
             smart: BTreeMap::from([("Height".into(), 50.0)]),
+            align: true,
         }];
         // Height 50 → halfway between 300 and 700 tall.
         let b = bounds(&f, f.glyph("I").unwrap().layer("m01").unwrap()).unwrap();
