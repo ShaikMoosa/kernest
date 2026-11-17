@@ -107,6 +107,21 @@ A smart glyph is a component that stretches: each glyph that uses it sets its ow
 
 Poles must match the master layer point for point. On export, smart components become ordinary outlines. Smart components in Glyphs files import as smart components.
 
+## Anchors and composites
+
+An anchor is a named point that tells other glyphs where to sit: a mark above a letter, a second mark above the first, or the join between two cursive letters. Anchors are drawn as small diamonds with their name beside them.
+
+- **Show or hide:** **View › Show Anchors** (Ctrl+Shift+A).
+- **Add:** right-click the canvas and choose **Add Anchor**. **Rename** it in the panel at the bottom; **drag** it or nudge with the arrow keys (Shift for ×10); **Delete** removes it. Every anchor edit undoes with Ctrl+Z.
+- **Glyph › Set Anchors** (Ctrl+U) puts sensible anchors on the selected glyphs (or the open glyph) in every master at once:
+  - letters get `top` at cap height or x-height and `bottom` at the baseline, plus `ogonek` where the name calls for it;
+  - marks get `_top` at the bottom of their outline and `top` at its top, so they hang from the letter's `top`; marks that sit below use `_bottom` and `bottom`;
+  - ligatures get `caret_1`, `caret_2`… between their parts, and cursive letters get `entry` and `exit`.
+  - Glyphs that take no anchors are left alone.
+- **Components that align:** select a component and use the lock button beside X and Y. Closed (green) means the component is placed by its anchors and follows them when they move; open (grey) means you placed it by hand and it stays put. A mark placed by anchors offers its own `top` as a target, so a second mark stacks on the first instead of on the letter.
+- **Glyph › Create Composites…** builds glyphs from their parts by name: `Aacute` becomes `A` + `acutecomb`, placed by anchors in every master. Glyphs that already have outlines keep them. **Add Glyphs** has the same option as "Build composites from their parts", so typing `Aacute acutecomb` draws the composite and its mark in one step.
+- **In exported fonts:** anchors become the OpenType `mark` and `mkmk` features (marks on letters, marks on marks), `curs` for cursive joins, and ligature carets in `GDEF`. Adding a mark by its name (`acutecomb`) also gives it its code point (U+0301), so text typed with combining marks shapes correctly.
+
 ## Spacing and kerning
 
 - **Text tabs** (Window › New Text Tab, Ctrl+T): type sample text to see your glyphs together.
@@ -198,6 +213,8 @@ Kernest brings over the axes, masters, outlines, components, anchors, kerning, i
 | Undo / Redo | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) |
 | Add Glyphs / Remove Glyph | Ctrl+Shift+G / Ctrl+Delete |
 | Add Component | Ctrl+Shift+C |
+| Set Anchors | Ctrl+U |
+| Show Anchors | Ctrl+Shift+A |
 | Correct Path Direction | Ctrl+Shift+R |
 | Show Metrics | Ctrl+Shift+M |
 | New Text Tab / Kerning | Ctrl+T / Ctrl+Shift+K |

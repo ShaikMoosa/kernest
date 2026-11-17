@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use kernest_core::glyphdata::Category;
 use kernest_core::{Font, KernPair, Layer, Metrics, NodeKind, Shape};
 use norad::{
     AffineTransform, Anchor, Codepoints, Component, Contour, ContourPoint, Glyph, Name, PointType,
@@ -184,6 +185,30 @@ fn os2_width(class: u8) -> norad::fontinfo::Os2WidthClass {
     }
 }
 
+/// The GDEF class a glyph exports with, from its glyph data and anchors. Classes are
+/// written explicitly, so a composite only receives marks when it carries attaching
+/// anchors of its own (copied from its base when it is built).
+fn open_type_category(font: &Font, gname: &str, layer: &Layer) -> Option<&'static str> {
+    if font
+        .glyph(gname)
+        .is_some_and(|g| g.category() == Category::Mark)
+    {
+        return Some("mark");
+    }
+    let base = gname.split('.').next().unwrap_or(gname);
+    let caret = layer
+        .anchors
+        .iter()
+        .any(|a| a.name.starts_with("caret_") || a.name.starts_with("vcaret_"));
+    if caret || (base.contains('_') && !base.starts_with('_')) {
+        return Some("ligature");
+    }
+    if layer.anchors.iter().any(|a| !a.name.starts_with('_')) {
+        return Some("base");
+    }
+    None
+}
+
 pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     let font = src.font;
     let mut ufo = norad::Font::new();
@@ -228,6 +253,27 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     if !skip.is_empty() {
         ufo.lib
             .insert("public.skipExportGlyphs".into(), plist::Value::Array(skip));
+    }
+
+    // GDEF classes for mark attachment and ligature carets. Alternates are classed
+    // like the glyph they replace.
+    let mut categories = plist::Dictionary::new();
+    for (gname, layer) in &src.layers {
+        let from = src
+            .alternates
+            .iter()
+            .find(|(a, _)| a == gname)
+            .map(|(_, b)| b.as_str())
+            .unwrap_or(gname);
+        if let Some(c) = open_type_category(font, from, layer) {
+            categories.insert(gname.clone(), plist::Value::String(c.into()));
+        }
+    }
+    if !categories.is_empty() {
+        ufo.lib.insert(
+            "public.openTypeCategories".into(),
+            plist::Value::Dictionary(categories),
+        );
     }
 
     // Kerning groups from the glyphs' left/right groups.

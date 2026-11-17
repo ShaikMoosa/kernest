@@ -27,10 +27,11 @@ use crate::error::{Error, IoContext, Result};
 use crate::model::{Axis, Font, FontInfo, Glyph, Instance, KernPair, Master};
 
 /// Format version written by this build.
-/// The newest format this version reads and writes. Version 2 adds colour palettes and
-/// colour layers; fonts without colour are still written as version 1, so older
-/// Kernest versions keep opening them.
-pub const FORMAT_VERSION: u32 = 2;
+/// Version 2 adds colour palettes and colour layers; version 3 adds the component
+/// align flag (older versions would silently re-align hand-placed components).
+/// Fonts using neither are still written as version 1, colour-only fonts as 2,
+/// so older Kernest versions keep opening them.
+pub const FORMAT_VERSION: u32 = 3;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -148,11 +149,21 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
 
     // font.json last: a package with a font.json is a complete package.
     let font_path = dir.join("font.json");
+    let has_color = !font.palettes.is_empty() || font.glyphs.iter().any(|g| g.is_color());
+    let has_manual = font.glyphs.iter().any(|g| {
+        g.layers.iter().any(|l| {
+            l.shapes
+                .iter()
+                .any(|s| matches!(s, crate::model::Shape::Component { align: false, .. }))
+        })
+    });
     let file = FontFile {
-        format_version: if font.palettes.is_empty() && !font.glyphs.iter().any(|g| g.is_color()) {
-            1
-        } else {
+        format_version: if has_manual {
             FORMAT_VERSION
+        } else if has_color {
+            2
+        } else {
+            1
         },
         generator: format!("Kernest {}", env!("CARGO_PKG_VERSION")),
         info: font.info.clone(),
@@ -271,6 +282,33 @@ mod tests {
         assert_eq!(font, back);
         // Saving again without changes rewrites nothing and stays identical.
         save(&back, &path).unwrap();
+        assert_eq!(open(&path).unwrap(), font);
+    }
+
+    #[test]
+    fn align_flag_versioning() {
+        use crate::model::{Shape, IDENTITY};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        font.glyph_mut("bar").unwrap().layers[0].shapes = vec![Shape::component("l", IDENTITY)];
+        save(&font, &path).unwrap();
+        // Aligned components keep version 1 and leave the flag out of the JSON.
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
+        let gj = fs::read_to_string(path.join("glyphs/bar.json")).unwrap();
+        assert!(!gj.contains("align"), "{gj}");
+        assert_eq!(open(&path).unwrap(), font);
+        // A hand-placed component needs version 3 and survives a round trip.
+        let Shape::Component { align, .. } =
+            &mut font.glyph_mut("bar").unwrap().layers[0].shapes[0]
+        else {
+            panic!("expected a component")
+        };
+        *align = false;
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 3"), "{fj}");
         assert_eq!(open(&path).unwrap(), font);
     }
 

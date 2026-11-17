@@ -10,6 +10,7 @@ import { loadTheme, saveTheme, type ThemePref } from "./lib/theme";
 import { StartWindow } from "./components/StartWindow";
 import { NewFontDialog } from "./components/NewFontDialog";
 import { AddGlyphsDialog } from "./components/AddGlyphsDialog";
+import { CompositesDialog } from "./components/CompositesDialog";
 import { FontViewScreen } from "./components/FontViewScreen";
 import { EditView, sendEditCommand } from "./components/EditView";
 import { AddIcon, CloseIcon } from "./components/Icons";
@@ -46,6 +47,13 @@ export default function App() {
   });
   const toggleMetrics = useCallback(() => setShowMetrics((v) => {
     try { localStorage.setItem("kernest.showMetrics", v ? "0" : "1"); } catch { /* not persisted */ }
+    return !v;
+  }), []);
+  const [showAnchors, setShowAnchors] = useState(() => {
+    try { return localStorage.getItem("kernest.showAnchors") !== "0"; } catch { return true; }
+  });
+  const toggleAnchors = useCallback(() => setShowAnchors((v) => {
+    try { localStorage.setItem("kernest.showAnchors", v ? "0" : "1"); } catch { /* not persisted */ }
     return !v;
   }), []);
   const [importNotes, setImportNotes] = useState<{ source: string; familyName: string; warnings: string[] } | null>(null);
@@ -290,8 +298,8 @@ export default function App() {
     if (font) backend.glyphSets().then(setAddGlyphSets, fail);
   }, [font, fail]);
 
-  /** The glyphs Remove Glyph acts on: the open glyph tab, or the Font View selection. */
-  const removalTargets = active?.startsWith("g:") ? [active.slice(2)] : active === null ? fontSelection : [];
+  /** The glyphs a Glyph-menu action acts on: the open glyph tab, or the Font View selection. */
+  const glyphTargets = active?.startsWith("g:") ? [active.slice(2)] : active === null ? fontSelection : [];
 
   const removeGlyphs = useCallback(async (names: string[]) => {
     if (!font || names.length === 0) return;
@@ -323,6 +331,29 @@ export default function App() {
       fail(e);
     }
   }, [onStructureChanged, fail]);
+
+  /** Glyph › Set Anchors: default anchors on the targeted glyphs, in every master. */
+  const setAnchors = useCallback(async (names: string[]) => {
+    if (!font || names.length === 0) return;
+    try {
+      const r = await backend.setDefaultAnchors(names);
+      onStructureChanged(r.status);
+      setToast({ kind: "info", text: r.updated ? tn(r.updated, "Set anchors on {n} glyph", "Set anchors on {n} glyphs") : t("These glyphs take no default anchors.") });
+    } catch (e) {
+      fail(e);
+    }
+  }, [font, onStructureChanged, fail]);
+
+  const [composites, setComposites] = useState<{ initial: string } | null>(null);
+
+  /** Glyph › Create Composites: build glyphs from their parts (Aacute = A + acutecomb). */
+  const createComposites = useCallback(async (names: string[]) => {
+    const r = await backend.createComposites(names);
+    setComposites(null);
+    onStructureChanged(r.status);
+    const skipped = r.skipped.length ? ` · ${tn(r.skipped.length, "{n} skipped (no recipe, missing parts or already drawn)", "{n} skipped (no recipe, missing parts or already drawn)")}` : "";
+    setToast({ kind: "info", text: r.built.length ? `${tn(r.built.length, "Built {n} composite", "Built {n} composites")}${skipped}` : t("Nothing built: no recipes, missing parts, or the glyphs already have outlines.") });
+  }, [onStructureChanged]);
 
   const undoRedo = useCallback(async (redo: boolean) => {
     if (!font) return;
@@ -370,13 +401,15 @@ export default function App() {
       else if (k === "g" && e.shiftKey && font) showAddGlyphs();
       else if (k === "r" && e.shiftKey && active?.startsWith("g:")) sendEditCommand("correct-direction");
       else if (k === "m" && e.shiftKey) toggleMetrics();
-      else if (k === "delete" && !inField && font) removeGlyphs(removalTargets);
+      else if (k === "a" && e.shiftKey) toggleAnchors();
+      else if (k === "u" && !e.shiftKey && !inField && font && glyphTargets.length) setAnchors(glyphTargets);
+      else if (k === "delete" && !inField && font) removeGlyphs(glyphTargets);
       else return;
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showNewFont, open, importSource, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font, showAddGlyphs, removeGlyphs, removalTargets, toggleMetrics, openHandbook]);
+  }, [showNewFont, open, importSource, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font, showAddGlyphs, removeGlyphs, glyphTargets, toggleMetrics, toggleAnchors, setAnchors, openHandbook]);
 
   const inGlyph = font !== null && active !== null && active.startsWith("g:");
   const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? t("Kerning") : id === "info" ? t("Font Info") : t("Text {n}", { n: id.slice(5) }));
@@ -412,8 +445,10 @@ export default function App() {
       label: t("Glyph"),
       items: [
         { label: t("Add Glyphs…"), shortcut: "Ctrl+Shift+G", onSelect: font ? showAddGlyphs : undefined },
-        { label: removalTargets.length > 1 ? tn(removalTargets.length, "Remove {n} Glyph", "Remove {n} Glyphs") : t("Remove Glyph"), shortcut: "Ctrl+Del", onSelect: font && removalTargets.length ? () => removeGlyphs(removalTargets) : undefined },
+        { label: glyphTargets.length > 1 ? tn(glyphTargets.length, "Remove {n} Glyph", "Remove {n} Glyphs") : t("Remove Glyph"), shortcut: "Ctrl+Del", onSelect: font && glyphTargets.length ? () => removeGlyphs(glyphTargets) : undefined },
         { label: t("Add Component…"), shortcut: "Ctrl+Shift+C", onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
+        { label: t("Set Anchors"), shortcut: "Ctrl+U", onSelect: font && glyphTargets.length ? () => setAnchors(glyphTargets) : undefined, separatorBefore: true },
+        { label: t("Create Composites…"), onSelect: font ? () => setComposites({ initial: glyphTargets.join(" ") }) : undefined },
         { label: t("Update Metrics"), onSelect: font ? updateMetrics : undefined, separatorBefore: true },
       ],
     },
@@ -427,6 +462,7 @@ export default function App() {
     },
     { label: t("View"), items: [
       { label: t("Show Metrics"), shortcut: "Ctrl+Shift+M", onSelect: toggleMetrics, checked: showMetrics },
+      { label: t("Show Anchors"), shortcut: "Ctrl+Shift+A", onSelect: toggleAnchors, checked: showAnchors },
       { label: t("Theme: System"), onSelect: () => setTheme("system"), checked: theme === "system", separatorBefore: true },
       { label: t("Theme: Light"), onSelect: () => setTheme("light"), checked: theme === "light" },
       { label: t("Theme: Dark"), onSelect: () => setTheme("dark"), checked: theme === "dark" },
@@ -486,7 +522,7 @@ export default function App() {
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} showMetrics={showMetrics} />
+                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} showMetrics={showMetrics} showAnchors={showAnchors} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} />
               ) : id === "kerning" ? (
@@ -530,14 +566,25 @@ export default function App() {
         <AddGlyphsDialog
           sets={addGlyphSets}
           onCancel={() => setAddGlyphSets(null)}
-          onAdd={async (text, sets) => {
+          onAdd={async (text, sets, recipes) => {
             const r = await backend.addGlyphs(text, sets);
+            let built = 0;
+            let s = r.status;
+            if (recipes && r.added.length) {
+              const c = await backend.createComposites(r.added);
+              built = c.built.length;
+              s = c.status;
+            }
             setAddGlyphSets(null);
-            onStructureChanged(r.status);
+            onStructureChanged(s);
             const skipped = r.skipped.length ? ` · ${tn(r.skipped.length, "{n} already in the font", "{n} already in the font")}` : "";
-            setToast({ kind: "info", text: r.added.length ? `${tn(r.added.length, "Added {n} glyph", "Added {n} glyphs")}${skipped}` : tn(r.skipped.length, "Nothing added: all {n} already in the font", "Nothing added: all {n} already in the font") });
+            const compositesNote = built ? ` · ${tn(built, "built {n} composite", "built {n} composites")}` : "";
+            setToast({ kind: "info", text: r.added.length ? `${tn(r.added.length, "Added {n} glyph", "Added {n} glyphs")}${skipped}${compositesNote}` : tn(r.skipped.length, "Nothing added: all {n} already in the font", "Nothing added: all {n} already in the font") });
           }}
         />
+      )}
+      {composites && (
+        <CompositesDialog initial={composites.initial} onCancel={() => setComposites(null)} onCreate={createComposites} />
       )}
       {toast && (
         <div className={`toast toast-${toast.kind} k-label`} role="status" onClick={() => setToast(null)}>

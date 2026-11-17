@@ -475,6 +475,7 @@ fn shape_v3(d: &glyphs_reader::Plist) -> Option<Shape> {
             base: base.to_string(),
             transform: [sx * c, sx * s, -sy * s, sy * c, x, y],
             smart: piece(d),
+            align: true,
         });
     }
     let nodes = d.get("nodes")?.as_array()?;
@@ -559,6 +560,7 @@ fn shapes_v2(d: &glyphs_reader::Plist) -> Vec<Shape> {
             base: base.to_string(),
             transform,
             smart: piece(c),
+            align: true,
         });
     }
     out

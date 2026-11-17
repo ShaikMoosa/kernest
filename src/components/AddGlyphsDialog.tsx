@@ -6,13 +6,14 @@ import { t, tn } from "../lib/i18n";
 interface Props {
   sets: GlyphSetInfo[];
   onCancel: () => void;
-  onAdd: (text: string, sets: string[]) => Promise<void>;
+  onAdd: (text: string, sets: string[], recipes: boolean) => Promise<void>;
 }
 
 /** Glyph › Add Glyphs… — names, characters or code points, and whole glyph sets. */
 export function AddGlyphsDialog({ sets, onCancel, onAdd }: Props) {
   const [text, setText] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
+  const [recipes, setRecipes] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -31,7 +32,7 @@ export function AddGlyphsDialog({ sets, onCancel, onAdd }: Props) {
     if (!text.trim() && chosen.length === 0) return setError(t("Type glyph names or characters, or choose a glyph set."));
     setBusy(true);
     try {
-      await onAdd(text, chosen);
+      await onAdd(text, chosen, recipes);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
@@ -71,6 +72,11 @@ export function AddGlyphsDialog({ sets, onCancel, onAdd }: Props) {
               </label>
             ))}
           </fieldset>
+          <label className="check-row">
+            <input type="checkbox" checked={recipes} onChange={(e) => setRecipes(e.target.checked)} />
+            <span className="k-body">{t("Build composites from their parts")}</span>
+          </label>
+          <p className="k-caption muted">{t("Aacute becomes A + acutecomb, placed by anchors, when both parts are in the font.")}</p>
           {error && <p className="notice notice-danger k-label">{error}</p>}
         </div>
         <footer className="dialog-footer">

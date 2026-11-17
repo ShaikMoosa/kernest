@@ -83,7 +83,7 @@ for (const f of sources.filter((f) => f.endsWith(".tsx"))) {
       ...line.matchAll(/>([^<>{}]*[A-Za-z]{2,}[^<>{}]*)</g),
       ...line.matchAll(/\b(?:title|aria-label|placeholder|alt|label)="([^"]*[A-Za-z]{2,}[^"]*)"/g),
     ].map((m) => m[1].trim())// Skip code that looks like text (comparisons, generics, calls) and sample strings.
-      .filter((s) => s && !/^(Kernest|Hamb|Aa|TTF|OTF|WOFF2)$/.test(s) && !/[=(&:\\]|Promise|^A\.alt /.test(s));
+      .filter((s) => s && !/^(Kernest|Hamb|Aa|TTF|OTF|WOFF2)$/.test(s) && !/[=(&:\\]|Promise|^A\.alt |^Aacute /.test(s));
     for (const h of hits) report(`untranslated: ${f.replace(root, "")}:${i + 1}  ${JSON.stringify(h)}`);
   });
 }

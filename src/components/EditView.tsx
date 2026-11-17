@@ -55,7 +55,7 @@ const toEdit = (c: Comp): ComponentEdit => {
   const t = [...c.transform];
   t[4] += c.dx;
   t[5] += c.dy;
-  return { base: c.base, transform: t, smart: c.smart };
+  return { base: c.base, transform: t, smart: c.smart, align: c.align };
 };
 const fromView = (cs: ComponentView[]): Comp[] => cs.map((c) => ({ ...c, dx: 0, dy: 0 }));
 
@@ -166,6 +166,8 @@ interface Props {
   onError: (e: unknown) => void;
   /** View › Show Metrics: metric lines, labels and the advance box. */
   showMetrics?: boolean;
+  /** View › Show Anchors: anchor diamonds and their names. */
+  showAnchors?: boolean;
   /** The current master's id; `masterId` differs when a brace or bracket layer is open. */
   masterKey?: string;
   /** Switches this tab to another layer (a layer key). */
@@ -173,7 +175,7 @@ interface Props {
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, showMetrics = true, masterKey, onPickLayer }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, showMetrics = true, showAnchors = true, masterKey, onPickLayer }: Props) {
   const master = masterKey ?? masterId;
   // ---------- Layers (master, brace, bracket) ----------
   const [layerList, setLayerList] = useState<LayerInfo[]>([]);
@@ -273,8 +275,11 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [layer, setLayer] = useState<LayerView | null>(null);
   const [paths, setPaths] = useState<EditPath[]>([]);
   const [comps, setComps] = useState<Comp[]>([]);
+  const [anchors, setAnchors] = useState<LayerView["anchors"]>([]);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [compSel, setCompSel] = useState<Set<number>>(new Set());
+  const [anchorSel, setAnchorSel] = useState<Set<string>>(new Set());
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; wx: number; wy: number } | null>(null);
   const [tool, setTool] = useState<Tool>("select");
   const [view, setView] = useState<View>({ s: 0.5, ox: 0, oy: 0 });
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -288,11 +293,11 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const fitted = useRef(false);
-  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; moved: boolean; additive?: boolean; pi?: number; ni?: number; startView?: View; lastPaths?: EditPath[]; lastComps?: Comp[] }>(null);
+  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; baseAnchors: LayerView["anchors"]; moved: boolean; additive?: boolean; pi?: number; ni?: number; startView?: View; lastPaths?: EditPath[]; lastComps?: Comp[]; lastAnchors?: LayerView["anchors"] }>(null);
   const pen = useRef<{ path: number | null; pendingOut: Pt | null }>({ path: null, pendingOut: null });
   const chain = useRef(Promise.resolve());
-  const latest = useRef({ layer, paths, comps, selection, compSel, view });
-  latest.current = { layer, paths, comps, selection, compSel, view };
+  const latest = useRef({ layer, paths, comps, anchors, selection, compSel, anchorSel, view });
+  latest.current = { layer, paths, comps, anchors, selection, compSel, anchorSel, view };
 
   // ---------- Loading & committing ----------
 
@@ -303,8 +308,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       setLayer(l);
       setPaths(l.paths);
       setComps(fromView(l.components));
+      setAnchors(l.anchors);
       setSelection((sel) => new Set([...sel].filter((k) => { const [pi, ni] = parseKey(k); return !!l.paths[pi]?.nodes[ni]; })));
       setCompSel((sel) => new Set([...sel].filter((i) => i < l.components.length)));
+      setAnchorSel((sel) => new Set([...sel].filter((n) => l.anchors.some((a) => a.name === n))));
     }, (e) => {
       if (cancelled) return;
       // A brace or bracket layer that no longer exists (undo, removed elsewhere): go back
@@ -319,8 +326,82 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     setLayer(l);
     setPaths(l.paths);
     setComps(fromView(l.components));
+    setAnchors(l.anchors);
+    setAnchorSel((sel) => new Set([...sel].filter((n) => l.anchors.some((a) => a.name === n))));
     onCommitted(l.status);
   }, [onCommitted]);
+
+  useEffect(() => {
+    if (!showAnchors) setAnchorSel(new Set());
+  }, [showAnchors]);
+
+  // ---------- Anchors ----------
+
+  /** Sends anchor moves (font-unit deltas) as one undoable step; components follow. */
+  const moveAnchorsBy = useCallback((moves: { name: string; dx: number; dy: number }[]) => {
+    if (!moves.length) return;
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await backend.moveAnchors(glyph, masterId, moves, true));
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, accept, onError]);
+
+  const addAnchorAt = useCallback((x: number, y: number) => {
+    chain.current = chain.current.then(async () => {
+      const taken = new Set(latest.current.anchors.map((a) => a.name));
+      // A sensible first name; the info box renames it right away.
+      let name = ["top", "bottom"].find((n) => !taken.has(n));
+      if (!name) {
+        let i = 1;
+        while (taken.has(`anchor_${i}`)) i++;
+        name = `anchor_${i}`;
+      }
+      try {
+        accept(await backend.addAnchor(glyph, masterId, name, x, y, true));
+        setSelection(new Set());
+        setCompSel(new Set());
+        setAnchorSel(new Set([name]));
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, accept, onError]);
+
+  const renameAnchorTo = useCallback((old: string, newName: string) => {
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await backend.renameAnchor(glyph, masterId, old, newName, true));
+        setAnchorSel(new Set([newName]));
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, accept, onError]);
+
+  const removeAnchorsNamed = useCallback((names: string[]) => {
+    if (!names.length) return;
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await backend.removeAnchors(glyph, masterId, names, true));
+        setAnchorSel(new Set());
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, accept, onError]);
+
+  const setComponentAlign = useCallback((index: number, align: boolean) => {
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await backend.setComponentAlign(glyph, masterId, index, align));
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, accept, onError]);
 
   const setComponentSmart = useCallback((index: number, values: Record<string, number>) => {
     chain.current = chain.current.then(async () => {
@@ -468,27 +549,54 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     return null;
   }
 
+  function hitAnchor(sp: Pt): string | null {
+    if (!showAnchors) return null;
+    let best: string | null = null;
+    let bestD = HIT;
+    for (const a of anchors) {
+      const q = toScreen(a.x, a.y);
+      const d = Math.hypot(q.x - sp.x, q.y - sp.y);
+      if (d <= bestD) { bestD = d; best = a.name; }
+    }
+    return best;
+  }
+
   // ---------- Pointer interaction ----------
 
   const activeTool: Tool = spaceDown ? "hand" : tool;
 
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     if (!layer) return;
+    setCtxMenu(null);
     svgRef.current!.setPointerCapture(e.pointerId);
     const sp = local(e);
     const wp = toWorld(sp.x, sp.y);
     const base = clonePaths(paths);
     const baseComps = comps.map((c) => ({ ...c }));
+    const baseAnchors = anchors.map((a) => ({ ...a }));
     if (e.button === 1 || activeTool === "hand") {
-      drag.current = { mode: "pan", startScreen: sp, startWorld: wp, base, baseComps, moved: false, startView: view };
+      drag.current = { mode: "pan", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, startView: view };
       return;
     }
     if (e.button !== 0) return;
 
     if (activeTool === "select") {
-      const hit = hitNode(sp);
-      const comp = hit ? null : hitComponent(wp);
-      if (hit) {
+      const ah = hitAnchor(sp);
+      const hit = ah ? null : hitNode(sp);
+      const comp = ah || hit ? null : hitComponent(wp);
+      if (ah) {
+        let sel = anchorSel;
+        if (e.shiftKey) {
+          sel = new Set(anchorSel);
+          if (sel.has(ah)) sel.delete(ah); else sel.add(ah);
+        } else if (!anchorSel.has(ah)) {
+          sel = new Set([ah]);
+          setSelection(new Set());
+          setCompSel(new Set());
+        }
+        setAnchorSel(sel);
+        drag.current = { mode: "anchor", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
+      } else if (hit) {
         let sel = selection;
         if (e.shiftKey) {
           sel = new Set(selection);
@@ -496,9 +604,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         } else if (!selection.has(hit)) {
           sel = new Set([hit]);
           setCompSel(new Set());
+          setAnchorSel(new Set());
         }
         setSelection(sel);
-        drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, baseComps, moved: false };
+        drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
       } else if (comp !== null) {
         let sel = compSel;
         if (e.shiftKey) {
@@ -507,18 +616,19 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         } else if (!compSel.has(comp)) {
           sel = new Set([comp]);
           setSelection(new Set());
+          setAnchorSel(new Set());
         }
         setCompSel(sel);
-        drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, baseComps, moved: false };
+        drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
       } else {
-        if (!e.shiftKey) { setSelection(new Set()); setCompSel(new Set()); }
-        drag.current = { mode: "marquee", startScreen: sp, startWorld: wp, base, baseComps, moved: false, additive: e.shiftKey };
+        if (!e.shiftKey) { setSelection(new Set()); setCompSel(new Set()); setAnchorSel(new Set()); }
+        drag.current = { mode: "marquee", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, additive: e.shiftKey };
       }
       return;
     }
 
     if (activeTool === "rect" || activeTool === "ellipse") {
-      drag.current = { mode: "shape", startScreen: sp, startWorld: round(wp), base, baseComps, moved: false };
+      drag.current = { mode: "shape", startScreen: sp, startWorld: round(wp), base, baseComps, baseAnchors, moved: false };
       return;
     }
 
@@ -545,15 +655,16 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         if (pn.pendingOut) open.nodes.push(off(pn.pendingOut), off(p), { ...p, kind: "curve", smooth: false });
         else open.nodes.push({ ...p, kind: "line", smooth: false });
         pn.pendingOut = null;
-        drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), baseComps, moved: false, pi: pn.path!, ni: open.nodes.length - 1 };
+        drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), baseComps, baseAnchors, moved: false, pi: pn.path!, ni: open.nodes.length - 1 };
       } else {
         base.push({ closed: false, nodes: [{ ...p, kind: "line", smooth: false }] });
         pen.current = { path: base.length - 1, pendingOut: null };
-        drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), baseComps, moved: false, pi: base.length - 1, ni: 0 };
+        drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), baseComps, baseAnchors, moved: false, pi: base.length - 1, ni: 0 };
       }
       setPaths(base);
       setSelection(new Set());
       setCompSel(new Set());
+      setAnchorSel(new Set());
     }
   }
 
@@ -578,11 +689,17 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
 
     if (d.mode === "pan" && d.startView) {
       setView({ ...d.startView, ox: d.startView.ox + sp.x - d.startScreen.x, oy: d.startView.oy + sp.y - d.startScreen.y });
+    } else if (d.mode === "anchor") {
+      let dx = Math.round(wp.x - d.startWorld.x), dy = Math.round(wp.y - d.startWorld.y);
+      if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+      d.lastAnchors = d.baseAnchors.map((a) => (anchorSel.has(a.name) ? { ...a, x: a.x + dx, y: a.y + dy } : a));
+      setAnchors(d.lastAnchors);
     } else if (d.mode === "move") {
       let dx = Math.round(wp.x - d.startWorld.x), dy = Math.round(wp.y - d.startWorld.y);
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
       d.lastPaths = moveSelection(d.base, selection, dx, dy);
-      d.lastComps = d.baseComps.map((c, i) => (compSel.has(i) ? { ...c, dx: c.dx + dx, dy: c.dy + dy } : c));
+      // Moving a component by hand takes it off its anchors.
+      d.lastComps = d.baseComps.map((c, i) => (compSel.has(i) && (dx !== 0 || dy !== 0) ? { ...c, dx: c.dx + dx, dy: c.dy + dy, align: false } : c));
       setPaths(d.lastPaths);
       setComps(d.lastComps);
     } else if (d.mode === "marquee") {
@@ -620,7 +737,17 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     const sp = local(e);
     // Commit what the last pointer move computed (state may not have re-rendered yet).
     if (d.mode === "move" && d.moved) commit(d.lastPaths ?? latest.current.paths, d.lastComps ?? latest.current.comps);
-    else if (d.mode === "marquee" && d.moved) {
+    else if (d.mode === "anchor" && d.moved) {
+      const fin = d.lastAnchors ?? latest.current.anchors;
+      const moves = d.baseAnchors
+        .filter((a) => anchorSel.has(a.name))
+        .map((a) => {
+          const b = fin.find((x) => x.name === a.name) ?? a;
+          return { name: a.name, dx: b.x - a.x, dy: b.y - a.y };
+        })
+        .filter((m) => m.dx !== 0 || m.dy !== 0);
+      moveAnchorsBy(moves);
+    } else if (d.mode === "marquee" && d.moved) {
       // Use the drag's own start point: state may not have re-rendered yet on a fast drag.
       const marquee = { x0: d.startScreen.x, y0: d.startScreen.y };
       const [x0, x1] = [Math.min(marquee.x0, sp.x), Math.max(marquee.x0, sp.x)];
@@ -638,6 +765,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         if (r.width && r.left - s.left >= x0 && r.right - s.left <= x1 && r.top - s.top >= y0 && r.bottom - s.top <= y1) cs.add(Number(el.dataset.comp));
       });
       setCompSel(cs);
+      if (showAnchors) {
+        const as = new Set(d.additive ? anchorSel : []);
+        for (const a of anchors) {
+          const q = toScreen(a.x, a.y);
+          if (q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1) as.add(a.name);
+        }
+        setAnchorSel(as);
+      }
       setMarquee(null);
     } else if (d.mode === "shape") {
       const shape = d.moved ? shapeFor(d.startWorld, round(toWorld(sp.x, sp.y)), e.shiftKey) : null;
@@ -662,7 +797,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     setPicking(false);
     const { paths, comps, layer } = latest.current;
     if (!layer) return;
-    const next = [...comps, { base, transform: [1, 0, 0, 1, 0, 0], svg: "", dx: 0, dy: 0 }];
+    const next = [...comps, { base, transform: [1, 0, 0, 1, 0, 0], align: true, svg: "", dx: 0, dy: 0 }];
     // An empty glyph takes the width of its first component (e.g. building Á from A).
     const empty = paths.length === 0 && comps.length === 0;
     const baseWidth = glyphs.find((g) => g.name === base)?.width;
@@ -717,7 +852,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       if (!clip) return;
       const { paths, comps } = latest.current;
       const nextPaths = [...paths, ...clonePaths(clip.paths)];
-      const nextComps = [...comps, ...clip.components.map((c) => ({ ...c, transform: [...c.transform], svg: "", dx: 0, dy: 0 }))];
+      const nextComps = [...comps, ...clip.components.map((c) => ({ ...c, align: c.align ?? true, transform: [...c.transform], svg: "", dx: 0, dy: 0 }))];
       setPaths(nextPaths);
       setSelection(new Set(clip.paths.flatMap((p, i) => p.nodes.map((_, ni) => nodeKey(paths.length + i, ni)))));
       setCompSel(new Set(clip.components.map((_, i) => comps.length + i)));
@@ -739,13 +874,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     const typing = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
     const onDown = (e: KeyboardEvent) => {
       if (typing(e.target)) return;
-      const { paths, comps, selection, compSel } = latest.current;
+      const { paths, comps, anchors, selection, compSel, anchorSel } = latest.current;
       if (e.key === " ") { setSpaceDown(true); e.preventDefault(); return; }
       if (e.ctrlKey && !e.altKey) {
         const k = e.key.toLowerCase();
         if (k === "a") {
           setSelection(new Set(paths.flatMap((p, pi) => p.nodes.map((_, ni) => nodeKey(pi, ni)))));
           setCompSel(new Set(comps.map((_, i) => i)));
+          if (showAnchors) setAnchorSel(new Set(anchors.map((a) => a.name)));
         } else if (k === "0") fit();
         else if (k === "=" || k === "+") zoomAt(1.25, size.w / 2, size.h / 2);
         else if (k === "-") zoomAt(0.8, size.w / 2, size.h / 2);
@@ -759,14 +895,26 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       }
       if (e.altKey) return;
       const nudge: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
+      if (nudge[e.key] && showAnchors && anchorSel.size) {
+        const m = e.shiftKey ? 10 : 1;
+        const [dx, dy] = [nudge[e.key][0] * m, nudge[e.key][1] * m];
+        moveAnchorsBy([...anchorSel].map((name) => ({ name, dx, dy })));
+        e.preventDefault();
+        return;
+      }
       if (nudge[e.key] && (selection.size || compSel.size)) {
         const m = e.shiftKey ? 10 : 1;
         const [dx, dy] = [nudge[e.key][0] * m, nudge[e.key][1] * m];
         const next = moveSelection(paths, selection, dx, dy);
-        const nextComps = comps.map((c, i) => (compSel.has(i) ? { ...c, dx: c.dx + dx, dy: c.dy + dy } : c));
+        const nextComps = comps.map((c, i) => (compSel.has(i) ? { ...c, dx: c.dx + dx, dy: c.dy + dy, align: false } : c));
         setPaths(next);
         setComps(nextComps);
         commit(next, nextComps);
+        e.preventDefault();
+        return;
+      }
+      if (!e.ctrlKey && (e.key === "Delete" || e.key === "Backspace") && showAnchors && anchorSel.size) {
+        removeAnchorsNamed([...anchorSel]);
         e.preventDefault();
         return;
       }
@@ -796,8 +944,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         return;
       }
       if (e.key === "Escape") {
-        if (pen.current.path !== null) pen.current = { path: null, pendingOut: null };
-        else { setSelection(new Set()); setCompSel(new Set()); }
+        if (ctxMenu) setCtxMenu(null);
+        else if (pen.current.path !== null) pen.current = { path: null, pendingOut: null };
+        else { setSelection(new Set()); setCompSel(new Set()); setAnchorSel(new Set()); }
         rerender((n) => n + 1);
         return;
       }
@@ -814,7 +963,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       window.removeEventListener("keydown", onDown);
       window.removeEventListener("keyup", onUp);
     };
-  }, [active, picking, commit, fit, zoomAt, size, runCommand]);
+  }, [active, picking, commit, fit, zoomAt, size, runCommand, showAnchors, ctxMenu, moveAnchorsBy, removeAnchorsNamed]);
+
+  const glyphNames = useMemo(() => new Set(glyphs.map((g) => g.name)), [glyphs]);
 
   // ---------- Rendering ----------
 
@@ -824,15 +975,16 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const lines: [string, number][] = [[t("Ascender"), ascender], [t("Cap height"), capHeight], [t("x-height"), xHeight], [t("Baseline"), 0], [t("Descender"), descender]];
   const x0 = toScreen(0, 0).x, x1 = toScreen(layer.width, 0).x;
   const outline = pathsToSvg(paths);
-  const one = selection.size === 1 && compSel.size === 0 ? parseKey([...selection][0]) : null;
+  const one = selection.size === 1 && compSel.size === 0 && anchorSel.size === 0 ? parseKey([...selection][0]) : null;
   const oneNode = one ? paths[one[0]]?.nodes[one[1]] : undefined;
-  const oneComp = compSel.size === 1 && selection.size === 0 ? comps[[...compSel][0]] : undefined;
+  const oneComp = compSel.size === 1 && selection.size === 0 && anchorSel.size === 0 ? comps[[...compSel][0]] : undefined;
+  const oneAnchor = anchorSel.size === 1 && selection.size === 0 && compSel.size === 0 ? anchors.find((a) => a.name === [...anchorSel][0]) : undefined;
   const pendingOut = pen.current.path !== null ? pen.current.pendingOut : null;
   const penPath = pen.current.path !== null ? paths[pen.current.path] : undefined;
   const lastPen = penPath && !penPath.closed ? penPath.nodes[penPath.nodes.length - 1] : undefined;
   const cursorStyle = activeTool === "hand" ? (drag.current?.mode === "pan" ? "grabbing" : "grab") : activeTool === "select" ? "default" : "crosshair";
   const moveComp = (i: number, dx: number, dy: number) => {
-    const next = comps.map((c, j) => (j === i ? { ...c, dx: c.dx + dx, dy: c.dy + dy } : c));
+    const next = comps.map((c, j) => (j === i ? { ...c, dx: c.dx + dx, dy: c.dy + dy, align: false } : c));
     setComps(next);
     commit(paths, next);
   };
@@ -892,6 +1044,13 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       <div className="canvas-wrap" ref={wrapRef}>
         <svg ref={svgRef} className="canvas" width={size.w} height={size.h} style={{ cursor: cursorStyle }}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={() => setCursor(null)}
+          onContextMenu={(e) => {
+            if (activeTool !== "select") return;
+            e.preventDefault();
+            const sp = local(e);
+            const wp = round(toWorld(sp.x, sp.y));
+            setCtxMenu({ x: sp.x, y: sp.y, wx: wp.x, wy: wp.y });
+          }}
           onDoubleClick={(e) => {
             if (tool !== "select") return;
             const hit = hitNode(local(e));
@@ -917,6 +1076,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                 <path d={c.svg} data-comp={i} className={`component-fill${compSel.has(i) ? " is-selected" : ""}`} />
               </g>
             ))}
+            {/* A component whose base glyph is missing: a dashed box where it would sit. */}
+            {comps.map((c, i) => glyphNames.has(c.base) ? null : (
+              <rect key={`cm${i}`} x={c.transform[4] + c.dx} y={c.transform[5] + c.dy} width={500} height={layer.metrics.capHeight} className="component-missing">
+                <title>{t("Missing glyph: {name}", { name: c.base })}</title>
+              </rect>
+            ))}
             <path d={outline} className="glyph-fill" fillRule="nonzero" />
             {preview && <path d={pathsToSvg([preview])} className="preview-outline" />}
           </g>
@@ -930,7 +1095,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           {/* Component labels */}
           {comps.map((c, i) => {
             const at = toScreen(c.transform[4] + c.dx, c.transform[5] + c.dy);
-            return compSel.has(i) ? <text key={`cl${i}`} x={at.x + 4} y={at.y + 14} className="component-label">{c.base}</text> : null;
+            const missing = !glyphNames.has(c.base);
+            return compSel.has(i) || missing ? <text key={`cl${i}`} x={at.x + 4} y={at.y + 14} className={`component-label${missing ? " is-missing" : ""}`}>{c.base}</text> : null;
           })}
           {/* Handles and nodes */}
           {paths.map((p, pi) => p.nodes.map((n, ni) => {
@@ -945,8 +1111,24 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             return <g><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="handle-line" /><circle cx={b.x} cy={b.y} r={3} className="node-off" /></g>;
           })()}
           {paths.map((p, pi) => p.nodes.map((n, ni) => <NodeMark key={`n${pi}:${ni}`} n={n} at={toScreen(n.x, n.y)} selected={selection.has(nodeKey(pi, ni))} first={ni === 0 && !p.closed} />))}
+          {/* Anchors: diamonds with their names, over the points. */}
+          {showAnchors && anchors.map((a) => {
+            const p = toScreen(a.x, a.y);
+            const sel = anchorSel.has(a.name);
+            return (
+              <g key={`a:${a.name}`} pointerEvents="none">
+                <rect x={-4.5} y={-4.5} width={9} height={9} transform={`translate(${p.x} ${p.y}) rotate(45)`} className={`anchor-mark${sel ? " is-selected" : ""}`} />
+                <text x={p.x + 8} y={p.y - 7} className="anchor-label">{a.name}</text>
+              </g>
+            );
+          })}
           {marquee && <rect className="marquee" x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)} />}
         </svg>
+        {ctxMenu && (
+          <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} role="menu">
+            <button type="button" role="menuitem" onClick={() => { addAnchorAt(ctxMenu.wx, ctxMenu.wy); setCtxMenu(null); }}>{t("Add Anchor")}</button>
+          </div>
+        )}
         {layer.issues.length > 0 && (
           <div className="notice notice-warning issues-banner k-label" role="status">
             ⚠ {t("This glyph's masters can't be interpolated:")}
@@ -976,6 +1158,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           ) : oneComp ? (
             <>
               <span className="info-comp k-label" title={t("Selected component")}>◇ {oneComp.base}</span>
+              <button type="button" className={`align-toggle${oneComp.align ? " is-auto" : " is-manual"}`} aria-pressed={oneComp.align}
+                title={oneComp.align ? t("Placed by its anchors. Click to place it by hand.") : t("Placed by hand. Click to place it by its anchors.")}
+                onClick={() => setComponentAlign([...compSel][0], !oneComp.align)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <rect x="5" y="11" width="14" height="9" rx="2" />
+                  {oneComp.align ? <path d="M8 11V7a4 4 0 0 1 8 0v4" /> : <path d="M8 11V7a4 4 0 0 1 7.5-2" />}
+                </svg>
+              </button>
               <MetricField onInvalid={onError} label="X" value={oneComp.transform[4] + oneComp.dx} onCommit={(v) => moveComp([...compSel][0], v - (oneComp.transform[4] + oneComp.dx), 0)} />
               <MetricField onInvalid={onError} label="Y" value={oneComp.transform[5] + oneComp.dy} onCommit={(v) => moveComp([...compSel][0], 0, v - (oneComp.transform[5] + oneComp.dy))} />
               {(oneComp.smartAxes ?? []).map((a) => (
@@ -983,8 +1173,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                   onCommit={(v) => setComponentSmart([...compSel][0], { ...(oneComp.smart ?? {}), [a.name]: v })} />
               ))}
             </>
+          ) : oneAnchor ? (
+            <>
+              <AnchorNameField name={oneAnchor.name} onRename={(n) => renameAnchorTo(oneAnchor.name, n)} />
+              <MetricField onInvalid={onError} label="X" value={oneAnchor.x} onCommit={(v) => moveAnchorsBy([{ name: oneAnchor.name, dx: v - oneAnchor.x, dy: 0 }])} />
+              <MetricField onInvalid={onError} label="Y" value={oneAnchor.y} onCommit={(v) => moveAnchorsBy([{ name: oneAnchor.name, dx: 0, dy: v - oneAnchor.y }])} />
+            </>
           ) : (
-            <span className="k-caption muted info-count">{selectionLabel(selection.size, compSel.size)}</span>
+            <span className="k-caption muted info-count">{selectionLabel(selection.size, compSel.size, anchorSel.size)}</span>
           )}
         </div>
       </div>
@@ -1001,11 +1197,44 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
 
 const off = (p: Pt): EditNode => ({ x: p.x, y: p.y, kind: "offcurve", smooth: false });
 
-function selectionLabel(points: number, components: number): string {
-  if (points && components) return t("Selected: {points} · {components}", { points: tn(points, "{n} point", "{n} points"), components: tn(components, "{n} component", "{n} components") });
+function selectionLabel(points: number, components: number, anchors: number): string {
+  const parts: string[] = [];
+  if (points) parts.push(tn(points, "{n} point", "{n} points"));
+  if (components) parts.push(tn(components, "{n} component", "{n} components"));
+  if (anchors) parts.push(tn(anchors, "{n} anchor", "{n} anchors"));
+  if (parts.length > 1) return t("Selected: {list}", { list: parts.join(" · ") });
   if (points) return tn(points, "{n} point selected", "{n} points selected");
   if (components) return tn(components, "{n} component selected", "{n} components selected");
+  if (anchors) return tn(anchors, "{n} anchor selected", "{n} anchors selected");
   return t("No selection");
+}
+
+/** The selected anchor's name, editable in place. */
+function AnchorNameField({ name, onRename }: { name: string; onRename: (n: string) => void }) {
+  const [text, setText] = useState(name);
+  useEffect(() => setText(name), [name]);
+  const commit = (raw: string) => {
+    const s = raw.trim();
+    if (s && s !== name) onRename(s);
+    else setText(name);
+  };
+  return (
+    <label className="info-field">
+      <span className="k-caption muted">{t("Anchor")}</span>
+      <input
+        className="metric-input anchor-name-input"
+        value={text}
+        aria-label={t("Anchor name")}
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={(e) => commit(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") { setText(name); (e.target as HTMLInputElement).value = name; (e.target as HTMLInputElement).blur(); }
+        }}
+      />
+    </label>
+  );
 }
 
 function hint(tool: Tool): string {
