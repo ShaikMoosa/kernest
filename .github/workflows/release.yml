@@ -78,8 +78,39 @@ jobs:
         if: matrix.arch == 'x64'
         run: cargo test --workspace
 
+      # Download the pinned embeddable CPython for this architecture, check it
+      # against the hash published on python.org, and unpack it where the build
+      # expects the bundled runtime (src-tauri/python-runtime).
+      - name: Bundle Python runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ matrix.arch }}' -eq 'x64') {
+            $url = 'https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip'
+            $sha = 'd1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf'
+          } else {
+            $url = 'https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-arm64.zip'
+            $sha = 'cd992cbfb33be433ff20f150691595efb2862e56f4f1bec684c6077d4775af8e'
+          }
+          Invoke-WebRequest -Uri $url -OutFile python-embed.zip
+          $actual = (Get-FileHash python-embed.zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $sha) { throw "Python zip SHA256 mismatch: $actual != $sha" }
+          $dest = 'src-tauri/python-runtime'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Expand-Archive -Path python-embed.zip -DestinationPath $dest -Force
+          # The embeddable distribution ignores PYTHONPATH while a ._pth file is
+          # present, so list the package's parent directory (..) and enable site:
+          # `python -m kernest` then resolves the package bundled beside the runtime.
+          $pth = (Get-ChildItem "$dest/python*._pth" | Select-Object -First 1).FullName
+          $zip = (Get-ChildItem "$dest/python*.zip" | Select-Object -First 1).Name
+          Set-Content -Path $pth -Value "$zip`n.`n..`nimport site" -Encoding ascii
+
+      # The runtime is downloaded above, so it is added to the bundled resources
+      # here (not in tauri.conf.json) to keep ordinary builds and tests working
+      # without it.
       - name: Build setup installer
-        run: npx tauri build --bundles nsis --target ${{ matrix.target }}
+        shell: bash
+        run: npx tauri build --bundles nsis --target ${{ matrix.target }} --config '{"bundle":{"resources":{"python-runtime":"python/runtime"}}}'
 
       - uses: actions/upload-artifact@v4
         with:

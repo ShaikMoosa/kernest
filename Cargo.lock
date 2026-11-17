@@ -2237,6 +2237,7 @@ dependencies = [
  "kernest-core",
  "kernest-export",
  "kernest-import",
+ "kernest-script",
  "rustybuzz",
  "serde",
  "serde_json",
@@ -2287,6 +2288,15 @@ dependencies = [
  "ordered-float",
  "serde",
  "tempfile",
+]
+
+[[package]]
+name = "kernest-script"
+version = "1.8.0"
+dependencies = [
+ "kernest-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

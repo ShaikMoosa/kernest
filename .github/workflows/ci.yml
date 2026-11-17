@@ -28,6 +28,10 @@ jobs:
           node-version: 24
           cache: npm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
       # Installs the toolchain pinned in rust-toolchain.toml.
       - name: Install Rust toolchain
         run: rustup toolchain install
@@ -51,3 +55,9 @@ jobs:
 
       - name: Rust tests
         run: cargo test --workspace
+
+      - name: Python scripting tests
+        working-directory: crates/kernest-script
+        env:
+          PYTHONPATH: python
+        run: python -m unittest discover -s python/tests

@@ -74,6 +74,20 @@ export async function pickSavePath(familyName: string): Promise<string | null> {
   });
 }
 
+/** Picks a Python script to run once (Script › Run Script File…). */
+export async function pickScript(): Promise<string | null> {
+  if (!isTauri) return null;
+  const picked = await open({
+    multiple: false,
+    title: t("Run a Python script"),
+    filters: [
+      { name: t("Python script"), extensions: ["py"] },
+      { name: t("All files"), extensions: ["*"] },
+    ],
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
 export interface RecentFont {
   path: string;
   familyName: string;

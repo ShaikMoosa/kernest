@@ -10,6 +10,8 @@ mod glyphs;
 mod import;
 mod launch;
 mod layers;
+mod script;
+mod settings;
 mod spacing;
 mod tools;
 
@@ -23,6 +25,8 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(commands::AppState::default())
+        .manage(settings::SettingsState::default())
+        .manage(script::ScriptState::default())
         .manage(launch::LaunchPaths(std::sync::Mutex::new(launch_paths)))
         .invoke_handler(tauri::generate_handler![
             commands::glyph_sets,
@@ -99,6 +103,20 @@ fn main() {
             tools::background_edit,
             tools::update_background,
             tools::measure,
+            settings::get_settings,
+            settings::set_plugin_enabled,
+            settings::set_shortcut,
+            settings::reset_shortcuts,
+            settings::set_python_path,
+            script::list_scripts,
+            script::list_plugins,
+            script::run_script,
+            script::cancel_script,
+            script::run_filter_plugin,
+            script::reporter_draw,
+            script::open_scripts_folder,
+            script::open_plugins_folder,
+            script::python_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kernest");

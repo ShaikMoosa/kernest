@@ -1,0 +1,8 @@
+{
+  "name": "Show Bounds",
+  "type": "reporter",
+  "entry": "reporter.py",
+  "version": "1.0",
+  "minKernest": "2.0",
+  "description": "Draws the bounding box of the current glyph over the canvas."
+}

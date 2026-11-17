@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type Guide, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
+import { backend, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
 import {
@@ -191,11 +191,27 @@ interface Props {
   masterKey?: string;
   /** Switches this tab to another layer (a layer key). */
   onPickLayer?: (key: string) => void;
+  /** Enabled reporter plug-ins; their drawing is overlaid on the canvas. */
+  reporters?: string[];
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showBoundingBox = false, masterKey, onPickLayer }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showBoundingBox = false, masterKey, onPickLayer, reporters = [] }: Props) {
   const master = masterKey ?? masterId;
+  // ---------- Reporter plug-ins ----------
+  const [reporterItems, setReporterItems] = useState<DrawItem[]>([]);
+  const reporterSeq = useRef(0);
+  const reporterKey = reporters.join("|");
+  useEffect(() => {
+    if (!active || reporters.length === 0) { setReporterItems([]); return; }
+    const id = ++reporterSeq.current;
+    const timer = setTimeout(() => {
+      Promise.all(reporters.map((name) => backend.reporterDraw(name, glyph, masterId).catch(() => [] as DrawItem[])))
+        .then((lists) => { if (id === reporterSeq.current) setReporterItems(lists.flat()); });
+    }, 250);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, reporterKey, glyph, masterId, version]);
   // ---------- Layers (master, brace, bracket) ----------
   const [layerList, setLayerList] = useState<LayerInfo[]>([]);
   const [layerDialog, setLayerDialog] = useState<{ mode: LayerDialogMode; axes: Axis[] } | null>(null);
@@ -1650,6 +1666,22 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             const p0 = toScreen(bb.minX, bb.maxY), p1 = toScreen(bb.maxX, bb.minY);
             return <rect x={p0.x} y={p0.y} width={Math.max(0, p1.x - p0.x)} height={Math.max(0, p1.y - p0.y)} className="bbox-line" pointerEvents="none" />;
           })()}
+          {/* Reporter plug-ins: drawing instructions over the canvas, in font units. */}
+          {reporterItems.length > 0 && (
+            <g pointerEvents="none">
+              {reporterItems.map((it, i) => {
+                if (it.kind === "line") {
+                  const a = toScreen(it.x0, it.y0), b = toScreen(it.x1, it.y1);
+                  return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={it.color ?? "#3dd68c"} strokeWidth={it.width ?? 1.5} />;
+                }
+                if (it.kind === "path") {
+                  return <path key={i} d={it.d} transform={world} stroke={it.color ?? "#3dd68c"} fill={it.fill ?? "none"} strokeWidth={1.5 / view.s} />;
+                }
+                const p = toScreen(it.x, it.y);
+                return <text key={i} x={p.x} y={p.y} fontSize={(it.size ?? 24) * view.s} fill={it.color ?? "#3dd68c"} className="reporter-text">{it.text}</text>;
+              })}
+            </g>
+          )}
           {/* Measure: the dragged line, square crossings, distances and the angle. */}
           {measureLine && (() => {
             const a = toScreen(measureLine.p0.x, measureLine.p0.y), b = toScreen(measureLine.p1.x, measureLine.p1.y);
