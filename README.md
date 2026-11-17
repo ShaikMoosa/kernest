@@ -116,9 +116,28 @@ Kernest 1.0 is complete: every milestone above has shipped.
 | Smart components: smart axes, pole layers, per-component values, Glyphs import | ✅ v1.1 |
 | Autohinting for TrueType fonts, static and variable (ttfautohint, via tilvisan) | ✅ v1.2 |
 | Colour fonts (COLRv1 and CPAL): palettes, colour layers, solid and gradient paints | ✅ next release |
-| Python scripting and plug-ins | ⏳ planned |
 | Dark theme, ARM64 builds, Spanish and Arabic (right-to-left) interface | ✅ v1.3 |
 | Code-signed installer | ⏳ planned |
+
+### Next: one release per phase
+
+The rest of the plan, in order. Each phase is built, tested, checked in the app, translated into Spanish and Arabic, then released.
+
+| Phase | Release | What it adds | Status |
+|---|---|---|---|
+| 1 | 1.4 | Ship colour fonts | ⏳ next |
+| 2 | 1.5 | Anchors in the editor (marks, ligature carets, cursive), components that align to anchors, composites from recipes | ⏳ planned |
+| 3 | 1.6 | Features editor with error checking and generated features; designer, vendor, copyright, weight/width class and style linking in Font Info; notes | ⏳ planned |
+| 4 | 1.7 | Guides, background layer, transform panel (scale, rotate, mirror, skew), measure tool, snap to grid | ⏳ planned |
+| 5 | 1.8 | Knife, open corners, reconnect and tidy up paths, lock and focus; Filter menu (Round Corners, Offset Curve) | ⏳ planned |
+| 6 | 2.0 | Python scripting (Script menu, macro panel) and plug-ins (filters, reporters), Settings window | ⏳ planned |
+| 7 | 2.1 | Export UFO, Save As `.glyphs`, open compiled fonts, import SVG outlines, AFM and `.fea` | ⏳ planned |
+| 8 | 2.2 | Font View list view, languages and missing glyphs, smart filters, batch rename and batch commands | ⏳ planned |
+| 9 | 2.3 | Axis mappings (avar) and STAT, several variable fonts per family, add masters from other fonts, compare fonts | ⏳ planned |
+| 10 | 2.4 | Alignment zones and stems, PostScript hints, TrueType zones, pixel preview, manual TrueType instructions | ⏳ planned |
+| 11 | 2.5 | Welcome screen, new font wizard, guided tour, font quality check, command line | ⏳ planned |
+
+Later, not scheduled yet: strokes, brushes, corner and cap components, sbix and SVG colour, test install, kerning compress.
 
 ## Licence
 
