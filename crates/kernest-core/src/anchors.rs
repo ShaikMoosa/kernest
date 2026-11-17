@@ -301,7 +301,8 @@ pub fn align_dependents(font: &Font, changed: &str) -> R<Font> {
     while i < names.len() {
         let current = names[i].clone();
         for g in &font.glyphs {
-            if names.contains(&g.name) {
+            // Locked glyphs keep their outlines even when a base they use moves.
+            if names.contains(&g.name) || g.locked {
                 continue;
             }
             let uses = g.layers.iter().any(|l| {
@@ -421,6 +422,9 @@ pub fn suggested_anchors(font: &Font, glyph: &Glyph, layer: &Layer) -> Vec<Ancho
 pub fn set_default_anchors(font: &Font, names: &[String]) -> R<Font> {
     let mut out = font.clone();
     for name in names {
+        if out.glyph(name).ok_or_else(|| no_glyph(name))?.locked {
+            continue;
+        }
         let keys: Vec<String> = out
             .glyph(name)
             .ok_or_else(|| no_glyph(name))?
@@ -478,7 +482,7 @@ pub fn create_composites(font: &Font, names: &[String]) -> R<Composites> {
             continue;
         }
         match out.glyph(name) {
-            Some(g) if g.layers.iter().any(|l| !l.shapes.is_empty()) => {
+            Some(g) if g.locked || g.layers.iter().any(|l| !l.shapes.is_empty()) => {
                 skipped.push(name.clone());
                 continue;
             }
@@ -531,6 +535,7 @@ mod tests {
 
     fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Shape {
         Shape::Path(Path {
+            locked: false,
             closed: true,
             nodes: vec![
                 Node::new(x0, y0, NodeKind::Line),

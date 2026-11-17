@@ -59,7 +59,8 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
 | Select | V | Click or drag to select nodes; drag to move them. |
 | Pen | P | Click to add corner points, drag to add curve points. Click the first point to close the path. |
 | Rectangle | F | Drag to draw a rectangle. |
-| Ellipse | E | Drag to draw an ellipse. |
+| Ellipse | Shift+E | Drag to draw an ellipse. |
+| Knife | E | Drag a line across the outline to cut paths where it crosses. |
 | Measure | L | Drag a line across the outline to measure distances and angles. |
 | Hand | H or hold Space | Drag to move around the canvas. |
 
@@ -108,6 +109,36 @@ A smart glyph is a component that stretches: each glyph that uses it sets its ow
 3. Use the glyph as a component (**Add Component**). With the component selected, its axis values appear next to X and Y; type a value to reshape it.
 
 Poles must match the master layer point for point. On export, smart components become ordinary outlines. Smart components in Glyphs files import as smart components.
+
+### Path tools and filters
+
+The **Path** menu and the node right-click menu reshape existing outlines. Each change is one undoable step.
+
+- **Knife (E):** drag a line across the outline. Every path the line *crosses* is cut at the crossings and split into separate closed paths; a line that stays inside a shape does nothing. Press Esc to cancel mid-drag.
+- **Open Corner:** splits the selected corner node into two, opening the path there.
+- **Reconnect Nodes / Connect Nodes:** joins the open ends back together (Reconnect merges a corner you opened; Connect draws a segment between two selected end points).
+- **Close Open Paths:** closes every open path in the layer.
+- **Make Node First:** rotates a closed path so the selected node becomes its first point (useful for matching point order between masters).
+- **Reverse Selected Contours:** flips the direction of the selected paths.
+- **Tidy up Paths (Ctrl+Shift+T):** removes redundant points, such as a node that sits exactly on a straight line between its neighbours.
+- **Round Coordinates:** rounds every point to whole font units.
+- **Correct Path Direction (Ctrl+Shift+R)** and **Add Extremes** are described under Edit View above; they work across all compatible masters.
+
+The **Filter** menu opens a dialog with a live preview drawn over the glyph before you commit:
+
+- **Round Corners…:** rounds every corner by a radius you set.
+- **Offset Curve…:** grows or shrinks the outline by a horizontal and vertical offset (make a stroke, or thin a shape).
+- **Transformations…:** moves, scales, rotates or skews by exact amounts.
+- Each dialog has an **All masters** switch and, when several glyphs are selected in the Font View, a **Selected glyphs (n)** switch so one filter run edits them all as a single undo step.
+- **Repeat Last Filter (Ctrl+Shift+F):** re-applies the last filter and its settings to the current target.
+- Locked glyphs are skipped: the dialog shows a notice and disables Apply until you unlock them.
+
+### Locks and focus
+
+- **Lock a path:** right-click an edge › **Lock Path** (or **Unlock Path**). A locked path can't be selected, moved or edited; the knife and filters leave it alone.
+- **Lock a glyph:** **Glyph › Locked** toggles a lock on the whole glyph. A locked glyph shows a badge, refuses edits with a short notice, and is marked in the Font View. Unlock it the same way.
+- **Focus on Selected Path:** dims every other path so you can work on one contour without distraction. **Clear Focus** (or Esc) restores them. Focus is a view aid only — it changes nothing in the saved font.
+- Locks are saved in the `.kernest` file. A font that uses any lock saves at format version 6; older files without locks keep opening and saving at their own version.
 
 ## Guides and background
 
@@ -280,6 +311,9 @@ Kernest brings over the axes, masters, outlines, components, anchors, kerning, i
 | Set Anchors | Ctrl+U |
 | Show Anchors | Ctrl+Shift+A |
 | Correct Path Direction | Ctrl+Shift+R |
+| Tidy up Paths | Ctrl+Shift+T |
+| Repeat Last Filter | Ctrl+Shift+F |
+| Knife / Ellipse tool | E / Shift+E |
 | Show Metrics | Ctrl+Shift+M |
 | Show Guides / Show Background | Ctrl+Shift+L / Ctrl+Shift+B |
 | Show Bounding Box | Ctrl+Alt+Shift+B |

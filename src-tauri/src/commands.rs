@@ -13,8 +13,9 @@ use kernest_core::geometry::{sidebearings, svg_path};
 use kernest_core::glyphdata::{codepoints_for, GLYPH_SETS};
 use kernest_core::interpolate::check_glyph;
 use kernest_core::{
-    package, pathops, sample, Anchor, Font, Grid, Guide, Layer, Metrics, Node, NodeKind,
-    Path as KPath, Shape, SmartAxis,
+    filters, package, pathops, sample,
+    transform::{self, Selection},
+    Anchor, Font, Grid, Guide, Layer, Metrics, Node, NodeKind, Path as KPath, Shape, SmartAxis,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -74,6 +75,15 @@ pub(crate) fn doc_mut<'a>(
     guard.as_mut().ok_or_else(|| "No font is open.".to_string())
 }
 
+/// Editing commands call this first: a locked glyph refuses every edit.
+pub(crate) fn ensure_glyph_unlocked(font: &Font, glyph: &str) -> CmdResult<()> {
+    match font.glyph(glyph) {
+        Some(g) if g.locked => Err("This glyph is locked. Unlock it to edit.".into()),
+        Some(_) => Ok(()),
+        None => Err(format!("No glyph named \"{glyph}\"")),
+    }
+}
+
 // ---------- Views ----------
 
 #[derive(Serialize)]
@@ -106,6 +116,9 @@ pub struct GlyphSummary {
     svg: String,
     /// False when this glyph's masters can't be interpolated.
     compatible: bool,
+    /// A locked glyph refuses every edit until it is unlocked.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    locked: bool,
     /// Colour layers in this master, bottom to top (empty for black-and-white glyphs).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     color: Vec<ColorLayerView>,
@@ -225,6 +238,8 @@ impl From<NodeKindDto> for NodeKind {
 pub struct PathDto {
     closed: bool,
     nodes: Vec<NodeDto>,
+    #[serde(default)]
+    pub(crate) locked: bool,
 }
 
 #[derive(Serialize)]
@@ -282,6 +297,8 @@ pub struct LayerView {
     smart_axes: Vec<SmartAxis>,
     /// Why this glyph's masters can't be interpolated (empty when they can).
     issues: Vec<String>,
+    /// Whether the whole glyph is locked against editing.
+    pub(crate) glyph_locked: bool,
     /// This master's colour layers, bottom to top, and the default palette.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     color_layers: Vec<ColorLayerView>,
@@ -338,6 +355,7 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
                 rsb: sb.map(|s| s.1),
                 svg: layer.map(|l| svg_path(font, l)).unwrap_or_default(),
                 compatible: check_glyph(font, &g.name).is_empty(),
+                locked: g.locked,
                 color: color_views(font, g, &master.id),
             }
         })
@@ -363,7 +381,17 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
 }
 
 pub(crate) fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> CmdResult<LayerView> {
-    let font = &doc.font;
+    layer_view_font(doc, &doc.font, glyph, master_id)
+}
+
+/// The layer view as drawn from `font`, which may be a preview clone rather than
+/// the document's own font.
+fn layer_view_font(
+    doc: &Document,
+    font: &Font,
+    glyph: &str,
+    master_id: &str,
+) -> CmdResult<LayerView> {
     let g = font
         .glyph(glyph)
         .ok_or_else(|| format!("No glyph named \"{glyph}\""))?;
@@ -412,6 +440,7 @@ pub(crate) fn layer_view_of(doc: &Document, glyph: &str, master_id: &str) -> Cmd
         metrics_keys: layer.metrics_keys.clone(),
         smart_axes: g.smart_axes.clone(),
         issues: check_glyph(font, glyph),
+        glyph_locked: g.locked,
         color_layers: color_views(font, g, &layer.master_id),
         palette: css_palette(font),
         paint: layer.color.as_ref().map(|c| c.paint.clone()),
@@ -439,6 +468,7 @@ fn outline_views(
         match s {
             Shape::Path(p) => paths.push(PathDto {
                 closed: p.closed,
+                locked: p.locked,
                 nodes: p
                     .nodes
                     .iter()
@@ -512,6 +542,7 @@ pub(crate) fn to_path(p: &PathDto) -> CmdResult<KPath> {
         }
     }
     Ok(KPath {
+        locked: p.locked,
         closed: p.closed,
         nodes: p
             .nodes
@@ -679,6 +710,7 @@ pub fn update_layer(
 ) -> CmdResult<LayerView> {
     let mut guard = lock(&state)?;
     let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, &glyph)?;
     if !width.is_finite() || width < 0.0 {
         return Err("Width must be zero or more.".into());
     }
@@ -728,6 +760,7 @@ pub fn set_metric(
 ) -> CmdResult<LayerView> {
     let mut guard = lock(&state)?;
     let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, &glyph)?;
     let edit = match metric.as_str() {
         "lsb" => MetricEdit::Lsb(value),
         "rsb" => MetricEdit::Rsb(value),
@@ -759,6 +792,7 @@ pub fn path_operation(
 ) -> CmdResult<LayerView> {
     let mut guard = lock(&state)?;
     let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, &glyph)?;
     let g = doc
         .font
         .glyph(&glyph)
@@ -824,6 +858,570 @@ pub fn path_operation(
     layer_view_of(doc, &glyph, &master_id)
 }
 
+/// A path edit's outcome: the refreshed layer, plus a note when the change could
+/// only be applied to the current master.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathEditResult {
+    layer: LayerView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
+}
+
+/// What a path edit leaves behind: per path, the closed flag and the node kinds.
+/// Layers with the same structure still interpolate.
+fn edit_structure(layer: &Layer) -> Vec<(bool, Vec<NodeKind>)> {
+    layer
+        .shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Path(p) => Some((p.closed, p.nodes.iter().map(|n| n.kind).collect())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn apply_path_edit(
+    layer: &mut Layer,
+    operation: &str,
+    paths: Option<&[usize]>,
+    nodes: &[[usize; 2]],
+    points: &[[f64; 2]],
+) -> CmdResult<bool> {
+    let only = paths.filter(|p| !p.is_empty());
+    match operation {
+        "knife" => {
+            let [p0, p1] = points else {
+                return Err("The knife needs two points.".into());
+            };
+            Ok(pathops::cut(layer, (p0[0], p0[1]), (p1[0], p1[1])))
+        }
+        "open-corner" => {
+            let [n] = nodes else {
+                return Err("Pick a node.".into());
+            };
+            pathops::open_corner(layer, n[0], n[1])?;
+            Ok(true)
+        }
+        "reconnect-nodes" => Ok(pathops::reconnect_nodes(layer, only) > 0),
+        "connect-nodes" => {
+            let [a, b] = nodes else {
+                return Err("Pick two nodes.".into());
+            };
+            pathops::connect_nodes(layer, (a[0], a[1]), (b[0], b[1]))?;
+            Ok(true)
+        }
+        "close-open-paths" => Ok(pathops::close_open_paths(layer, only) > 0),
+        "make-node-first" => {
+            let [n] = nodes else {
+                return Err("Pick a node.".into());
+            };
+            pathops::make_node_first(layer, n[0], n[1])?;
+            Ok(true)
+        }
+        "reverse-contours" => Ok(pathops::reverse_contours(layer, only) > 0),
+        "tidy-up" => Ok(pathops::tidy_up(layer, only) > 0),
+        "round-coordinates" => Ok(pathops::round_coordinates(layer, only)),
+        other => Err(format!("Unknown path operation \"{other}\"")),
+    }
+}
+
+/// The node-context-menu path edits (knife, open corner, reconnect, connect, close
+/// open paths, make node first, reverse contours, tidy up, round coordinates) as one
+/// undoable step. On a master layer of a compatible glyph the edit is tried on every
+/// master and brace layer; if the results would no longer interpolate, only the
+/// current master changes and the result says so.
+fn path_edit_in(
+    doc: &mut Document,
+    glyph: &str,
+    master_id: &str,
+    operation: &str,
+    paths: Option<&[usize]>,
+    nodes: &[[usize; 2]],
+    points: &[[f64; 2]],
+) -> CmdResult<PathEditResult> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
+    let g = doc
+        .font
+        .glyph(glyph)
+        .ok_or_else(|| format!("No glyph named \"{glyph}\""))?;
+    let current = g
+        .layer(master_id)
+        .ok_or_else(|| format!("No layer for \"{glyph}\""))?;
+    // Validate on the current layer first, so a bad pick errors before anything moves.
+    let mut probe = current.clone();
+    apply_path_edit(&mut probe, operation, paths, nodes, points)?;
+
+    let all_masters = current.is_master()
+        && doc.font.masters.len() > 1
+        && check_glyph(&doc.font, glyph).is_empty();
+    let targets: Vec<String> = if all_masters {
+        g.layers
+            .iter()
+            .filter(|l| l.is_master() || l.location.is_some())
+            .map(|l| l.key().to_string())
+            .collect()
+    } else {
+        vec![master_id.to_string()]
+    };
+    // Every target's layer after the edit, whether it changed or not: an untouched
+    // master still has to match the changed ones for the glyph to interpolate.
+    let mut after: Vec<(String, Layer, bool)> = Vec::new();
+    let mut broke = false;
+    for id in &targets {
+        let mut layer = g
+            .layer(id)
+            .ok_or_else(|| format!("No layer for \"{glyph}\""))?
+            .clone();
+        match apply_path_edit(&mut layer, operation, paths, nodes, points) {
+            Ok(changed) => after.push((id.clone(), layer, changed)),
+            // A pick that is valid here may not be on another master (a different
+            // node type, say); keep the current master's edit and say so.
+            Err(_) if id != master_id => broke = true,
+            Err(e) => return Err(e),
+        }
+    }
+    let compatible = !broke
+        && after
+            .iter()
+            .map(|(_, l, _)| edit_structure(l))
+            .all(|s| s == edit_structure(&after[0].1));
+    let warning = if targets.len() > 1 && !compatible {
+        Some("Applied to this master only to keep the others compatible.".to_string())
+    } else {
+        None
+    };
+    let kept: Vec<(String, Layer)> = after
+        .into_iter()
+        .filter(|(id, _, changed)| *changed && (compatible || id == master_id))
+        .map(|(id, l, _)| (id, l))
+        .collect();
+    let changed = if kept.len() == 1 && kept[0].0 == master_id {
+        doc.history
+            .apply(
+                &mut doc.font,
+                glyph,
+                master_id,
+                kept.into_iter().next().expect("one").1,
+            )
+            .map_err(|e| e.to_string())?
+    } else if !kept.is_empty() {
+        let mut next = doc.font.clone();
+        let ng = next.glyph_mut(glyph).expect("glyph exists");
+        for (id, layer) in kept {
+            *ng.layer_mut(&id).expect("layer exists") = layer;
+        }
+        doc.history
+            .apply_font(&mut doc.font, next)
+            .map_err(|e| e.to_string())?
+    } else {
+        false
+    };
+    if changed {
+        doc.revision += 1;
+    }
+    Ok(PathEditResult {
+        layer: layer_view_of(doc, glyph, master_id)?,
+        warning,
+    })
+}
+
+#[tauri::command]
+pub fn path_edit(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    operation: String,
+    paths: Option<Vec<usize>>,
+    nodes: Option<Vec<[usize; 2]>>,
+    points: Option<Vec<[f64; 2]>>,
+) -> CmdResult<PathEditResult> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    path_edit_in(
+        doc,
+        &glyph,
+        &master_id,
+        &operation,
+        paths.as_deref(),
+        &nodes.unwrap_or_default(),
+        &points.unwrap_or_default(),
+    )
+}
+
+/// Locks or unlocks one path of a layer (the path index counts paths only, not
+/// components). A locked path refuses every edit until unlocked. One undoable step.
+fn set_path_locked_in(
+    doc: &mut Document,
+    glyph: &str,
+    key: &str,
+    path: usize,
+    locked: bool,
+) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
+    let mut next = doc
+        .font
+        .glyph(glyph)
+        .and_then(|g| g.layer(key))
+        .ok_or_else(|| format!("No layer for \"{glyph}\""))?
+        .clone();
+    let p = next
+        .shapes
+        .iter_mut()
+        .filter_map(|s| match s {
+            Shape::Path(p) => Some(p),
+            _ => None,
+        })
+        .nth(path)
+        .ok_or_else(|| "No path at that position.".to_string())?;
+    p.locked = locked;
+    if doc
+        .history
+        .apply(&mut doc.font, glyph, key, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    layer_view_of(doc, glyph, key)
+}
+
+#[tauri::command]
+pub fn set_path_locked(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    path: usize,
+    locked: bool,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    set_path_locked_in(doc, &glyph, &master_id, path, locked)
+}
+
+/// Locks or unlocks a whole glyph: a locked glyph refuses every edit and is skipped
+/// by filters and Update Metrics. One undoable step.
+fn set_glyph_locked_in(doc: &mut Document, glyph: &str, locked: bool) -> CmdResult<DocStatus> {
+    let mut next = doc.font.clone();
+    next.glyph_mut(glyph)
+        .ok_or_else(|| format!("No glyph named \"{glyph}\""))?
+        .locked = locked;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
+#[tauri::command]
+pub fn set_glyph_locked(
+    state: State<AppState>,
+    glyph: String,
+    locked: bool,
+) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    set_glyph_locked_in(doc, &glyph, locked)
+}
+
+/// A filter's settings; every field is optional so each dialog only sends its own.
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FilterParams {
+    pub radius: f64,
+    pub offset_x: f64,
+    pub offset_y: f64,
+    pub make_stroke: bool,
+    pub affine: [f64; 6],
+    pub origin: [f64; 2],
+}
+
+impl Default for FilterParams {
+    fn default() -> Self {
+        Self {
+            radius: 0.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            make_stroke: false,
+            affine: kernest_core::IDENTITY,
+            origin: [0.0, 0.0],
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterResult {
+    changed: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
+    layer: LayerView,
+}
+
+/// Everything a transform filter moves: all nodes of unlocked paths, all components
+/// and all anchors. Locked paths stay exactly where they are.
+fn unlocked_selection(layer: &Layer) -> Selection {
+    let mut sel = Selection::default();
+    let mut pi = 0usize;
+    let mut ci = 0usize;
+    for s in &layer.shapes {
+        match s {
+            Shape::Path(p) => {
+                if !p.locked {
+                    sel.nodes.extend((0..p.nodes.len()).map(|ni| (pi, ni)));
+                }
+                pi += 1;
+            }
+            Shape::Component { .. } => {
+                sel.components.push(ci);
+                ci += 1;
+            }
+        }
+    }
+    sel.anchors = layer.anchors.iter().map(|a| a.name.clone()).collect();
+    sel
+}
+
+/// Checks a filter's name and numbers before any work is done.
+fn validate_filter(name: &str, params: &FilterParams) -> CmdResult<()> {
+    match name {
+        "round-corners" => {
+            if !params.radius.is_finite() || params.radius < 0.0 {
+                return Err("The radius has an invalid number.".into());
+            }
+        }
+        "offset-curve" => {
+            if !params.offset_x.is_finite() || !params.offset_y.is_finite() {
+                return Err("The offset has an invalid number.".into());
+            }
+        }
+        "transformations" => {
+            if params
+                .affine
+                .iter()
+                .chain(params.origin.iter())
+                .any(|v| !v.is_finite())
+            {
+                return Err("The transform has an invalid number.".into());
+            }
+        }
+        other => return Err(format!("Unknown filter \"{other}\"")),
+    }
+    Ok(())
+}
+
+/// Applies a filter to one layer clone, the way `run_filter_in` does per layer.
+fn apply_filter(layer: &mut Layer, name: &str, params: &FilterParams) -> bool {
+    match name {
+        "round-corners" => filters::round_corners(layer, params.radius, None) > 0,
+        "offset-curve" => filters::offset_curve(
+            layer,
+            params.offset_x,
+            params.offset_y,
+            params.make_stroke,
+            None,
+        ),
+        _ => {
+            let sel = unlocked_selection(layer);
+            if sel.is_empty() {
+                false
+            } else {
+                let before = layer.clone();
+                transform::apply(
+                    layer,
+                    &sel,
+                    &params.affine,
+                    (params.origin[0], params.origin[1]),
+                );
+                *layer != before
+            }
+        }
+    }
+}
+
+/// The filter's result on the current layer without touching the document: the
+/// dialogs' live preview. Locked glyphs preview unchanged, since filters skip them.
+fn filter_preview_in(
+    doc: &Document,
+    glyph: &str,
+    master_id: &str,
+    name: &str,
+    params: &FilterParams,
+) -> CmdResult<LayerView> {
+    validate_filter(name, params)?;
+    let g = doc
+        .font
+        .glyph(glyph)
+        .ok_or_else(|| format!("No glyph named \"{glyph}\""))?;
+    if g.locked {
+        return layer_view_of(doc, glyph, master_id);
+    }
+    let mut layer = g
+        .layer(master_id)
+        .ok_or_else(|| format!("\"{glyph}\" has no layer \"{master_id}\""))?
+        .clone();
+    apply_filter(&mut layer, name, params);
+    let mut font = doc.font.clone();
+    *font
+        .glyph_mut(glyph)
+        .expect("glyph exists")
+        .layer_mut(master_id)
+        .expect("layer exists") = layer;
+    layer_view_font(doc, &font, glyph, master_id)
+}
+
+/// Runs a filter ("round-corners", "offset-curve", "transformations") over the chosen
+/// glyphs (the current one when none are chosen) as a single undoable step. With
+/// `all_masters`, compatible glyphs change on every master and brace layer; where a
+/// change would break interpolation only the current master changes and a warning
+/// says so. Locked glyphs are skipped.
+fn run_filter_in(
+    doc: &mut Document,
+    current: &str,
+    master_id: &str,
+    glyphs: &[String],
+    name: &str,
+    params: &FilterParams,
+    all_masters: bool,
+) -> CmdResult<FilterResult> {
+    validate_filter(name, params)?;
+    let mut scope = if glyphs.is_empty() {
+        vec![current.to_string()]
+    } else {
+        glyphs.to_vec()
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    scope.retain(|n| seen.insert(n.clone()));
+    // The layer key the dialogs were opened on; other glyphs fall back to the same
+    // master, since a brace layer belongs to one glyph only.
+    let base_master = doc
+        .font
+        .glyph(current)
+        .and_then(|g| g.layer(master_id))
+        .map(|l| l.master_id.clone())
+        .unwrap_or_else(|| master_id.to_string());
+    let mut next = doc.font.clone();
+    let mut changed: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut skipped_locked = false;
+    let mut limited = false;
+    for gname in &scope {
+        let g = next
+            .glyph(gname)
+            .ok_or_else(|| format!("No glyph named \"{gname}\""))?;
+        if g.locked {
+            skipped_locked = true;
+            continue;
+        }
+        let compatible =
+            all_masters && next.masters.len() > 1 && check_glyph(&next, gname).is_empty();
+        let keys: Vec<String> = if compatible {
+            g.layers
+                .iter()
+                .filter(|l| l.is_master() || l.location.is_some())
+                .map(|l| l.key().to_string())
+                .collect()
+        } else if g.layer(master_id).is_some() {
+            vec![master_id.to_string()]
+        } else {
+            vec![base_master.clone()]
+        };
+        let mut after: Vec<(String, Layer, bool)> = Vec::new();
+        for key in &keys {
+            let mut layer = g
+                .layer(key)
+                .ok_or_else(|| format!("No layer for \"{gname}\""))?
+                .clone();
+            let did = apply_filter(&mut layer, name, params);
+            after.push((key.clone(), layer, did));
+        }
+        // Transformations keep every node, so they never break interpolation.
+        let stays_compatible = name == "transformations"
+            || after
+                .iter()
+                .map(|(_, l, _)| edit_structure(l))
+                .all(|s| s == edit_structure(&after[0].1));
+        let base_key = if g.layer(master_id).is_some() {
+            master_id
+        } else {
+            &base_master
+        };
+        if keys.len() > 1 && !stays_compatible {
+            limited = true;
+        }
+        let mut any = false;
+        let ng = next.glyph_mut(gname).expect("glyph exists");
+        for (key, layer, did) in after {
+            if did && (stays_compatible || key == base_key) {
+                *ng.layer_mut(&key).expect("layer exists") = layer;
+                any = true;
+            }
+        }
+        if any {
+            changed.push(gname.clone());
+        }
+    }
+    if limited {
+        warnings.push(
+            "Applied to the current master only where masters would become incompatible.".into(),
+        );
+    }
+    if skipped_locked {
+        warnings.push("Locked glyphs were skipped.".into());
+    }
+    if !changed.is_empty()
+        && doc
+            .history
+            .apply_font(&mut doc.font, next)
+            .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(FilterResult {
+        changed,
+        warnings,
+        layer: layer_view_of(doc, current, master_id)?,
+    })
+}
+
+#[tauri::command]
+pub fn run_filter(
+    state: State<AppState>,
+    current: String,
+    master_id: String,
+    glyphs: Vec<String>,
+    name: String,
+    params: FilterParams,
+    all_masters: bool,
+) -> CmdResult<FilterResult> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    run_filter_in(
+        doc,
+        &current,
+        &master_id,
+        &glyphs,
+        &name,
+        &params,
+        all_masters,
+    )
+}
+
+#[tauri::command]
+pub fn filter_preview(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    name: String,
+    params: FilterParams,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    filter_preview_in(doc, &glyph, &master_id, &name, &params)
+}
+
 /// Sets (or clears, with an empty key) a layer's metrics key for "lsb", "rsb" or
 /// "width", and applies it right away. One undoable step.
 #[tauri::command]
@@ -836,6 +1434,7 @@ pub fn set_metrics_key(
 ) -> CmdResult<LayerView> {
     let mut guard = lock(&state)?;
     let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, &glyph)?;
     let key = key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
     if let Some(k) = &key {
         kernest_core::metricskeys::validate(k)?;
@@ -886,6 +1485,7 @@ pub fn set_component_smart(
 ) -> CmdResult<LayerView> {
     let mut guard = lock(&state)?;
     let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, &glyph)?;
     let next =
         kernest_core::smart::set_component_values(&doc.font, &glyph, &master_id, index, &values)?;
     if doc
@@ -987,6 +1587,7 @@ mod tests {
     fn path_validation() {
         use NodeKindDto::*;
         let ok = PathDto {
+            locked: false,
             closed: true,
             nodes: vec![
                 node(0., 0., Line),
@@ -996,16 +1597,19 @@ mod tests {
         };
         assert!(to_path(&ok).is_ok());
         let only_off = PathDto {
+            locked: false,
             closed: true,
             nodes: vec![node(0., 0., Offcurve), node(1., 1., Offcurve)],
         };
         assert!(to_path(&only_off).is_err());
         let open_off = PathDto {
+            locked: false,
             closed: false,
             nodes: vec![node(0., 0., Offcurve), node(1., 1., Line)],
         };
         assert!(to_path(&open_off).is_err());
         let three = PathDto {
+            locked: false,
             closed: true,
             nodes: vec![
                 node(0., 0., Line),
@@ -1017,6 +1621,7 @@ mod tests {
         };
         assert!(to_path(&three).is_err());
         let cubic = PathDto {
+            locked: false,
             closed: false,
             nodes: vec![
                 node(0., 0., Line),
@@ -1027,6 +1632,7 @@ mod tests {
         };
         assert!(to_path(&cubic).is_ok());
         let nan = PathDto {
+            locked: false,
             closed: false,
             nodes: vec![node(f64::NAN, 0., Line)],
         };
@@ -1098,5 +1704,276 @@ mod component_tests {
         assert_eq!(v.components.len(), 1);
         assert!(v.components[0].svg.starts_with('M'));
         assert_eq!(v.lsb, Some(80.0));
+    }
+}
+
+#[cfg(test)]
+mod path_edit_tests {
+    use super::*;
+    use kernest_core::model::Master;
+
+    fn two_master_doc() -> Document {
+        let mut f = sample::sample_font();
+        let bold = f.masters[0].clone();
+        f.masters.push(Master {
+            id: "m02".into(),
+            name: "Bold".into(),
+            location: Default::default(),
+            metrics: bold.metrics,
+            guides: Vec::new(),
+        });
+        for g in &mut f.glyphs {
+            let mut l = g.layers[0].clone();
+            l.master_id = "m02".into();
+            g.layers.push(l);
+        }
+        Document::new(f, None)
+    }
+
+    fn shorten_bold(doc: &mut Document, sy: f64) {
+        let mut l = doc.font.glyph("H").unwrap().layer("m02").unwrap().clone();
+        transform::apply(
+            &mut l,
+            &Selection::default(),
+            &transform::scale(1.0, sy),
+            (0.0, 0.0),
+        );
+        *doc.font.glyph_mut("H").unwrap().layer_mut("m02").unwrap() = l;
+    }
+
+    #[test]
+    fn knife_is_one_undo_step() {
+        let mut doc = Document::new(sample::sample_font(), None);
+        let original = doc.font.clone();
+        let before = layer_view_of(&doc, "H", "m01").unwrap().paths.len();
+        let r = path_edit_in(
+            &mut doc,
+            "H",
+            "m01",
+            "knife",
+            None,
+            &[],
+            &[[-50.0, 350.0], [750.0, 350.0]],
+        )
+        .unwrap();
+        assert!(r.warning.is_none());
+        assert!(r.layer.paths.len() > before);
+        assert!(r.layer.status.can_undo && r.layer.status.dirty);
+        doc.history.undo(&mut doc.font);
+        assert_eq!(doc.font, original);
+    }
+
+    #[test]
+    fn locked_paths_and_glyphs_refuse_edits() {
+        let mut doc = Document::new(sample::sample_font(), None);
+        let original = doc.font.clone();
+        let v = set_path_locked_in(&mut doc, "H", "m01", 0, true).unwrap();
+        assert!(v.paths[0].locked);
+        // A knife through the glyph leaves the locked path whole.
+        let before = v.paths[0].nodes.len();
+        let r = path_edit_in(
+            &mut doc,
+            "H",
+            "m01",
+            "knife",
+            None,
+            &[],
+            &[[-50.0, 350.0], [750.0, 350.0]],
+        )
+        .unwrap();
+        assert_eq!(r.layer.paths[0].nodes.len(), before);
+        assert!(r.layer.paths[0].locked);
+        assert!(path_edit_in(&mut doc, "H", "m01", "open-corner", None, &[[0, 0]], &[]).is_err());
+        assert!(set_path_locked_in(&mut doc, "H", "m01", 9, true).is_err());
+        // A locked glyph refuses every edit, including unlocking its paths.
+        set_glyph_locked_in(&mut doc, "H", true).unwrap();
+        assert!(layer_view_of(&doc, "H", "m01").unwrap().glyph_locked);
+        let fv = font_view_of(&doc, None).unwrap();
+        assert!(fv.glyphs.iter().find(|g| g.name == "H").unwrap().locked);
+        assert!(path_edit_in(&mut doc, "H", "m01", "tidy-up", None, &[], &[]).is_err());
+        assert!(set_path_locked_in(&mut doc, "H", "m01", 0, false).is_err());
+        set_glyph_locked_in(&mut doc, "H", false).unwrap();
+        set_path_locked_in(&mut doc, "H", "m01", 0, false).unwrap();
+        for _ in 0..5 {
+            doc.history.undo(&mut doc.font);
+        }
+        assert_eq!(doc.font, original);
+    }
+
+    #[test]
+    fn knife_falls_back_to_current_master_with_a_warning() {
+        let mut doc = two_master_doc();
+        // Same structure, but the bold master is shorter: the knife line misses it.
+        shorten_bold(&mut doc, 0.4);
+        let original = doc.font.clone();
+        let bold_before = doc.font.glyph("H").unwrap().layer("m02").unwrap().clone();
+        let r = path_edit_in(
+            &mut doc,
+            "H",
+            "m01",
+            "knife",
+            None,
+            &[],
+            &[[-50.0, 350.0], [750.0, 350.0]],
+        )
+        .unwrap();
+        assert_eq!(
+            r.warning.as_deref(),
+            Some("Applied to this master only to keep the others compatible.")
+        );
+        assert_eq!(
+            doc.font.glyph("H").unwrap().layer("m02").unwrap(),
+            &bold_before
+        );
+        assert!(r.layer.paths.len() > 3);
+        doc.history.undo(&mut doc.font);
+        assert_eq!(doc.font, original);
+    }
+
+    #[test]
+    fn path_edit_rejects_bad_picks() {
+        let mut doc = Document::new(sample::sample_font(), None);
+        let original = doc.font.clone();
+        assert!(path_edit_in(&mut doc, "H", "m01", "nope", None, &[], &[]).is_err());
+        assert!(path_edit_in(&mut doc, "H", "m01", "knife", None, &[], &[]).is_err());
+        assert!(path_edit_in(&mut doc, "H", "m01", "connect-nodes", None, &[[0, 0]], &[]).is_err());
+        assert!(path_edit_in(&mut doc, "nope", "m01", "tidy-up", None, &[], &[]).is_err());
+        assert_eq!(doc.font, original);
+    }
+
+    #[test]
+    fn round_corners_filter_over_glyphs_with_locked_skip() {
+        let mut doc = Document::new(sample::sample_font(), None);
+        let original = doc.font.clone();
+        doc.font.glyph_mut("A").unwrap().locked = true;
+        let params = FilterParams {
+            radius: 20.0,
+            ..Default::default()
+        };
+        let r = run_filter_in(
+            &mut doc,
+            "H",
+            "m01",
+            &["H".into(), "A".into()],
+            "round-corners",
+            &params,
+            false,
+        )
+        .unwrap();
+        assert_eq!(r.changed, vec!["H".to_string()]);
+        assert_eq!(r.warnings, vec!["Locked glyphs were skipped.".to_string()]);
+        assert!(r.layer.status.can_undo);
+        assert!(r.layer.paths.iter().all(|p| p.nodes.len() > 4));
+        doc.history.undo(&mut doc.font);
+        assert_eq!(doc.font.glyph("H"), original.glyph("H"));
+    }
+
+    #[test]
+    fn transformations_filter_moves_all_masters_and_skips_locked_paths() {
+        let mut doc = two_master_doc();
+        set_path_locked_in(&mut doc, "H", "m01", 0, true).unwrap();
+        let original = doc.font.clone();
+        let params = FilterParams {
+            affine: transform::translate(10.0, 0.0),
+            ..Default::default()
+        };
+        let r = run_filter_in(&mut doc, "H", "m01", &[], "transformations", &params, true).unwrap();
+        assert_eq!(r.changed, vec!["H".to_string()]);
+        assert!(r.warnings.is_empty());
+        let o = original.glyph("H").unwrap();
+        for m in ["m01", "m02"] {
+            let l = doc.font.glyph("H").unwrap().layer(m).unwrap();
+            let ol = o.layer(m).unwrap();
+            for (i, s) in l.shapes.iter().enumerate() {
+                if m == "m01" && i == 0 {
+                    assert_eq!(s, &ol.shapes[0], "the locked path stays put");
+                } else if let (Shape::Path(p), Shape::Path(q)) = (s, &ol.shapes[i]) {
+                    assert_eq!(p.nodes[0].x, q.nodes[0].x + 10.0);
+                }
+            }
+        }
+        // One undo step restores the whole run; the lock was its own step before it.
+        doc.history.undo(&mut doc.font);
+        assert_eq!(doc.font, original);
+    }
+
+    #[test]
+    fn offset_filter_limits_to_current_master_when_incompatible() {
+        let mut doc = two_master_doc();
+        // The bold master is tiny: shrinking erases its paths, which would break
+        // interpolation, so only the current master changes.
+        shorten_bold(&mut doc, 0.05);
+        let mut l = doc.font.glyph("H").unwrap().layer("m02").unwrap().clone();
+        transform::apply(
+            &mut l,
+            &Selection::default(),
+            &transform::scale(0.05, 1.0),
+            (0.0, 0.0),
+        );
+        *doc.font.glyph_mut("H").unwrap().layer_mut("m02").unwrap() = l;
+        let original = doc.font.clone();
+        let params = FilterParams {
+            offset_x: -10.0,
+            offset_y: -10.0,
+            ..Default::default()
+        };
+        let r = run_filter_in(&mut doc, "H", "m01", &[], "offset-curve", &params, true).unwrap();
+        assert_eq!(r.changed, vec!["H".to_string()]);
+        assert!(r.warnings.iter().any(|w| w.contains("current master only")));
+        assert_eq!(
+            doc.font.glyph("H").unwrap().layer("m02").unwrap(),
+            original.glyph("H").unwrap().layer("m02").unwrap()
+        );
+        doc.history.undo(&mut doc.font);
+        assert_eq!(doc.font, original);
+    }
+
+    #[test]
+    fn filter_rejects_bad_names_and_numbers() {
+        let mut doc = Document::new(sample::sample_font(), None);
+        let p = FilterParams::default();
+        assert!(run_filter_in(&mut doc, "H", "m01", &[], "nope", &p, false).is_err());
+        let bad = FilterParams {
+            radius: -1.0,
+            ..Default::default()
+        };
+        assert!(run_filter_in(&mut doc, "H", "m01", &[], "round-corners", &bad, false).is_err());
+        let bad = FilterParams {
+            offset_x: f64::NAN,
+            ..Default::default()
+        };
+        assert!(run_filter_in(&mut doc, "H", "m01", &[], "offset-curve", &bad, false).is_err());
+        let bad = FilterParams {
+            affine: [1.0, 0.0, 0.0, 1.0, f64::INFINITY, 0.0],
+            ..Default::default()
+        };
+        assert!(run_filter_in(&mut doc, "H", "m01", &[], "transformations", &bad, false).is_err());
+        assert!(run_filter_in(&mut doc, "nope", "m01", &[], "round-corners", &p, false).is_err());
+    }
+
+    #[test]
+    fn filter_preview_shows_the_result_without_changing_the_document() {
+        let doc = Document::new(sample::sample_font(), None);
+        let before = doc.font.clone();
+        let rev = doc.revision;
+        let p = FilterParams {
+            radius: 20.0,
+            ..Default::default()
+        };
+        let view = filter_preview_in(&doc, "H", "m01", "round-corners", &p).unwrap();
+        let stored = layer_view_of(&doc, "H", "m01").unwrap();
+        assert_ne!(
+            serde_json::to_value(&view.paths).unwrap(),
+            serde_json::to_value(&stored.paths).unwrap()
+        );
+        // The document itself is untouched: no edit, no undo step.
+        assert_eq!(doc.font, before);
+        assert_eq!(doc.revision, rev);
+        assert!(!doc.history.can_undo());
+        let bad = FilterParams {
+            radius: -1.0,
+            ..Default::default()
+        };
+        assert!(filter_preview_in(&doc, "H", "m01", "round-corners", &bad).is_err());
     }
 }

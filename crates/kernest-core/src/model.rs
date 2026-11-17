@@ -209,6 +209,9 @@ pub struct Glyph {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// A locked glyph refuses every edit until it is unlocked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
     /// For a smart glyph: the axes components of it can be set on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub smart_axes: Vec<SmartAxis>,
@@ -234,6 +237,7 @@ impl Glyph {
             right_group: None,
             tags: Vec::new(),
             note: None,
+            locked: false,
             smart_axes: Vec::new(),
             layers: Vec::new(),
         }
@@ -545,6 +549,9 @@ pub struct Path {
     #[serde(default = "yes")]
     pub closed: bool,
     pub nodes: Vec<Node>,
+    /// Locked paths can't be selected for editing; the flag travels with the file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
 }
 
 /// A point on an outline. Serialised compactly as `"x y kind [smooth]"`,

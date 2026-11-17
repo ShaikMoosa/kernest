@@ -15,6 +15,7 @@ pub mod designspace;
 pub mod edit;
 pub mod error;
 pub mod features;
+pub mod filters;
 pub mod geometry;
 pub mod glyphdata;
 pub mod glyphset;

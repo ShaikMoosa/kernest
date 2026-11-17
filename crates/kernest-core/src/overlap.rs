@@ -11,14 +11,15 @@ use linesweeper::{binary_op, BinaryOp, FillRule};
 use crate::model::{Layer, Node, NodeKind, Path, Shape};
 use crate::pathops::correct_direction;
 
-fn to_bez(p: &Path) -> Option<BezPath> {
+pub(crate) fn to_bez(p: &Path) -> Option<BezPath> {
     let n = p.nodes.len();
     let start = (0..n).find(|&i| p.nodes[i].on_curve())?;
     let pt = |i: usize| Point::new(p.nodes[i % n].x, p.nodes[i % n].y);
     let mut b = BezPath::new();
     b.move_to(pt(start));
     let mut offs: Vec<Point> = Vec::new();
-    for k in 1..=n {
+    let steps = if p.closed { n } else { n - 1 - start };
+    for k in 1..=steps {
         let i = (start + k) % n;
         let node = p.nodes[i];
         match node.kind {
@@ -43,7 +44,9 @@ fn to_bez(p: &Path) -> Option<BezPath> {
             }
         }
     }
-    b.close_path();
+    if p.closed {
+        b.close_path();
+    }
     Some(b)
 }
 
@@ -51,8 +54,8 @@ fn round(p: Point) -> (f64, f64) {
     (p.x.round(), p.y.round())
 }
 
-/// A closed Kernest path from a closed kurbo path (coordinates rounded to units).
-fn from_bez(b: &BezPath) -> Option<Path> {
+/// A Kernest path from a kurbo subpath (coordinates rounded to units).
+pub(crate) fn from_bez(b: &BezPath, closed: bool) -> Option<Path> {
     let mut nodes: Vec<Node> = Vec::new();
     let mut start: Option<(f64, f64)> = None;
     for el in b.elements() {
@@ -95,20 +98,23 @@ fn from_bez(b: &BezPath) -> Option<Path> {
     let start = start?;
     // The last segment usually ends back on the start point: fold it into the start
     // node (a closed path's first node carries the type of the closing segment).
-    if nodes.len() > 1 {
+    if closed && nodes.len() > 1 {
         let last = *nodes.last().expect("not empty");
         if last.on_curve() && (last.x, last.y) == start {
             nodes.pop();
             nodes[0].kind = last.kind;
         }
     }
-    drop_collinear(&mut nodes);
+    if closed {
+        drop_collinear(&mut nodes);
+    }
     if nodes.iter().filter(|n| n.on_curve()).count() < 2 {
         return None;
     }
-    mark_smooth(&mut nodes);
+    mark_smooth(&mut nodes, closed);
     Some(Path {
-        closed: true,
+        locked: false,
+        closed,
         nodes,
     })
 }
@@ -132,10 +138,13 @@ fn drop_collinear(nodes: &mut Vec<Node>) {
 }
 
 /// On-curve nodes whose incoming and outgoing directions line up are smooth.
-fn mark_smooth(nodes: &mut [Node]) {
+fn mark_smooth(nodes: &mut [Node], closed: bool) {
     let n = nodes.len();
     for i in 0..n {
         if !nodes[i].on_curve() {
+            continue;
+        }
+        if !closed && (i == 0 || i == n - 1) {
             continue;
         }
         let (p, a, b) = (nodes[i], nodes[(i + n - 1) % n], nodes[(i + 1) % n]);
@@ -217,7 +226,7 @@ pub fn remove_overlaps(layer: &mut Layer) -> bool {
         if out.len() == c.len() && (before - after).abs() <= tolerance {
             continue;
         }
-        let paths: Vec<Path> = out.iter().filter_map(from_bez).collect();
+        let paths: Vec<Path> = out.iter().filter_map(|b| from_bez(b, true)).collect();
         replace.push((c.iter().map(|&k| closed[k].0).collect(), paths));
     }
     if replace.is_empty() {
@@ -245,6 +254,7 @@ mod tests {
 
     fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Shape {
         Shape::Path(Path {
+            locked: false,
             closed: true,
             nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
                 .into_iter()
@@ -320,6 +330,7 @@ mod tests {
             let k = 0.5523 * 100.0;
             let n = |x: f64, y: f64, kind| Node::new(cx + x, 300.0 + y, kind);
             Shape::Path(Path {
+                locked: false,
                 closed: true,
                 nodes: vec![
                     n(100.0, 0.0, NodeKind::Curve),

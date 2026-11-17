@@ -24,7 +24,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, IoContext, Result};
-use crate::model::{Axis, FeatureSettings, Font, FontInfo, Glyph, Instance, KernPair, Master};
+use crate::model::{
+    Axis, FeatureSettings, Font, FontInfo, Glyph, Instance, KernPair, Master, Shape,
+};
 
 /// Format version written by this build.
 /// Version 2 adds colour palettes and colour layers; version 3 adds the component
@@ -35,7 +37,7 @@ use crate::model::{Axis, FeatureSettings, Font, FontInfo, Glyph, Instance, KernP
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 6;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -192,9 +194,21 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
                 !l.guides.is_empty() || l.background.as_ref().is_some_and(|b| !b.is_empty())
             })
         });
+    let has_phase5 = font.glyphs.iter().any(|g| {
+        g.locked
+            || g.layers.iter().any(|l| {
+                let locked_path = |s: &Shape| matches!(s, Shape::Path(p) if p.locked);
+                l.shapes.iter().any(locked_path)
+                    || l.background
+                        .as_ref()
+                        .is_some_and(|b| b.shapes.iter().any(locked_path))
+            })
+    });
     let file = FontFile {
-        format_version: if has_phase4 {
+        format_version: if has_phase5 {
             FORMAT_VERSION
+        } else if has_phase4 {
+            5
         } else if has_phase3 {
             4
         } else if has_manual {
@@ -488,6 +502,7 @@ mod tests {
         });
         layer.background = Some(Background {
             shapes: vec![Shape::Path(Path {
+                locked: false,
                 closed: true,
                 nodes: vec![
                     Node::new(80.0, 0.0, NodeKind::Line),
@@ -506,6 +521,48 @@ mod tests {
         let fj = fs::read_to_string(path.join("font.json")).unwrap();
         assert!(fj.contains("\"formatVersion\": 5"), "{fj}");
         assert_eq!(open(&path).unwrap(), font);
+    }
+
+    #[test]
+    fn phase5_locks_round_trip_and_gate_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        // Without locks the package stays at version 1 and writes no lock flags.
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
+        let hj = fs::read_to_string(path.join("glyphs/H_.json")).unwrap();
+        assert!(!hj.contains("locked"), "{hj}");
+
+        font.glyph_mut("H").unwrap().locked = true;
+        let layer = font.glyph_mut("H").unwrap().layer_mut("m01").unwrap();
+        if let Some(Shape::Path(p)) = layer.shapes.first_mut() {
+            p.locked = true;
+        }
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 6"), "{fj}");
+        assert_eq!(open(&path).unwrap(), font);
+
+        // A glyph lock alone also gates the version; unlocking returns to 1.
+        if let Some(Shape::Path(p)) = font
+            .glyph_mut("H")
+            .unwrap()
+            .layer_mut("m01")
+            .unwrap()
+            .shapes
+            .first_mut()
+        {
+            p.locked = false;
+        }
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 6"), "{fj}");
+        font.glyph_mut("H").unwrap().locked = false;
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
     }
 
     #[test]

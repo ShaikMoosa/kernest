@@ -3,7 +3,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
-import { backend, errorMessage, isTauri, type DocStatus, type FontView, type GlyphSetInfo } from "./lib/backend";
+import { backend, errorMessage, isTauri, type DocStatus, type FilterName, type FilterParams, type FontView, type GlyphSetInfo } from "./lib/backend";
 import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, loadRecents, openExternal, pickFontToOpen, pickSavePath, pickSourceToImport, rememberRecent, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu } from "./components/TitleBar";
 import { loadTheme, saveTheme, type ThemePref } from "./lib/theme";
@@ -18,6 +18,7 @@ import { TextView } from "./components/TextView";
 import { KerningView } from "./components/KerningView";
 import { FontInfoView } from "./components/FontInfoView";
 import { ExportDialog } from "./components/ExportDialog";
+import { FilterDialog } from "./components/FilterDialog";
 import { ImportNotesDialog } from "./components/ImportNotesDialog";
 import { AboutDialog } from "./components/AboutDialog";
 import { language, LANGUAGES, saveLanguage, t, tn, translateMessage, type Lang } from "./lib/i18n";
@@ -308,6 +309,36 @@ export default function App() {
   /** The glyphs a Glyph-menu action acts on: the open glyph tab, or the Font View selection. */
   const glyphTargets = active?.startsWith("g:") ? [active.slice(2)] : active === null ? fontSelection : [];
 
+  // ---------- Filters ----------
+  const [filterDialog, setFilterDialog] = useState<FilterName | null>(null);
+  // The last applied filter, remembered across sessions for Repeat Last Filter.
+  const lastFilter = useRef<{ name: FilterName; params: FilterParams; allMasters: boolean } | null>(
+    (() => { try { return JSON.parse(localStorage.getItem("kernest.lastFilter") ?? "null"); } catch { return null; } })()
+  );
+  /** The glyph a filter dialog previews: the open tab, else the first selected or drawn glyph. */
+  const filterGlyph = active?.startsWith("g:") ? active.slice(2) : fontSelection[0] ?? font?.glyphs[0]?.name ?? "";
+
+  const applyFilter = useCallback(async (name: FilterName, params: FilterParams, glyphs: string[], allMasters: boolean) => {
+    if (!font || !filterGlyph) return;
+    const masterId = layerOf[filterGlyph] ?? font.masterId;
+    const r = await backend.runFilter(filterGlyph, masterId, glyphs, name, params, allMasters);
+    lastFilter.current = { name, params, allMasters };
+    localStorage.setItem("kernest.lastFilter", JSON.stringify(lastFilter.current));
+    setFilterDialog(null);
+    onStructureChanged(r.layer.status);
+    const notes = (r.warnings ?? []).map((w) => translateMessage(w));
+    if (r.changed.length) notes.unshift(tn(r.changed.length, "Filter applied to {n} glyph.", "Filter applied to {n} glyphs."));
+    if (notes.length) setToast({ kind: "info", text: notes.join(" ") });
+  }, [font, filterGlyph, layerOf, onStructureChanged]);
+
+  /** Filter › Repeat Last Filter: the last settings over the current scope. */
+  const repeatFilter = useCallback(() => {
+    const last = lastFilter.current;
+    if (!last || !font) return;
+    const glyphs = active === null ? fontSelection : [];
+    applyFilter(last.name, last.params, glyphs, last.allMasters).catch(fail);
+  }, [font, active, fontSelection, applyFilter, fail]);
+
   const removeGlyphs = useCallback(async (names: string[]) => {
     if (!font || names.length === 0) return;
     const shown = names.slice(0, 6).join(", ") + (names.length > 6 ? ` ${tn(names.length - 6, "and {n} more", "and {n} more")}` : "");
@@ -352,6 +383,20 @@ export default function App() {
   }, [font, onStructureChanged, fail]);
 
   const [composites, setComposites] = useState<{ initial: string } | null>(null);
+
+  /** Glyph › Locked: a locked glyph refuses edits and is skipped by filters. */
+  const toggleGlyphLocked = useCallback(async (names: string[]) => {
+    if (!font || names.length === 0) return;
+    const lock = !names.every((n) => font.glyphs.find((g) => g.name === n)?.locked);
+    try {
+      let s: DocStatus | null = null;
+      for (const n of names) s = await backend.setGlyphLocked(n, lock);
+      if (s) onStructureChanged(s);
+      setToast({ kind: "info", text: lock ? tn(names.length, "Locked {n} glyph", "Locked {n} glyphs") : tn(names.length, "Unlocked {n} glyph", "Unlocked {n} glyphs") });
+    } catch (e) {
+      fail(e);
+    }
+  }, [font, onStructureChanged, fail]);
 
   /** Glyph › Create Composites: build glyphs from their parts (Aacute = A + acutecomb). */
   const createComposites = useCallback(async (names: string[]) => {
@@ -407,12 +452,14 @@ export default function App() {
         else closeFont();
       } else if (k === "z" && !inField) undoRedo(e.shiftKey);
       else if (k === "y" && !inField) undoRedo(true);
+      else if (k === "t" && e.shiftKey && active?.startsWith("g:")) sendEditCommand("tidy-up");
       else if (k === "t" && !e.shiftKey && font) newTextTab();
       else if (k === "k" && e.shiftKey && font) openKerning();
       else if (k === "i" && !e.shiftKey && font) openInfo();
       else if (k === "e" && !e.shiftKey && font) setExporting(true);
       else if (k === "g" && e.shiftKey && font) showAddGlyphs();
       else if (k === "r" && e.shiftKey && active?.startsWith("g:")) sendEditCommand("correct-direction");
+      else if (k === "f" && e.shiftKey && font) repeatFilter();
       else if (k === "m" && e.shiftKey) toggleMetrics();
       else if (k === "a" && e.shiftKey) toggleAnchors();
       else if (k === "l" && e.shiftKey) toggleGuides();
@@ -424,7 +471,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showNewFont, open, importSource, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font, showAddGlyphs, removeGlyphs, glyphTargets, toggleMetrics, toggleAnchors, toggleGuides, toggleBackground, toggleBoundingBox, setAnchors, openHandbook]);
+  }, [showNewFont, open, importSource, save, saveAs, closeFont, closeTab, active, undoRedo, newTextTab, openKerning, openInfo, font, showAddGlyphs, removeGlyphs, glyphTargets, toggleMetrics, toggleAnchors, toggleGuides, toggleBackground, toggleBoundingBox, setAnchors, openHandbook, repeatFilter]);
 
   const inGlyph = font !== null && active !== null && active.startsWith("g:");
   const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? t("Kerning") : id === "info" ? t("Font Info") : t("Text {n}", { n: id.slice(5) }));
@@ -469,15 +516,35 @@ export default function App() {
         { label: t("Add Component…"), shortcut: "Ctrl+Shift+C", onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
         { label: t("Set Anchors"), shortcut: "Ctrl+U", onSelect: font && glyphTargets.length ? () => setAnchors(glyphTargets) : undefined, separatorBefore: true },
         { label: t("Create Composites…"), onSelect: font ? () => setComposites({ initial: glyphTargets.join(" ") }) : undefined },
+        { label: t("Locked"), onSelect: font && glyphTargets.length ? () => toggleGlyphLocked(glyphTargets) : undefined, checked: glyphTargets.length > 0 && glyphTargets.every((n) => font?.glyphs.find((g) => g.name === n)?.locked), separatorBefore: true },
         { label: t("Update Metrics"), onSelect: font ? updateMetrics : undefined, separatorBefore: true },
       ],
     },
     {
       label: t("Path"),
       items: [
-        { label: t("Correct Path Direction"), shortcut: "Ctrl+Shift+R", onSelect: inGlyph ? () => sendEditCommand("correct-direction") : undefined },
+        { label: t("Open Corner"), onSelect: inGlyph ? () => sendEditCommand("open-corner") : undefined },
+        { label: t("Reconnect Nodes"), onSelect: inGlyph ? () => sendEditCommand("reconnect-nodes") : undefined },
+        { label: t("Connect Nodes"), onSelect: inGlyph ? () => sendEditCommand("connect-nodes") : undefined },
+        { label: t("Close Open Paths"), onSelect: inGlyph ? () => sendEditCommand("close-open-paths") : undefined },
+        { label: t("Make Node First"), onSelect: inGlyph ? () => sendEditCommand("make-node-first") : undefined },
+        { label: t("Reverse Selected Contours"), onSelect: inGlyph ? () => sendEditCommand("reverse-contours") : undefined },
+        { label: t("Correct Path Direction"), shortcut: "Ctrl+Shift+R", onSelect: inGlyph ? () => sendEditCommand("correct-direction") : undefined, separatorBefore: true },
         { label: t("Add Extremes"), onSelect: inGlyph ? () => sendEditCommand("add-extremes") : undefined },
-        { label: t("Remove Overlap"), onSelect: inGlyph ? () => sendEditCommand("remove-overlap") : undefined, separatorBefore: true },
+        { label: t("Remove Overlap"), onSelect: inGlyph ? () => sendEditCommand("remove-overlap") : undefined },
+        { label: t("Tidy up Paths"), shortcut: "Ctrl+Shift+T", onSelect: inGlyph ? () => sendEditCommand("tidy-up") : undefined, separatorBefore: true },
+        { label: t("Round Coordinates"), onSelect: inGlyph ? () => sendEditCommand("round-coordinates") : undefined },
+        { label: t("Focus on Selected Path"), onSelect: inGlyph ? () => sendEditCommand("focus-path") : undefined, separatorBefore: true },
+        { label: t("Clear Focus"), onSelect: inGlyph ? () => sendEditCommand("clear-focus") : undefined },
+      ],
+    },
+    {
+      label: t("Filter"),
+      items: [
+        { label: t("Round Corners…"), onSelect: font && filterGlyph ? () => setFilterDialog("round-corners") : undefined },
+        { label: t("Offset Curve…"), onSelect: font && filterGlyph ? () => setFilterDialog("offset-curve") : undefined },
+        { label: t("Transformations…"), onSelect: font && filterGlyph ? () => setFilterDialog("transformations") : undefined },
+        { label: t("Repeat Last Filter"), shortcut: "Ctrl+Shift+F", onSelect: font && lastFilter.current ? repeatFilter : undefined, separatorBefore: true },
       ],
     },
     { label: t("View"), items: [
@@ -546,7 +613,7 @@ export default function App() {
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showBoundingBox={showBoundingBox} />
+                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showBoundingBox={showBoundingBox} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} />
               ) : id === "kerning" ? (
@@ -576,6 +643,16 @@ export default function App() {
       )}
       {importNotes && <ImportNotesDialog {...importNotes} onClose={() => setImportNotes(null)} />}
       {exporting && font && <ExportDialog fontPath={font.path} onClose={() => setExporting(false)} />}
+      {filterDialog && font && filterGlyph && (
+        <FilterDialog
+          name={filterDialog}
+          glyph={filterGlyph}
+          masterId={layerOf[filterGlyph] ?? font.masterId}
+          selection={active === null ? fontSelection : []}
+          onCancel={() => setFilterDialog(null)}
+          onApply={applyFilter}
+        />
+      )}
       {glyphSets && (
         <NewFontDialog
           sets={glyphSets}

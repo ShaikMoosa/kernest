@@ -161,6 +161,22 @@ pub fn remove_glyphs(font: &Font, names: &[String]) -> R<Font> {
     if let Some(n) = names.iter().find(|n| font.glyph(n).is_none()) {
         return Err(format!("There is no glyph named \"{n}\"."));
     }
+    // Removing a base decomposes it inside the glyphs that use it; a locked glyph
+    // must not change, so refuse instead.
+    if let Some(g) = font.glyphs.iter().find(|g| {
+        g.locked
+            && !gone.contains(g.name.as_str())
+            && g.layers.iter().any(|l| {
+                l.shapes.iter().any(
+                    |s| matches!(s, Shape::Component { base, .. } if gone.contains(base.as_str())),
+                )
+            })
+    }) {
+        return Err(format!(
+            "\"{}\" is locked and uses a glyph being removed. Unlock it first.",
+            g.name
+        ));
+    }
     let mut f = font.clone();
     for g in &mut f.glyphs {
         if gone.contains(g.name.as_str()) {
@@ -228,6 +244,7 @@ fn flatten(
     for s in &layer.shapes {
         match s {
             Shape::Path(p) => out.push(Shape::Path(Path {
+                locked: false,
                 closed: p.closed,
                 nodes: p
                     .nodes

@@ -137,6 +137,7 @@ fn push_flat(
     for s in shapes {
         match s {
             Shape::Path(p) => out.push(Shape::Path(Path {
+                locked: false,
                 closed: p.closed,
                 nodes: p
                     .nodes
@@ -359,6 +360,7 @@ mod tests {
 
     fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Shape {
         Shape::Path(Path {
+            locked: false,
             closed: true,
             nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
                 .into_iter()

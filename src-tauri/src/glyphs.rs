@@ -7,7 +7,9 @@ use kernest_core::glyphset::{
 use serde::Serialize;
 use tauri::State;
 
-use crate::commands::{doc_mut, lock, status, AppState, CmdResult, DocStatus};
+use crate::commands::{
+    doc_mut, ensure_glyph_unlocked, lock, status, AppState, CmdResult, DocStatus,
+};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,6 +93,9 @@ pub fn remove_glyphs(state: State<AppState>, names: Vec<String>) -> CmdResult<Do
     }
     let mut guard = lock(&state)?;
     let doc = doc_mut(&mut guard)?;
+    for n in &names {
+        ensure_glyph_unlocked(&doc.font, n)?;
+    }
     let next = remove(&doc.font, &names)?;
     if doc
         .history
