@@ -119,6 +119,7 @@ Kernest 1.0 is complete: every milestone above has shipped.
 | Dark theme, ARM64 builds, Spanish and Arabic (right-to-left) interface | ✅ v1.3 |
 | Anchors and component alignment: marks, ligature carets, cursive, composites from recipes | ✅ v1.5 |
 | Features editor and Font Info fields: generated features, error checking, names, instance classes and style linking, notes | ✅ v1.6 |
+| Guides, background layer, transform panel (scale, rotate, mirror, skew), measure tool, snap to grid | ✅ v1.7 |
 | Code-signed installer | ⏳ planned |
 
 ### Next: one release per phase
@@ -130,8 +131,8 @@ The rest of the plan, in order. Each phase is built, tested, checked in the app,
 | 1 | 1.4 | Ship colour fonts | ✅ v1.4 |
 | 2 | 1.5 | Anchors in the editor (marks, ligature carets, cursive), components that align to anchors, composites from recipes | ✅ v1.5 |
 | 3 | 1.6 | Features editor with error checking and generated features; designer, vendor, copyright, weight/width class and style linking in Font Info; notes | ✅ v1.6 |
-| 4 | 1.7 | Guides, background layer, transform panel (scale, rotate, mirror, skew), measure tool, snap to grid | ✅ next release |
-| 5 | 1.8 | Knife, open corners, reconnect and tidy up paths, lock and focus; Filter menu (Round Corners, Offset Curve) | ⏳ planned |
+| 4 | 1.7 | Guides, background layer, transform panel (scale, rotate, mirror, skew), measure tool, snap to grid | ✅ v1.7 |
+| 5 | 1.8 | Knife, open corners, reconnect and tidy up paths, lock and focus; Filter menu (Round Corners, Offset Curve) | ⏳ next |
 | 6 | 2.0 | Python scripting (Script menu, macro panel) and plug-ins (filters, reporters), Settings window | ⏳ planned |
 | 7 | 2.1 | Export UFO, Save As `.glyphs`, open compiled fonts, import SVG outlines, AFM and `.fea` | ⏳ planned |
 | 8 | 2.2 | Font View list view, languages and missing glyphs, smart filters, batch rename and batch commands | ⏳ planned |
