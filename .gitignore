@@ -4,6 +4,11 @@ dist/
 target/
 src-tauri/gen/schemas/
 
+# Python: bytecode and the embeddable runtime downloaded by the release build
+__pycache__/
+*.pyc
+src-tauri/python-runtime/
+
 # Editors and OS
 .vscode/*
 !.vscode/extensions.json

@@ -1,0 +1,11 @@
+{
+  "name": "Round Widths",
+  "type": "filter",
+  "entry": "filter.py",
+  "version": "1.0",
+  "minKernest": "2.0",
+  "description": "Rounds the advance width of the selected glyphs to a step.",
+  "parameters": [
+    { "name": "step", "label": "Step", "type": "number", "default": 10, "min": 1 }
+  ]
+}

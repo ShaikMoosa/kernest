@@ -11,6 +11,7 @@ Kernest is a font editor for Windows. It works offline, and your fonts are plain
 - [Export](#export)
 - [Colour fonts](#colour-fonts)
 - [Import](#import)
+- [Scripting and plug-ins](#scripting-and-plug-ins)
 - [Theme and language](#theme-and-language)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 
@@ -289,6 +290,59 @@ On export, every colour layer becomes a glyph of its own (`O.color0`, `O.color1`
 
 Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers and, from Glyphs files, metrics keys (glyph-wide and per layer) and the hinting settings in a **TTFAutohint options** custom parameter. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
 
+## Scripting and plug-ins
+
+Kernest can run Python scripts and plug-ins against the open font. Scripts run in a
+separate process, so a slow or stuck one can be stopped and can never hang the editor.
+Each run that changes the font is **one undo step**; a run that only reads (or prints)
+leaves no undo entry. `print(...)` and errors appear in a console while the script runs.
+
+Kernest comes with a Python interpreter bundled, so scripts work out of the box.
+**Settings › Python** shows its version and path, and lets you point Kernest at another
+Python if you prefer.
+
+### The Script menu
+
+- **Macro Panel…** (Ctrl+Shift+P) opens a code box and a console. Type Python and press
+  **Ctrl+Enter** to run it against the open font. The code is remembered next time.
+- **Run Last Script** repeats the previous run.
+- **Run Script File…** runs any `.py` file from disk. Because a script can change your
+  font and run any code on your computer, Kernest asks first if the file is outside your
+  Scripts folder.
+- Your scripts appear as menu items. **Open Scripts Folder** opens
+  `%APPDATA%\Kernest\Scripts`, and **Reload Scripts** rescans it after you add or edit
+  files. Folders become submenus. A `# MenuTitle: Name` comment at the top of a file sets
+  its menu name. Kernest puts two sample scripts there the first time: *Report Metrics
+  Keys* (prints the metrics keys in use) and *Set Sidebearings to Grid* (snaps
+  sidebearings to the grid).
+
+### Plug-ins
+
+Plug-ins live in `%APPDATA%\Kernest\Plugins`, one folder each with a `plugin.json` and a
+Python file. **Settings › Plugins** lists them, turns them on or off, and opens the
+folder. Kernest seeds two samples:
+
+- **Filters** appear in the **Filter** menu and run on the selected glyphs (or every
+  glyph if none are selected). A filter can ask for settings in a small dialog first —
+  the sample *Round Widths* asks for a step and rounds each width to it. Like any script,
+  a filter's changes are one undo step.
+- **Reporters** draw over the canvas for the current glyph without changing the font.
+  Turn them on and off under **Script › Reporters**; Kernest redraws them as you edit.
+  The sample *Show Bounds* draws the glyph's bounding box and its size.
+
+### Settings
+
+**Window › Settings…** (Ctrl+,) has three tabs:
+
+- **Plugins:** enable, disable and open plug-ins.
+- **Shortcuts:** every keyboard action, its current shortcut, **Change** to record a new
+  one and **Reset** to restore the defaults. Your choices are saved and used everywhere,
+  including the menus.
+- **Python:** the interpreter Kernest runs, its version and path.
+
+The full scripting reference — every object and field, the plug-in format and the sample
+code — is in [docs/PYTHON_API.md](PYTHON_API.md).
+
 ## Theme and language
 
 - **Theme:** View › Theme follows Windows (System), or is always Light or Dark.
@@ -321,4 +375,8 @@ Kernest brings over the axes, masters, outlines, components, anchors, kerning, i
 | Selection to Background / Add to Background | Ctrl+J / Ctrl+Shift+J |
 | New Text Tab / Kerning | Ctrl+T / Ctrl+Shift+K |
 | Font Info / Export | Ctrl+I / Ctrl+E |
+| Macro Panel / Settings | Ctrl+Shift+P / Ctrl+, |
 | Handbook | F1 |
+
+Most of these can be changed in **Settings › Shortcuts**; the menus then show your
+shortcut. Undo and Redo also work as Ctrl+Z and Ctrl+Shift+Z.

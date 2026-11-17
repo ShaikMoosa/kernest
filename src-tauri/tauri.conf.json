@@ -42,6 +42,11 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../crates/kernest-script/python/kernest": "python/kernest",
+      "../crates/kernest-script/samples/scripts": "samples/scripts",
+      "../crates/kernest-script/samples/plugins": "samples/plugins"
+    },
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" },
       "nsis": {

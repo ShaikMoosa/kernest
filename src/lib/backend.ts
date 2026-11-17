@@ -3,6 +3,7 @@
 // mock stands in, so screens can be previewed and tested without the desktop shell.
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { clonePaths, pathsToSvg, pointBounds, rectPath, transformPaths, type EditPath } from "./outline";
 import { translateMessage } from "./i18n";
 
@@ -573,6 +574,28 @@ export interface Backend {
   createComposites(names: string[]): Promise<CompositesResult>;
   /** Paths Kernest was started with (Explorer's "Open in Kernest", "Open with"); once. */
   takeLaunchPaths(): Promise<string[]>;
+  getSettings(): Promise<Settings>;
+  setPluginEnabled(name: string, enabled: boolean): Promise<Settings>;
+  setShortcut(action: string, shortcut: string): Promise<Settings>;
+  resetShortcuts(): Promise<Settings>;
+  setPythonPath(path: string | null): Promise<Settings>;
+  /** Scripts in the Scripts folder (folders become submenus). */
+  listScripts(): Promise<ScriptEntry[]>;
+  /** Plug-ins in the Plugins folder, with their enabled state. */
+  listPlugins(): Promise<PluginInfo[]>;
+  /** Runs a macro (`code`) or a script file (`path`) as one undo step. */
+  runScript(opts: RunScriptOptions): Promise<ScriptResult>;
+  cancelScript(): Promise<void>;
+  /** Runs a filter plug-in over the chosen glyphs as one undo step. */
+  runFilterPlugin(opts: RunFilterPluginOptions): Promise<ScriptResult>;
+  /** A reporter's drawing instructions for one glyph, without changing the font. */
+  reporterDraw(name: string, glyph: string, masterId: string): Promise<DrawItem[]>;
+  openScriptsFolder(): Promise<void>;
+  openPluginsFolder(): Promise<void>;
+  /** Subscribes to streamed script output; resolves to an unsubscribe function. */
+  onScriptOutput(cb: (line: OutputLine) => void): Promise<() => void>;
+  /** The Python Kernest would run, for Settings › Python. */
+  pythonInfo(): Promise<PythonInfo>;
 }
 
 export type PathOperation = "correct-direction" | "add-extremes" | "remove-overlap";
@@ -622,6 +645,88 @@ export interface ExportFormats {
   applyMetricsKeys: boolean;
   /** Add TrueType hinting to TTF and WOFF2 files. */
   autohint: boolean;
+}
+
+// ---------- Scripts, plug-ins and settings (phase 6) ----------
+
+export interface Settings {
+  /** Plug-in name → enabled; a name absent here is enabled. */
+  pluginEnabled: Record<string, boolean>;
+  /** Action id → shortcut text; empty means the default. */
+  shortcuts: Record<string, string>;
+  /** Overrides the bundled Python when set. */
+  pythonPath: string | null;
+}
+
+export interface PythonInfo {
+  path: string;
+  version: string | null;
+  bundled: boolean;
+}
+
+export interface ScriptEntry {
+  name: string;
+  path: string;
+  /** Submenu path relative to the Scripts folder ("" at the top level). */
+  folder: string;
+}
+
+export interface PluginParam {
+  name: string;
+  label: string;
+  type: string;
+  default: number | string | boolean;
+  min?: number;
+  max?: number;
+}
+
+export interface PluginInfo {
+  name: string;
+  type: string;
+  entry: string;
+  version: string;
+  minKernest: string;
+  description: string;
+  parameters: PluginParam[];
+  enabled: boolean;
+  /** Folder name under Plugins, the stable id. */
+  id: string;
+}
+
+export interface OutputLine {
+  stream: string;
+  text: string;
+}
+
+/** A reporter drawing instruction, in font units over the canvas. */
+export type DrawItem =
+  | { kind: "line"; x0: number; y0: number; x1: number; y1: number; color?: string; width?: number }
+  | { kind: "path"; d: string; color?: string; fill?: string }
+  | { kind: "text"; x: number; y: number; text: string; size?: number; color?: string };
+
+export interface ScriptResult {
+  ok: boolean;
+  output: OutputLine[];
+  error?: string;
+  applied: boolean;
+  revision: number;
+  draw: DrawItem[];
+}
+
+export interface RunScriptOptions {
+  code?: string;
+  path?: string;
+  current?: string;
+  masterId?: string;
+  glyphs?: string[];
+}
+
+export interface RunFilterPluginOptions {
+  name: string;
+  params: Record<string, number | string | boolean>;
+  current?: string;
+  masterId?: string;
+  glyphs?: string[];
 }
 
 const tauriBackend: Backend = {
@@ -700,6 +805,21 @@ const tauriBackend: Backend = {
   setDefaultAnchors: (glyphs) => invoke("set_default_anchors", { glyphs }),
   setComponentAlign: (glyph, masterId, index, align) => invoke("set_component_align", { glyph, masterId, index, align }),
   createComposites: (names) => invoke("create_composites", { names }),
+  getSettings: () => invoke("get_settings"),
+  setPluginEnabled: (name, enabled) => invoke("set_plugin_enabled", { name, enabled }),
+  setShortcut: (action, shortcut) => invoke("set_shortcut", { action, shortcut }),
+  resetShortcuts: () => invoke("reset_shortcuts"),
+  setPythonPath: (path) => invoke("set_python_path", { path }),
+  listScripts: () => invoke("list_scripts"),
+  listPlugins: () => invoke("list_plugins"),
+  runScript: (opts) => invoke("run_script", { code: opts.code ?? null, path: opts.path ?? null, current: opts.current ?? null, masterId: opts.masterId ?? null, glyphs: opts.glyphs ?? [] }),
+  cancelScript: () => invoke("cancel_script"),
+  runFilterPlugin: (opts) => invoke("run_filter_plugin", { name: opts.name, params: opts.params, current: opts.current ?? null, masterId: opts.masterId ?? null, glyphs: opts.glyphs ?? [] }),
+  reporterDraw: (name, glyph, masterId) => invoke("reporter_draw", { name, glyph, masterId }),
+  openScriptsFolder: () => invoke("open_scripts_folder"),
+  openPluginsFolder: () => invoke("open_plugins_folder"),
+  onScriptOutput: (cb) => listen<OutputLine>("script-output", (e) => cb(e.payload)),
+  pythonInfo: () => invoke("python_info"),
 };
 
 // ---------- Browser preview mock ----------
@@ -982,6 +1102,13 @@ function checkLocation(d: MockDoc, loc: Location): Location {
 
 const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
 const MOCK_SETS: Record<string, number[]> = { "latin-basic": range(0x20, 0x7e), "latin-1": range(0xa0, 0xff), cyrillic: range(0x410, 0x44f) };
+
+const mockSettings: Settings = { pluginEnabled: {}, shortcuts: {}, pythonPath: null };
+const mockSettingsView = (): Settings => ({
+  pluginEnabled: { ...mockSettings.pluginEnabled },
+  shortcuts: { ...mockSettings.shortcuts },
+  pythonPath: mockSettings.pythonPath,
+});
 
 const mockBackend: Backend = {
   async glyphSets() {
@@ -1327,6 +1454,55 @@ const mockBackend: Backend = {
       record(d, { kind: "groups", glyph, before, after });
     }
     return status(d);
+  },
+  async getSettings() {
+    return mockSettingsView();
+  },
+  async setPluginEnabled(name, enabled) {
+    mockSettings.pluginEnabled[name] = enabled;
+    return mockSettingsView();
+  },
+  async setShortcut(action, shortcut) {
+    const s = shortcut.trim();
+    if (s) mockSettings.shortcuts[action] = s;
+    else delete mockSettings.shortcuts[action];
+    return mockSettingsView();
+  },
+  async resetShortcuts() {
+    mockSettings.shortcuts = {};
+    return mockSettingsView();
+  },
+  async setPythonPath(path) {
+    mockSettings.pythonPath = path && path.trim() ? path.trim() : null;
+    return mockSettingsView();
+  },
+  async listScripts() {
+    return [];
+  },
+  async listPlugins() {
+    return [];
+  },
+  async runScript() {
+    throw "Running scripts needs the desktop app (npm run tauri dev).";
+  },
+  async cancelScript() {},
+  async runFilterPlugin() {
+    throw "Running plug-ins needs the desktop app (npm run tauri dev).";
+  },
+  async reporterDraw() {
+    return [];
+  },
+  async openScriptsFolder() {
+    throw "Opening folders needs the desktop app (npm run tauri dev).";
+  },
+  async openPluginsFolder() {
+    throw "Opening folders needs the desktop app (npm run tauri dev).";
+  },
+  async onScriptOutput() {
+    return () => {};
+  },
+  async pythonInfo() {
+    return { path: "", version: null, bundled: false };
   },
 };
 

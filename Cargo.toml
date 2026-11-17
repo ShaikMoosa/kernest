@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/kernest-core", "crates/kernest-export", "crates/kernest-import", "src-tauri"]
+members = ["crates/kernest-core", "crates/kernest-export", "crates/kernest-import", "crates/kernest-script", "src-tauri"]
 
 [workspace.package]
 version = "1.8.0"
