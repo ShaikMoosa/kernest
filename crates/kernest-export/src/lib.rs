@@ -10,6 +10,7 @@ pub mod cff2;
 mod charstring;
 mod colr;
 mod hint;
+mod stat;
 pub mod ufo;
 pub mod woff2;
 
@@ -333,36 +334,51 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     // Colour layers become ordinary glyphs; COLR and CPAL are added to each file.
     let (split, colored) = kernest_core::color::split_color_layers(font);
     let font = &split;
-    let colorize =
-        |report: &mut ExportReport, label: &str, ids_from: &[u8], bytes: Vec<u8>| -> Vec<u8> {
-            if colored.is_empty() {
-                return bytes;
-            }
-            let with = colr::glyph_ids(ids_from)
-                .map(|mut ids| {
-                    // Colour glyphs are looked up by source name; with production
-                    // names the compiled font carries those instead.
-                    for g in &font.glyphs {
-                        if let Some(p) = &g.production_name {
-                            if let Some(&id) = ids.get(p) {
-                                ids.insert(g.name.clone(), id);
-                            }
+    let colorize = |report: &mut ExportReport,
+                    label: &str,
+                    ids_from: &[u8],
+                    bytes: Vec<u8>,
+                    variable: bool,
+                    location: Option<&kernest_core::designspace::Location>|
+     -> Vec<u8> {
+        if colored.is_empty() {
+            return bytes;
+        }
+        let with = colr::glyph_ids(ids_from)
+            .map(|mut ids| {
+                // Colour glyphs are looked up by source name; with production
+                // names the compiled font carries those instead.
+                for g in &font.glyphs {
+                    if let Some(p) = &g.production_name {
+                        if let Some(&id) = ids.get(p) {
+                            ids.insert(g.name.clone(), id);
                         }
                     }
-                    ids
-                })
-                .and_then(|ids| colr::tables(&colored, &font.palettes, &ids))
-                .and_then(|(c, p)| colr::add_tables(&bytes, &c, &p));
-            match with {
-                Ok(b) => b,
-                Err(e) => {
-                    report
-                        .problems
-                        .push(format!("{label}: {e}; exported without colour."));
-                    bytes
                 }
+                ids
+            })
+            .and_then(|ids| {
+                if variable {
+                    colr::variable_tables(font, &colored, &ids)
+                } else if let Some(m) =
+                    location.and_then(|loc| font.masters.iter().find(|m| &m.location == loc))
+                {
+                    colr::tables_at(font, &colored, &ids, &m.id)
+                } else {
+                    colr::tables(&colored, &font.palettes, &ids)
+                }
+            })
+            .and_then(|(c, p)| colr::add_tables(&bytes, &c, &p));
+        match with {
+            Ok(b) => b,
+            Err(e) => {
+                report
+                    .problems
+                    .push(format!("{label}: {e}; exported without colour."));
+                bytes
             }
-        };
+        }
+    };
     let hinting = font.info.hinting.unwrap_or_default();
     // The TrueType bytes for TTF and WOFF2: hinted if asked (a failure is reported and
     // the unhinted font is used).
@@ -399,50 +415,98 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     };
 
     if opts.variable {
-        match variable(font, tmp.path()) {
-            Ok(bytes) => {
-                let tt = truetype(&mut report, "Variable font", "vf", &bytes);
-                let tt = colorize(&mut report, "Variable font", &bytes, tt);
-                if opts.ttf {
-                    emit(
-                        &mut report,
+        let emit_variable = |report: &mut ExportReport,
+                             stat_font: &Font,
+                             label: &str,
+                             file_base: &str,
+                             bytes: Vec<u8>|
+         -> Result<(), String> {
+            let bytes = match stat::add_stat(stat_font, &bytes) {
+                Ok(b) => b,
+                Err(e) => {
+                    report.problems.push(format!("{label} (STAT): {e}"));
+                    bytes
+                }
+            };
+            let tt = truetype(report, label, file_base, &bytes);
+            let tt = colorize(report, label, &bytes, tt, true, None);
+            if opts.ttf {
+                emit(
+                    report,
+                    "variable",
+                    "ttf",
+                    label,
+                    format!("{file_base}.ttf"),
+                    &tt,
+                )?;
+            }
+            if opts.woff2 {
+                match woff2::to_woff2(&tt) {
+                    Ok(w) => emit(
+                        report,
                         "variable",
-                        "ttf",
-                        "Variable",
-                        format!("{family}-VF.ttf"),
-                        &tt,
-                    )?;
-                }
-                if opts.woff2 {
-                    match woff2::to_woff2(&tt) {
-                        Ok(w) => emit(
-                            &mut report,
-                            "variable",
-                            "woff2",
-                            "Variable",
-                            format!("{family}-VF.woff2"),
-                            &w,
-                        )?,
-                        Err(e) => report.problems.push(format!("Variable font (WOFF2): {e}")),
-                    }
-                }
-                if opts.otf {
-                    match variable_otf(font, &bytes)
-                        .map(|o| colorize(&mut report, "Variable font (OTF)", &bytes, o))
-                    {
-                        Ok(o) => emit(
-                            &mut report,
-                            "variable",
-                            "otf",
-                            "Variable",
-                            format!("{family}-VF.otf"),
-                            &o,
-                        )?,
-                        Err(e) => report.problems.push(format!("Variable font (OTF): {e}")),
-                    }
+                        "woff2",
+                        label,
+                        format!("{file_base}.woff2"),
+                        &w,
+                    )?,
+                    Err(e) => report.problems.push(format!("{label} (WOFF2): {e}")),
                 }
             }
-            Err(e) => report.problems.push(format!("Variable font: {e}")),
+            if opts.otf {
+                match variable_otf(stat_font, &bytes).map(|o| {
+                    let o = colorize(report, &format!("{label} (OTF)"), &bytes, o, true, None);
+                    match stat::add_stat(stat_font, &o) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            report.problems.push(format!("{label} (OTF, STAT): {e}"));
+                            o
+                        }
+                    }
+                }) {
+                    Ok(o) => emit(
+                        report,
+                        "variable",
+                        "otf",
+                        label,
+                        format!("{file_base}.otf"),
+                        &o,
+                    )?,
+                    Err(e) => report.problems.push(format!("{label} (OTF): {e}")),
+                }
+            }
+            Ok(())
+        };
+        if font.variable_fonts.is_empty() {
+            match variable(font, tmp.path()) {
+                Ok(bytes) => emit_variable(
+                    &mut report,
+                    font,
+                    "Variable",
+                    &format!("{family}-VF"),
+                    bytes,
+                )?,
+                Err(e) => report.problems.push(format!("Variable font: {e}")),
+            }
+        } else {
+            for (i, vf) in font.variable_fonts.iter().enumerate() {
+                let dir = tmp.path().join(format!("vf{i}"));
+                std::fs::create_dir_all(&dir)
+                    .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+                let reduced = match kernest_core::designspace::reduce_for_variable(font, vf) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        report.problems.push(format!("{}: {e}", vf.name));
+                        continue;
+                    }
+                };
+                match variable(&reduced, &dir) {
+                    Ok(bytes) => {
+                        emit_variable(&mut report, &reduced, &vf.name, &vf.file_name, bytes)?
+                    }
+                    Err(e) => report.problems.push(format!("{}: {e}", vf.name)),
+                }
+            }
         }
     }
 
@@ -478,7 +542,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                 Ok((bytes, ufo)) => {
                     let stem = format!("{family}-{}", file_stem(style));
                     let tt = truetype(&mut report, style, &format!("instance{i}"), &bytes);
-                    let tt = colorize(&mut report, style, &bytes, tt);
+                    let tt = colorize(&mut report, style, &bytes, tt, false, Some(location));
                     if opts.ttf {
                         emit(
                             &mut report,
@@ -490,9 +554,18 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                         )?;
                     }
                     if opts.otf {
-                        match cff::ttf_to_otf(&bytes, &ufo, &font.info.family_name, style)
-                            .map(|o| colorize(&mut report, &format!("{style} (OTF)"), &bytes, o))
-                        {
+                        match cff::ttf_to_otf(&bytes, &ufo, &font.info.family_name, style).map(
+                            |o| {
+                                colorize(
+                                    &mut report,
+                                    &format!("{style} (OTF)"),
+                                    &bytes,
+                                    o,
+                                    false,
+                                    Some(location),
+                                )
+                            },
+                        ) {
                             Ok(otf) => emit(
                                 &mut report,
                                 "static",
@@ -857,6 +930,8 @@ pub(crate) mod tests {
             default: 400.0,
             max: 700.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         };
         let f = structure::set_axes(&sample_font(), vec![wght]).unwrap();
         let (mut f, bold) =
@@ -1109,6 +1184,142 @@ pub(crate) mod tests {
         let medium = r.files.iter().find(|x| x.style == "Medium").unwrap();
         assert!(medium.path.ends_with("KernestSample-Medium.ttf"));
         assert_eq!(advance(&std::fs::read(&medium.path).unwrap(), 'H'), 730);
+    }
+
+    #[test]
+    fn stat_axis_value_labels_reach_the_font() {
+        use kernest_core::AxisValue;
+        use write_fonts::read::tables::stat::{AxisValue as StatValue, AxisValueTableFlags};
+        use write_fonts::types::NameId;
+        let mut f = two_masters();
+        f.axes[0].labels = vec![
+            AxisValue {
+                name: "Regular".into(),
+                value: 400.0,
+                min: None,
+                max: None,
+                elidable: true,
+                linked_value: Some(700.0),
+            },
+            AxisValue {
+                name: "Bold".into(),
+                value: 700.0,
+                min: None,
+                max: None,
+                elidable: false,
+                linked_value: None,
+            },
+            AxisValue {
+                name: "Semibold".into(),
+                value: 600.0,
+                min: Some(550.0),
+                max: Some(650.0),
+                elidable: false,
+                linked_value: None,
+            },
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let vf = r.files.iter().find(|x| x.kind == "variable").unwrap();
+        let bytes = std::fs::read(&vf.path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let stat = font.stat().expect("a STAT table");
+        let axes = stat.design_axes().unwrap();
+        assert_eq!(axes.len(), 1);
+        assert_eq!(axes[0].axis_tag().to_string(), "wght");
+        assert_eq!(stat.elided_fallback_name_id(), Some(NameId::SUBFAMILY_NAME));
+        let values = stat.offset_to_axis_values().unwrap().unwrap();
+        let names = name_strings(&bytes);
+        let name_of = |id: NameId| names[&u16::from_be_bytes(id.to_be_bytes())].clone();
+        let collected: Vec<_> = values.axis_values().iter().filter_map(|v| v.ok()).collect();
+        assert_eq!(collected.len(), 3);
+        match &collected[0] {
+            StatValue::Format3(t) => {
+                assert_eq!(name_of(t.value_name_id()), "Regular");
+                assert_eq!(t.value().to_f64(), 400.0);
+                assert_eq!(t.linked_value().to_f64(), 700.0);
+                assert!(t
+                    .flags()
+                    .contains(AxisValueTableFlags::ELIDABLE_AXIS_VALUE_NAME));
+            }
+            _ => panic!("expected a format 3 axis value for Regular"),
+        }
+        match &collected[1] {
+            StatValue::Format1(t) => {
+                assert_eq!(name_of(t.value_name_id()), "Bold");
+                assert_eq!(t.value().to_f64(), 700.0);
+                assert!(!t
+                    .flags()
+                    .contains(AxisValueTableFlags::ELIDABLE_AXIS_VALUE_NAME));
+            }
+            _ => panic!("expected a format 1 axis value for Bold"),
+        }
+        match &collected[2] {
+            StatValue::Format2(t) => {
+                assert_eq!(name_of(t.value_name_id()), "Semibold");
+                assert_eq!(t.nominal_value().to_f64(), 600.0);
+                assert_eq!(t.range_min_value().to_f64(), 550.0);
+                assert_eq!(t.range_max_value().to_f64(), 650.0);
+            }
+            _ => panic!("expected a format 2 axis value for Semibold"),
+        }
+    }
+
+    #[test]
+    fn two_variable_fonts_from_one_source() {
+        use kernest_core::{VariableAxisSubset, VariableFontSetting};
+        let f = two_masters();
+        let f = structure::set_variable_fonts(
+            &f,
+            vec![
+                VariableFontSetting {
+                    name: "Light".into(),
+                    file_name: "Sample-Light".into(),
+                    axes: vec![VariableAxisSubset {
+                        tag: "wght".into(),
+                        min: Some(400.0),
+                        max: Some(500.0),
+                    }],
+                    glyphs: Vec::new(),
+                },
+                VariableFontSetting {
+                    name: "Bold".into(),
+                    file_name: "Sample-Bold".into(),
+                    axes: vec![VariableAxisSubset {
+                        tag: "wght".into(),
+                        min: Some(500.0),
+                        max: Some(700.0),
+                    }],
+                    glyphs: Vec::new(),
+                },
+            ],
+        )
+        .unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let vfs: Vec<_> = r.files.iter().filter(|x| x.kind == "variable").collect();
+        assert_eq!(vfs.len(), 2, "one variable font per setting");
+        let range_of = |file: &str| {
+            let vf = vfs.iter().find(|x| x.path.ends_with(file)).unwrap();
+            let bytes = std::fs::read(&vf.path).unwrap();
+            let font = FontRef::new(&bytes).unwrap();
+            assert!(font.gvar().is_ok());
+            let axes = font.fvar().unwrap().axes().unwrap();
+            assert_eq!(axes.len(), 1);
+            assert_eq!(axes[0].axis_tag().to_string(), "wght");
+            (
+                axes[0].min_value().to_f64(),
+                axes[0].max_value().to_f64(),
+                advance(&bytes, 'H'),
+            )
+        };
+        // The Light cut keeps the original default (400); H is 680 there.
+        assert_eq!(range_of("Sample-Light.ttf"), (400.0, 500.0, 680));
+        // The Bold cut moves the default to 500 and interpolates a master there:
+        // H is 680 at 400 and 780 at 700, so 713 at 500.
+        assert_eq!(range_of("Sample-Bold.ttf"), (500.0, 700.0, 713));
     }
 
     #[test]
@@ -1393,6 +1604,8 @@ pub(crate) mod tests {
             default: 100.0,
             max: 100.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         });
         let loc = BTreeMap::from([("wdth".to_string(), 75.0)]);
         assert_eq!(ufo::width_class(&h, &loc), Some(3));
@@ -2108,6 +2321,231 @@ pub(crate) mod tests {
             .unwrap();
         let bytes = std::fs::read(&vf.path).unwrap();
         assert!(FontRef::new(&bytes).unwrap().gvar().is_ok());
+    }
+
+    #[test]
+    fn variable_colour_gradient_deltas_at_extremes() {
+        use kernest_core::color::{self, Color, ColorStop, Paint};
+        use write_fonts::read::tables::colr::Paint as RPaint;
+        use write_fonts::read::tables::variations::DeltaSetIndex;
+        use write_fonts::types::F2Dot14;
+
+        let f = color::set_palettes(
+            &two_masters(),
+            vec![vec![
+                Color::parse("#e63946").unwrap(),
+                Color::parse("#1d3557").unwrap(),
+            ]],
+        )
+        .unwrap();
+        let bold = f.masters[1].id.clone();
+        let (f, key) = color::add_color_layer(&f, "H", "m01").unwrap();
+        let stops = |a: f64| {
+            vec![
+                ColorStop {
+                    offset: 0.0,
+                    color: 0,
+                    alpha: 1.0,
+                },
+                ColorStop {
+                    offset: 1.0,
+                    color: 1,
+                    alpha: a,
+                },
+            ]
+        };
+        let f = color::set_paint(
+            &f,
+            "H",
+            &key,
+            Paint::Linear {
+                start: [0.0, 0.0],
+                end: [600.0, 0.0],
+                stops: stops(1.0),
+            },
+        )
+        .unwrap();
+        // The bold master's gradient reaches further and its last stop is half opaque.
+        let f = color::set_master_paint(
+            &f,
+            "H",
+            &key,
+            &bold,
+            Paint::Linear {
+                start: [0.0, 0.0],
+                end: [900.0, 0.0],
+                stops: stops(0.5),
+            },
+        )
+        .unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let vf = r
+            .files
+            .iter()
+            .find(|x| x.kind == "variable" && x.format == "ttf")
+            .unwrap();
+        let bytes = std::fs::read(&vf.path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        assert!(font.gvar().is_ok());
+        let colr = font.colr().unwrap();
+        assert_eq!(colr.version(), 1);
+        let ivs = colr.item_variation_store().unwrap().unwrap();
+        let map = colr.var_index_map().unwrap().unwrap();
+        // CPAL is unchanged: the colours are the same in both masters.
+        assert_eq!(font.cpal().unwrap().num_palette_entries(), 2);
+
+        let gid = font.cmap().unwrap().map_codepoint('H').unwrap();
+        let list = colr.base_glyph_list().unwrap().unwrap();
+        let rec = list
+            .base_glyph_paint_records()
+            .iter()
+            .find(|r| r.glyph_id().to_u32() == gid.to_u32())
+            .unwrap();
+        let RPaint::ColrLayers(layers) = rec.paint(list.offset_data()).unwrap() else {
+            panic!("layers")
+        };
+        assert_eq!(layers.num_layers(), 1, "uniform colours need no cross-fade");
+        let ll = colr.layer_list().unwrap().unwrap();
+        let RPaint::Glyph(gp) = ll
+            .paints()
+            .get(layers.first_layer_index() as usize)
+            .unwrap()
+        else {
+            panic!("glyph paint")
+        };
+        let RPaint::VarLinearGradient(grad) = gp.paint().unwrap() else {
+            panic!("expected a variable linear gradient");
+        };
+        let base = grad.var_index_base();
+        let default = [F2Dot14::ZERO];
+        let bold_coords = [F2Dot14::from_f32(1.0)];
+        let delta = |index: u32, coords: &[F2Dot14]| {
+            let ix: DeltaSetIndex = map.get(index).unwrap();
+            ivs.compute_delta(ix, coords).unwrap()
+        };
+        // x1 (field 2): 600 at the default master, 900 at the bold master.
+        assert_eq!(grad.x1().to_i16(), 600);
+        assert_eq!(grad.x1().apply_delta(delta(base + 2, &default)), 600.0);
+        assert_eq!(grad.x1().apply_delta(delta(base + 2, &bold_coords)), 900.0);
+        // x0 stays put; the gradient still starts at the origin in both masters.
+        assert_eq!(grad.x0().apply_delta(delta(base, &bold_coords)), 0.0);
+        // The last stop's opacity (its var block + 1): 1.0 → 0.5.
+        let cl = grad.color_line().unwrap();
+        let last = cl.color_stops().get(1).unwrap();
+        let sb = last.var_index_base();
+        assert_eq!(last.alpha().to_f32(), 1.0);
+        assert_eq!(last.alpha().apply_delta(delta(sb + 1, &default)), 1.0);
+        assert!((last.alpha().apply_delta(delta(sb + 1, &bold_coords)) - 0.5).abs() < 1e-3);
+        // Stop positions do not move.
+        assert_eq!(last.stop_offset().apply_delta(delta(sb, &bold_coords)), 1.0);
+    }
+
+    #[test]
+    fn variable_colour_palette_override_cross_fades() {
+        use kernest_core::color::{self, Color, Paint};
+        use write_fonts::read::tables::colr::Paint as RPaint;
+        use write_fonts::types::F2Dot14;
+
+        let f = color::set_palettes(
+            &two_masters(),
+            vec![vec![
+                Color::parse("#e63946").unwrap(),
+                Color::parse("#1d3557").unwrap(),
+            ]],
+        )
+        .unwrap();
+        let bold = f.masters[1].id.clone();
+        let (f, key) = color::add_color_layer(&f, "H", "m01").unwrap();
+        let f = color::set_paint(
+            &f,
+            "H",
+            &key,
+            Paint::Solid {
+                color: 0,
+                alpha: 1.0,
+            },
+        )
+        .unwrap();
+        // The bold master paints colour 1 green instead of red.
+        let f = color::set_master_palettes(
+            &f,
+            &bold,
+            Some(vec![vec![
+                Color::parse("#00ff00").unwrap(),
+                Color::parse("#1d3557").unwrap(),
+            ]]),
+        )
+        .unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let vf = r
+            .files
+            .iter()
+            .find(|x| x.kind == "variable" && x.format == "ttf")
+            .unwrap();
+        let bytes = std::fs::read(&vf.path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let colr = font.colr().unwrap();
+        let ivs = colr.item_variation_store().unwrap().unwrap();
+        let map = colr.var_index_map().unwrap().unwrap();
+        // CPAL grew by the override colour (red, blue, green).
+        let cpal = font.cpal().unwrap();
+        assert_eq!(cpal.num_palette_entries(), 3);
+        let recs = cpal.color_records_array().unwrap().unwrap();
+        assert_eq!(
+            (recs[2].red(), recs[2].green(), recs[2].blue()),
+            (0, 0xff, 0)
+        );
+
+        let gid = font.cmap().unwrap().map_codepoint('H').unwrap();
+        let list = colr.base_glyph_list().unwrap().unwrap();
+        let rec = list
+            .base_glyph_paint_records()
+            .iter()
+            .find(|r| r.glyph_id().to_u32() == gid.to_u32())
+            .unwrap();
+        let RPaint::ColrLayers(layers) = rec.paint(list.offset_data()).unwrap() else {
+            panic!("layers")
+        };
+        assert_eq!(layers.num_layers(), 2, "two colours cross-fade");
+        let ll = colr.layer_list().unwrap().unwrap();
+        let default = [F2Dot14::ZERO];
+        let bold_coords = [F2Dot14::from_f32(1.0)];
+        let mut alphas = Vec::new();
+        for i in 0..2 {
+            let RPaint::Glyph(gp) = ll
+                .paints()
+                .get(layers.first_layer_index() as usize + i)
+                .unwrap()
+            else {
+                panic!("glyph paint")
+            };
+            let RPaint::VarSolid(solid) = gp.paint().unwrap() else {
+                panic!("expected a variable solid")
+            };
+            let ix = map.get(solid.var_index_base()).unwrap();
+            let at_default = solid
+                .alpha()
+                .apply_delta(ivs.compute_delta(ix, &default).unwrap());
+            let at_bold = solid
+                .alpha()
+                .apply_delta(ivs.compute_delta(ix, &bold_coords).unwrap());
+            alphas.push((solid.palette_index(), at_default, at_bold));
+        }
+        // Exactly one branch is opaque at each master: red at the default, green at bold.
+        let red = alphas.iter().find(|(p, _, _)| *p == 0).unwrap();
+        let green = alphas.iter().find(|(p, _, _)| *p == 2).unwrap();
+        assert!(
+            (red.1 - 1.0).abs() < 1e-3 && red.2.abs() < 1e-3,
+            "{alphas:?}"
+        );
+        assert!(
+            green.1.abs() < 1e-3 && (green.2 - 1.0).abs() < 1e-3,
+            "{alphas:?}"
+        );
     }
 
     #[test]

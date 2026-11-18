@@ -10,8 +10,13 @@ interface Props {
   /** For sensible default gradient points: the glyph's width and height. */
   width: number;
   height: number;
+  /** The masters that can each hold their own colour for this layer. */
+  masters: { id: string; name: string }[];
+  /** Loads one master's paint and effective palette for this layer. */
+  onLoadMaster: (masterId: string) => Promise<{ paint: Paint; palette: string[] }>;
   onCancel: () => void;
-  onSave: (paint: Paint) => Promise<void>;
+  /** `scope` is "all" or a master id. */
+  onSave: (paint: Paint, scope: string) => Promise<void>;
 }
 
 const num = (s: string) => Number(s.trim().replace("−", "-"));
@@ -28,9 +33,11 @@ function Swatches({ palette, value, onPick, label }: { palette: string[]; value:
   );
 }
 
-/** Edit View › Paint…: how a colour layer is filled. */
-export function PaintDialog({ glyph, paint, palette, width, height, onCancel, onSave }: Props) {
+/** Edit View › Paint…: how a colour layer is filled, in every master or just one. */
+export function PaintDialog({ glyph, paint, palette, width, height, masters, onLoadMaster, onCancel, onSave }: Props) {
   const [draft, setDraft] = useState<Paint>(paint);
+  const [pal, setPal] = useState<string[]>(palette);
+  const [scope, setScope] = useState<string>("all");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -40,10 +47,27 @@ export function PaintDialog({ glyph, paint, palette, width, height, onCancel, on
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);
 
+  async function pickScope(next: string) {
+    setScope(next);
+    setError(null);
+    if (next === "all") {
+      setDraft(paint);
+      setPal(palette);
+      return;
+    }
+    try {
+      const r = await onLoadMaster(next);
+      setDraft(r.paint);
+      setPal(r.palette);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   const firstColor = draft.type === "solid" ? draft.color : draft.stops[0]?.color ?? 0;
   const defaultStops = (): ColorStop[] => [
     { offset: 0, color: firstColor, alpha: 1 },
-    { offset: 1, color: (firstColor + 1) % Math.max(palette.length, 1), alpha: 1 },
+    { offset: 1, color: (firstColor + 1) % Math.max(pal.length, 1), alpha: 1 },
   ];
   const setType = (type: Paint["type"]) => {
     if (type === draft.type) return;
@@ -72,7 +96,7 @@ export function PaintDialog({ glyph, paint, palette, width, height, onCancel, on
     if (coords.some((v) => !Number.isFinite(v))) return setError(t("Points must be numbers."));
     setBusy(true);
     try {
-      await onSave(draft);
+      await onSave(draft, scope);
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
@@ -87,6 +111,15 @@ export function PaintDialog({ glyph, paint, palette, width, height, onCancel, on
           <button type="button" className="icon-btn" aria-label={t("Close")} onClick={onCancel}><CloseIcon /></button>
         </header>
         <div className="dialog-body">
+          {masters.length > 1 && (
+            <div className="field">
+              <span className="k-label">{t("Master")}</span>
+              <select className="text-input" value={scope} aria-label={t("Master")} onChange={(e) => pickScope(e.target.value)}>
+                <option value="all">{t("All masters")}</option>
+                {masters.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+          )}
           <div className="segmented" role="radiogroup" aria-label={t("Fill")}>
             {(["solid", "linear", "radial"] as const).map((k) => (
               <button key={k} type="button" role="radio" aria-checked={draft.type === k} className={`segment${draft.type === k ? " is-selected" : ""}`} onClick={() => setType(k)}>
@@ -97,7 +130,7 @@ export function PaintDialog({ glyph, paint, palette, width, height, onCancel, on
           {draft.type === "solid" ? (
             <div className="field">
               <span className="k-label">{t("Colour")}</span>
-              <Swatches palette={palette} value={draft.color} label={t("Colour")} onPick={(i) => setDraft({ ...draft, color: i })} />
+              <Swatches palette={pal} value={draft.color} label={t("Colour")} onPick={(i) => setDraft({ ...draft, color: i })} />
               <label className="paint-alpha"><span className="k-caption muted">{t("Opacity (%)")}</span>
                 <input className="metric-input" inputMode="decimal" value={Math.round(draft.alpha * 100)} onChange={(e) => setDraft({ ...draft, alpha: Math.min(1, Math.max(0, num(e.target.value) / 100 || 0)) })} />
               </label>
@@ -127,7 +160,7 @@ export function PaintDialog({ glyph, paint, palette, width, height, onCancel, on
                 <span className="k-label">{t("Colour stops")}</span>
                 {draft.stops.map((s, i) => (
                   <span key={i} className="row paint-stop">
-                    <Swatches palette={palette} value={s.color} label={t("Stop {n} colour", { n: i + 1 })} onPick={(c) => setStop(i, { color: c })} />
+                    <Swatches palette={pal} value={s.color} label={t("Stop {n} colour", { n: i + 1 })} onPick={(c) => setStop(i, { color: c })} />
                     <label><span className="k-caption muted">{t("Position (%)")}</span>
                       <input className="metric-input" inputMode="decimal" value={Math.round(s.offset * 100)} onChange={(e) => setStop(i, { offset: Math.min(1, Math.max(0, num(e.target.value) / 100 || 0)) })} />
                     </label>
@@ -144,7 +177,9 @@ export function PaintDialog({ glyph, paint, palette, width, height, onCancel, on
               </div>
             </>
           )}
-          <p className="k-caption muted">{t("The paint applies to this colour layer in every master. Colours come from the palette in Font Info.")}</p>
+          <p className="k-caption muted">{scope === "all"
+            ? t("The paint applies to this colour layer in every master. Colours come from the palette in Font Info.")
+            : t("The paint applies to this colour layer in {master} only. The other masters keep their own colour.", { master: masters.find((m) => m.id === scope)?.name ?? "" })}</p>
           {error && <p className="notice notice-danger k-label">{error}</p>}
         </div>
         <footer className="dialog-footer">

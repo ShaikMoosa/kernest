@@ -240,7 +240,12 @@ fn glyph_layers(font: &Font, g: &Glyph) -> String {
             let coords: Vec<String> = font
                 .axes
                 .iter()
-                .map(|a| num(loc.get(&a.tag).copied().unwrap_or(a.default)))
+                .map(|a| {
+                    num(loc
+                        .get(&a.tag)
+                        .copied()
+                        .unwrap_or_else(|| kernest_core::designspace::design_bounds(a).1))
+                })
                 .collect();
             out.push(format!(
                 "{{\nassociatedMasterId = {gid};\nattr = {{\ncoordinates = (\n{}\n);\n}};\nlayerId = {lid};\n{}\n}}",
@@ -504,6 +509,24 @@ pub fn glyphs_source(font: &Font) -> String {
             q(&hinting_options(h))
         ));
     }
+    let mapped: Vec<&kernest_core::Axis> = font.axes.iter().filter(|a| !a.map.is_empty()).collect();
+    if !mapped.is_empty() {
+        let entries: Vec<String> = mapped
+            .iter()
+            .map(|a| {
+                let pts: Vec<String> = a
+                    .map
+                    .iter()
+                    .map(|(u, d)| format!("{} = {};", num(*u), num(*d)))
+                    .collect();
+                format!("{} = {{\n{}\n}};", q(&a.tag), pts.join("\n"))
+            })
+            .collect();
+        params.push(format!(
+            "{{\nname = \"Axis Mappings\";\nvalue = {{\n{}\n}};\n}}",
+            entries.join("\n")
+        ));
+    }
     let _ = writeln!(s, "customParameters = (\n{}\n);", params.join(",\n"));
 
     let _ = writeln!(s, "unitsPerEm = {};", info.units_per_em);
@@ -519,7 +542,13 @@ pub fn glyphs_source(font: &Font) -> String {
             let vals: Vec<String> = font
                 .axes
                 .iter()
-                .map(|a| num(m.location.get(&a.tag).copied().unwrap_or(a.default)))
+                .map(|a| {
+                    num(m
+                        .location
+                        .get(&a.tag)
+                        .copied()
+                        .unwrap_or_else(|| kernest_core::designspace::design_bounds(a).1))
+                })
                 .collect();
             let mv = &m.metrics;
             format!(
@@ -539,40 +568,44 @@ pub fn glyphs_source(font: &Font) -> String {
 
     // Instances: single (static) instances only, with their class and style-link overrides.
     if !font.instances.is_empty() {
-        let insts: Vec<String> = font
-            .instances
-            .iter()
-            .map(|i| {
-                let vals: Vec<String> = font
-                    .axes
-                    .iter()
-                    .map(|a| num(i.location.get(&a.tag).copied().unwrap_or(a.default)))
-                    .collect();
-                let mut e = format!("{{\naxesValues = (\n{}\n);\n", vals.join(",\n"));
-                if !i.export {
-                    e.push_str("exports = 0;\n");
-                }
-                if let Some(w) = i.weight_class {
-                    let _ = writeln!(e, "weightClass = {w};");
-                }
-                if let Some(w) = i.width_class {
-                    let _ = writeln!(e, "widthClass = {w};");
-                }
-                if let Some(link) = &i.style_link {
-                    if link.bold {
-                        e.push_str("isBold = 1;\n");
+        let insts: Vec<String> =
+            font.instances
+                .iter()
+                .map(|i| {
+                    let vals: Vec<String> =
+                        font.axes
+                            .iter()
+                            .map(|a| {
+                                num(i.location.get(&a.tag).copied().unwrap_or_else(|| {
+                                    kernest_core::designspace::design_bounds(a).1
+                                }))
+                            })
+                            .collect();
+                    let mut e = format!("{{\naxesValues = (\n{}\n);\n", vals.join(",\n"));
+                    if !i.export {
+                        e.push_str("exports = 0;\n");
                     }
-                    if link.italic {
-                        e.push_str("isItalic = 1;\n");
+                    if let Some(w) = i.weight_class {
+                        let _ = writeln!(e, "weightClass = {w};");
                     }
-                    if !link.base.is_empty() {
-                        let _ = writeln!(e, "linkStyle = {};", q(&link.base));
+                    if let Some(w) = i.width_class {
+                        let _ = writeln!(e, "widthClass = {w};");
                     }
-                }
-                let _ = writeln!(e, "name = {};\n}}", q(&i.name));
-                e
-            })
-            .collect();
+                    if let Some(link) = &i.style_link {
+                        if link.bold {
+                            e.push_str("isBold = 1;\n");
+                        }
+                        if link.italic {
+                            e.push_str("isItalic = 1;\n");
+                        }
+                        if !link.base.is_empty() {
+                            let _ = writeln!(e, "linkStyle = {};", q(&link.base));
+                        }
+                    }
+                    let _ = writeln!(e, "name = {};\n}}", q(&i.name));
+                    e
+                })
+                .collect();
         let _ = writeln!(s, "instances = (\n{}\n);", insts.join(",\n"));
     }
 

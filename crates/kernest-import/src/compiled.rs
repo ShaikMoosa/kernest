@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use kernest_core::{
-    Anchor, Axis, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master, Metrics,
-    Node, NodeKind, Path as KPath, Shape,
+    Anchor, Axis, AxisValue, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master,
+    Metrics, Node, NodeKind, Path as KPath, Shape,
 };
 use skrifa::instance::{Location, Size};
 use skrifa::outline::pen::PathElement;
@@ -58,7 +58,27 @@ fn build(font: &FontRef) -> Result<Imported, String> {
 
     let axes = font.axes();
     let variable = !axes.is_empty();
-    let plans = master_plans(font, &axes);
+    let kernest_axes: Vec<Axis> = axes
+        .iter()
+        .map(|a| Axis {
+            name: axis_name(font, a.name_id(), a.tag().to_string()),
+            tag: a.tag().to_string(),
+            min: a.min_value() as f64,
+            default: a.default_value() as f64,
+            max: a.max_value() as f64,
+            hidden: a.is_hidden(),
+            map: axis_map(font, &a),
+            labels: axis_labels(font, &a.tag().to_string()),
+        })
+        .collect();
+    if let Ok(avar) = font.avar() {
+        if avar.version().major >= 2 && avar.var_store().is_some() {
+            warnings.push(
+                "This font's axis mappings depend on other axes (avar2) and were left out.".into(),
+            );
+        }
+    }
+    let plans = master_plans(font, &axes, &kernest_axes);
     let default_metrics = global_metrics(font);
 
     let masters: Vec<Master> = plans
@@ -70,18 +90,6 @@ fn build(font: &FontRef) -> Result<Imported, String> {
             location: p.location.clone(),
             metrics: default_metrics,
             guides: Vec::new(),
-        })
-        .collect();
-
-    let kernest_axes: Vec<Axis> = axes
-        .iter()
-        .map(|a| Axis {
-            name: axis_name(font, a.name_id(), a.tag().to_string()),
-            tag: a.tag().to_string(),
-            min: a.min_value() as f64,
-            default: a.default_value() as f64,
-            max: a.max_value() as f64,
-            hidden: a.is_hidden(),
         })
         .collect();
 
@@ -184,20 +192,40 @@ fn build(font: &FontRef) -> Result<Imported, String> {
             notes: String::new(),
             feature_settings: Default::default(),
             palettes: Vec::new(),
+            master_palettes: Default::default(),
             filters: Vec::new(),
+            variable_fonts: Vec::new(),
         },
         warnings,
     })
 }
 
 /// The default location plus each axis at its minimum and maximum (2N+1 masters).
-fn master_plans(font: &FontRef, axes: &skrifa::AxisCollection) -> Vec<MasterPlan> {
+fn master_plans(
+    font: &FontRef,
+    axes: &skrifa::AxisCollection,
+    kernest_axes: &[Axis],
+) -> Vec<MasterPlan> {
+    // Master locations are design-space; skrifa draws at normalized user coordinates.
+    let to_design = |tag: &str, v: f64| {
+        kernest_axes
+            .iter()
+            .find(|a| a.tag == tag)
+            .map(|a| kernest_core::designspace::user_to_design(a, v))
+            .unwrap_or(v)
+    };
+    let defaults = || -> BTreeMap<String, f64> {
+        axes.iter()
+            .map(|a| {
+                let tag = a.tag().to_string();
+                let v = to_design(&tag, a.default_value() as f64);
+                (tag, v)
+            })
+            .collect()
+    };
     let mut plans = vec![MasterPlan {
         name: "Default".into(),
-        location: axes
-            .iter()
-            .map(|a| (a.tag().to_string(), a.default_value() as f64))
-            .collect(),
+        location: defaults(),
         norm: Location::new(axes.len()),
     }];
     if axes.is_empty() {
@@ -208,11 +236,8 @@ fn master_plans(font: &FontRef, axes: &skrifa::AxisCollection) -> Vec<MasterPlan
         let tag = a.tag().to_string();
         let label = axis_name(font, a.name_id(), tag.clone());
         for (suffix, value) in [("min", a.min_value()), ("max", a.max_value())] {
-            let mut location: BTreeMap<String, f64> = axes
-                .iter()
-                .map(|x| (x.tag().to_string(), x.default_value() as f64))
-                .collect();
-            location.insert(tag.clone(), value as f64);
+            let mut location = defaults();
+            location.insert(tag.clone(), to_design(&tag, value as f64));
             plans.push(MasterPlan {
                 name: format!("{label} {suffix}"),
                 location,
@@ -221,6 +246,99 @@ fn master_plans(font: &FontRef, axes: &skrifa::AxisCollection) -> Vec<MasterPlan
         }
     }
     plans
+}
+
+/// The avar segment map of one axis as user → design points. A compiled font only
+/// keeps the *normalized* mapping, so the original design scale is gone; both sides
+/// are put back on the fvar user scale, which reproduces the same interpolation.
+/// An identity map becomes no map at all.
+fn axis_map(font: &FontRef, a: &skrifa::Axis) -> Vec<(f64, f64)> {
+    let Ok(avar) = font.avar() else {
+        return Vec::new();
+    };
+    let Some(maps) = avar.axis_segment_maps().get(a.index()).and_then(|m| m.ok()) else {
+        return Vec::new();
+    };
+    let (min, default, max) = (
+        a.min_value() as f64,
+        a.default_value() as f64,
+        a.max_value() as f64,
+    );
+    let denorm = |n: f64| {
+        if n < 0.0 {
+            default + n * (default - min)
+        } else {
+            default + n * (max - default)
+        }
+    };
+    let mut pts: Vec<(f64, f64)> = Vec::new();
+    for m in maps.axis_value_maps() {
+        let u = denorm(m.from_coordinate.get().to_f64());
+        let d = denorm(m.to_coordinate.get().to_f64());
+        // min == default collapses the -1 and 0 segments onto one user value.
+        if pts.last().is_some_and(|(pu, _)| *pu == u) {
+            continue;
+        }
+        pts.push((u, d));
+    }
+    if pts.iter().all(|(u, d)| u == d) {
+        return Vec::new();
+    }
+    pts
+}
+
+/// The STAT axis value labels of one axis, read back as user-space names. Format 4
+/// (whole-location) labels are left out; Kernest names values per axis.
+fn axis_labels(font: &FontRef, tag: &str) -> Vec<AxisValue> {
+    use skrifa::raw::tables::stat::{AxisValue as StatValue, AxisValueTableFlags};
+    let Ok(stat) = font.stat() else {
+        return Vec::new();
+    };
+    let Ok(axes) = stat.design_axes() else {
+        return Vec::new();
+    };
+    let Some(idx) = axes.iter().position(|a| a.axis_tag() == tag) else {
+        return Vec::new();
+    };
+    let idx = idx as u16;
+    let Some(Ok(values)) = stat.offset_to_axis_values() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for v in values.axis_values().iter().filter_map(|v| v.ok()) {
+        if v.axis_index() != Some(idx) {
+            continue;
+        }
+        let Some(value) = v.value() else {
+            continue;
+        };
+        let name = font
+            .localized_strings(v.value_name_id())
+            .english_or_first()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
+        let (min, max) = match &v {
+            StatValue::Format2(f2) => (
+                Some(f2.range_min_value().to_f64()),
+                Some(f2.range_max_value().to_f64()),
+            ),
+            _ => (None, None),
+        };
+        out.push(AxisValue {
+            name,
+            value: value.to_f64(),
+            min,
+            max,
+            elidable: v
+                .flags()
+                .contains(AxisValueTableFlags::ELIDABLE_AXIS_VALUE_NAME),
+            linked_value: v.linked_value().map(|x| x.to_f64()),
+        });
+    }
+    out
 }
 
 fn axis_name(font: &FontRef, name_id: StringId, fallback: String) -> String {
@@ -239,7 +357,12 @@ fn named_instances(font: &FontRef, kernest_axes: &[Axis]) -> Vec<Instance> {
             let location = kernest_axes
                 .iter()
                 .zip(&coords)
-                .map(|(a, v)| (a.tag.clone(), *v as f64))
+                .map(|(a, v)| {
+                    (
+                        a.tag.clone(),
+                        kernest_core::designspace::user_to_design(a, *v as f64),
+                    )
+                })
                 .collect();
             let name = font
                 .localized_strings(inst.subfamily_name_id())

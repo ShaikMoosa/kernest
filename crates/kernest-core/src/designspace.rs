@@ -7,7 +7,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::model::Font;
+use crate::model::{Axis, Font};
 
 /// A location keyed by axis tag. In normalised form only non-zero axes are present.
 pub type Location = BTreeMap<String, f64>;
@@ -15,20 +15,63 @@ pub type Location = BTreeMap<String, f64>;
 /// Per-axis region `(lower, peak, upper)` in normalised coordinates.
 pub type Region = BTreeMap<String, (f64, f64, f64)>;
 
+/// Piecewise-linear user → design through the axis map (identity without one).
+/// Values outside the mapped range stay at the nearest end, as fontTools does.
+pub fn user_to_design(axis: &Axis, v: f64) -> f64 {
+    map_value(&axis.map, v)
+}
+
+/// The inverse of [`user_to_design`], for showing design locations in user terms.
+pub fn design_to_user(axis: &Axis, v: f64) -> f64 {
+    let inverted: Vec<(f64, f64)> = axis.map.iter().map(|&(u, d)| (d, u)).collect();
+    map_value(&inverted, v)
+}
+
+fn map_value(pts: &[(f64, f64)], v: f64) -> f64 {
+    if pts.is_empty() {
+        return v;
+    }
+    if v <= pts[0].0 {
+        return pts[0].1;
+    }
+    for w in pts.windows(2) {
+        let ((a, oa), (b, ob)) = (w[0], w[1]);
+        if v <= b {
+            return if b == a {
+                ob
+            } else {
+                oa + (v - a) / (b - a) * (ob - oa)
+            };
+        }
+    }
+    pts[pts.len() - 1].1
+}
+
+/// The axis extremes in design coordinates: the map applied to min/default/max.
+/// Masters and instances live in design space, so this is what interpolation uses.
+pub fn design_bounds(axis: &Axis) -> (f64, f64, f64) {
+    (
+        user_to_design(axis, axis.min),
+        user_to_design(axis, axis.default),
+        user_to_design(axis, axis.max),
+    )
+}
+
 /// Maps a design-space location to normalised coordinates in [-1, 1]
 /// (default → 0, minimum → -1, maximum → 1). Missing axes use their default.
 pub fn normalize(font: &Font, loc: &Location) -> Location {
     let mut out = Location::new();
     for axis in &font.axes {
+        let (min, default, max) = design_bounds(axis);
         let v = loc
             .get(&axis.tag)
             .copied()
-            .unwrap_or(axis.default)
-            .clamp(axis.min, axis.max);
-        let n = if v < axis.default && axis.default > axis.min {
-            (v - axis.default) / (axis.default - axis.min)
-        } else if v > axis.default && axis.max > axis.default {
-            (v - axis.default) / (axis.max - axis.default)
+            .unwrap_or(default)
+            .clamp(min, max);
+        let n = if v < default && default > min {
+            (v - default) / (default - min)
+        } else if v > default && max > default {
+            (v - default) / (max - default)
         } else {
             0.0
         };
@@ -315,6 +358,162 @@ impl VariationModel {
     }
 }
 
+/// Cuts one variable font out of the family: the axis ranges the setting asks for and
+/// the glyphs it keeps. fontc ignores designspace `<variable-fonts>`, so export
+/// compiles each setting from this reduced source instead. All axes are kept (a
+/// dropped axis could leave two masters at the same spot); a listed axis is narrowed
+/// to the requested user range. Masters outside the range are replaced by interpolated
+/// masters at the new default and axis extremes, so the reduced source spans the range
+/// with a master at its default.
+pub fn reduce_for_variable(
+    font: &Font,
+    setting: &crate::model::VariableFontSetting,
+) -> Result<Font, String> {
+    let mut f = font.clone();
+    f.variable_fonts.clear();
+    let mut narrowed = f.axes.clone();
+    for sub in &setting.axes {
+        let Some(a) = narrowed.iter_mut().find(|a| a.tag == sub.tag) else {
+            return Err(format!(
+                "Variable font \"{}\" subsets unknown axis \"{}\".",
+                setting.name, sub.tag
+            ));
+        };
+        let lo = sub.min.unwrap_or(a.min);
+        let hi = sub.max.unwrap_or(a.max);
+        if !(lo.is_finite() && hi.is_finite()) || lo > hi {
+            return Err(format!(
+                "Variable font \"{}\" needs minimum ≤ maximum on \"{}\".",
+                setting.name, a.name
+            ));
+        }
+        if lo < a.min || hi > a.max {
+            return Err(format!(
+                "Variable font \"{}\" range on \"{}\" must sit inside the axis range.",
+                setting.name, a.name
+            ));
+        }
+        let orig = a.clone();
+        a.min = lo;
+        a.max = hi;
+        a.default = a.default.clamp(lo, hi);
+        // Clip the avar map to the range, re-anchoring both ends through the old map.
+        if !orig.map.is_empty() {
+            let mut pts = vec![
+                (lo, user_to_design(&orig, lo)),
+                (hi, user_to_design(&orig, hi)),
+            ];
+            pts.extend(orig.map.iter().copied().filter(|&(u, _)| u > lo && u < hi));
+            pts.sort_by(|x, y| x.0.total_cmp(&y.0));
+            pts.dedup_by(|x, y| x.0 == y.0);
+            a.map = pts;
+        }
+        // Keep only value labels that still sit inside the narrowed range.
+        a.labels.retain(|l| l.value >= lo && l.value <= hi);
+        for l in &mut a.labels {
+            if let Some(v) = l.min {
+                l.min = Some(v.max(lo));
+            }
+            if let Some(v) = l.max {
+                l.max = Some(v.min(hi));
+            }
+            if l.linked_value.is_some_and(|v| v < lo || v > hi) {
+                l.linked_value = None;
+            }
+        }
+    }
+    if !setting.axes.is_empty() {
+        let bounds: Vec<(String, (f64, f64, f64))> = narrowed
+            .iter()
+            .map(|a| (a.tag.clone(), design_bounds(a)))
+            .collect();
+        let at = |loc: &Location, tag: &str, dflt: f64| loc.get(tag).copied().unwrap_or(dflt);
+        let inside = |loc: &Location| {
+            bounds.iter().all(|(tag, (mn, df, mx))| {
+                let v = at(loc, tag, *df);
+                v >= *mn - 1e-6 && v <= *mx + 1e-6
+            })
+        };
+        let same_loc = |a: &Location, b: &Location| {
+            bounds
+                .iter()
+                .all(|(tag, (_, df, _))| (at(a, tag, *df) - at(b, tag, *df)).abs() < 1e-6)
+        };
+        let default_loc: Location = narrowed
+            .iter()
+            .map(|a| (a.tag.clone(), design_bounds(a).1))
+            .collect();
+        // The reduced source needs a master at the default and at each axis extreme.
+        let mut required: Vec<Location> = vec![default_loc.clone()];
+        for a in &narrowed {
+            let (mn, _, mx) = design_bounds(a);
+            let mut lo = default_loc.clone();
+            lo.insert(a.tag.clone(), mn);
+            required.push(lo);
+            let mut hi = default_loc.clone();
+            hi.insert(a.tag.clone(), mx);
+            required.push(hi);
+        }
+        // Interpolate the missing ones against the original full-range axes, so the
+        // interpolation still spans every original master.
+        for loc in &required {
+            if !f.masters.iter().any(|m| same_loc(&m.location, loc)) {
+                f = crate::interpolate::add_master_at(&f, loc, "Default")?;
+            }
+        }
+        // Masters outside the range are now represented by the boundary masters.
+        let drop: Vec<String> = f
+            .masters
+            .iter()
+            .filter(|m| !inside(&m.location))
+            .map(|m| m.id.clone())
+            .collect();
+        for id in &drop {
+            f.masters.retain(|m| &m.id != id);
+            for g in &mut f.glyphs {
+                g.layers.retain(|l| &l.master_id != id);
+            }
+            f.kerning.remove(id);
+        }
+    }
+    f.axes = narrowed;
+    // Glyph subset: the listed glyphs plus .notdef and every component target.
+    if !setting.glyphs.is_empty() {
+        for name in &setting.glyphs {
+            if f.glyph(name).is_none() {
+                return Err(format!(
+                    "Variable font \"{}\" keeps unknown glyph \"{}\".",
+                    setting.name, name
+                ));
+            }
+        }
+        let mut keep: BTreeSet<String> = setting.glyphs.iter().cloned().collect();
+        keep.insert(".notdef".into());
+        loop {
+            let mut added = false;
+            for g in &f.glyphs {
+                if !keep.contains(&g.name) {
+                    continue;
+                }
+                for l in &g.layers {
+                    for s in &l.shapes {
+                        if let crate::model::Shape::Component { base, .. } = s {
+                            if keep.insert(base.clone()) {
+                                added = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !added {
+                break;
+            }
+        }
+        f.glyphs.retain(|g| keep.contains(&g.name));
+    }
+    Ok(f)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,6 +616,8 @@ mod tests {
             default: 400.0,
             max: 900.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         });
         assert_eq!(normalize(&f, &loc(&[("wght", 400.0)])), loc(&[]));
         assert_eq!(
@@ -432,5 +633,128 @@ mod tests {
             loc(&[("wght", 1.0)])
         );
         assert_eq!(normalize(&f, &loc(&[])), loc(&[]));
+    }
+
+    fn mapped_axis() -> crate::model::Axis {
+        crate::model::Axis {
+            name: "Weight".into(),
+            tag: "wght".into(),
+            min: 100.0,
+            default: 400.0,
+            max: 900.0,
+            hidden: false,
+            // User 100/400/900 sit at design 100/300/900: the lower half is compressed.
+            map: vec![(100.0, 100.0), (400.0, 300.0), (900.0, 900.0)],
+            labels: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn axis_map_user_design_round_trip() {
+        let a = mapped_axis();
+        for u in [100.0, 250.0, 400.0, 650.0, 900.0] {
+            let d = user_to_design(&a, u);
+            assert!(close(design_to_user(&a, d), u), "user {u} -> design {d}");
+        }
+        // The bend: user 250 is halfway to the default, design 200 halfway to 300.
+        assert!(close(user_to_design(&a, 250.0), 200.0));
+        assert!(close(user_to_design(&a, 400.0), 300.0));
+        // Outside the mapped range the value stays at the nearest end.
+        assert!(close(user_to_design(&a, 0.0), 100.0));
+        assert!(close(user_to_design(&a, 1000.0), 900.0));
+    }
+
+    #[test]
+    fn normalization_uses_design_bounds() {
+        let mut f = crate::sample::sample_font();
+        f.axes.push(mapped_axis());
+        // Masters live in design space: the default is design 300, not user 400.
+        assert_eq!(normalize(&f, &loc(&[("wght", 300.0)])), loc(&[]));
+        assert_eq!(
+            normalize(&f, &loc(&[("wght", 900.0)])),
+            loc(&[("wght", 1.0)])
+        );
+        assert_eq!(
+            normalize(&f, &loc(&[("wght", 200.0)])),
+            loc(&[("wght", -0.5)])
+        );
+        // A user-space value (400) is not the default once a map is present.
+        assert_ne!(normalize(&f, &loc(&[("wght", 400.0)])), loc(&[]));
+    }
+
+    fn two_master_font() -> Font {
+        let a = crate::model::Axis {
+            name: "Weight".into(),
+            tag: "wght".into(),
+            min: 100.0,
+            default: 400.0,
+            max: 900.0,
+            hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
+        };
+        let f = crate::structure::set_axes(&crate::sample::sample_font(), vec![a]).unwrap();
+        let (mut f, bold) =
+            crate::structure::add_master(&f, "m01", "Bold", &loc(&[("wght", 900.0)])).unwrap();
+        f.glyph_mut("H").unwrap().layer_mut(&bold).unwrap().width += 100.0;
+        f
+    }
+
+    #[test]
+    fn reduce_variable_font_range_and_glyphs() {
+        use crate::model::{VariableAxisSubset, VariableFontSetting};
+        let f = two_master_font();
+        let setting =
+            |min: Option<f64>, max: Option<f64>, glyphs: Vec<String>| VariableFontSetting {
+                name: "Cut".into(),
+                file_name: "Cut".into(),
+                axes: vec![VariableAxisSubset {
+                    tag: "wght".into(),
+                    min,
+                    max,
+                }],
+                glyphs,
+            };
+        // A range that keeps the default needs no new master.
+        let r = reduce_for_variable(&f, &setting(Some(400.0), Some(700.0), vec![])).unwrap();
+        assert_eq!(
+            (r.axes[0].min, r.axes[0].default, r.axes[0].max),
+            (400.0, 400.0, 700.0)
+        );
+        assert_eq!(r.masters.len(), 2);
+        assert!(r.variable_fonts.is_empty());
+
+        // A range that excludes the default clamps it and interpolates a master there.
+        let regular_h = f.glyph("H").unwrap().layer("m01").unwrap().width;
+        let r = reduce_for_variable(&f, &setting(Some(500.0), Some(900.0), vec![])).unwrap();
+        assert_eq!(
+            (r.axes[0].min, r.axes[0].default, r.axes[0].max),
+            (500.0, 500.0, 900.0)
+        );
+        assert_eq!(r.masters.len(), 2);
+        let def = crate::interpolate::default_master(&r);
+        assert!(normalize(&r, &def.location).is_empty());
+        let h = r.glyph("H").unwrap().layer(&def.id).unwrap().width;
+        assert!(close(h, regular_h + 20.0), "H at the new default: {h}");
+
+        // A glyph subset keeps the listed glyphs and drops the rest.
+        let r = reduce_for_variable(&f, &setting(None, None, vec!["H".into()])).unwrap();
+        assert!(r.glyph("H").is_some());
+        assert!(r.glyph("o").is_none());
+        assert!(r.glyph("I").is_none());
+
+        assert!(reduce_for_variable(&f, &setting(Some(50.0), None, vec![]))
+            .unwrap_err()
+            .contains("inside the axis range"));
+        let mut bad = setting(None, None, vec!["nope".into()]);
+        bad.axes.clear();
+        assert!(reduce_for_variable(&f, &bad)
+            .unwrap_err()
+            .contains("unknown glyph"));
+        let mut bad = setting(None, None, vec![]);
+        bad.axes[0].tag = "wdth".into();
+        assert!(reduce_for_variable(&f, &bad)
+            .unwrap_err()
+            .contains("unknown axis"));
     }
 }

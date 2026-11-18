@@ -150,6 +150,8 @@ mod tests {
             default: 400.0,
             max: 700.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         };
         let f = structure::set_axes(&sample_font(), vec![wght]).unwrap();
         let (f, _) = structure::add_master(

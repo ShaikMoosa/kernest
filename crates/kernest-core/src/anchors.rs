@@ -560,6 +560,8 @@ mod tests {
             default: 400.0,
             max: 700.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         });
         f.masters[0].location = BTreeMap::from([("wght".into(), 400.0)]);
         f.masters.push(Master {

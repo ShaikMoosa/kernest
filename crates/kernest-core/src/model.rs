@@ -42,9 +42,18 @@ pub struct Font {
     /// colour layers refer to them by index. Palette 0 is the default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub palettes: Vec<Vec<crate::color::Color>>,
+    /// Per-master palette overrides, keyed by master id (like `kerning`). A master
+    /// listed here uses these palettes instead of `palettes`; in a variable font the
+    /// differing colours cross-fade between masters.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub master_palettes: BTreeMap<String, Vec<Vec<crate::color::Color>>>,
     /// Saved smart and list filters for the Font View sidebar.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub filters: Vec<crate::smartfilter::Filter>,
+    /// Several variable fonts cut from this one family. Empty means a single
+    /// variable font covering every axis at its full range.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variable_fonts: Vec<VariableFontSetting>,
 }
 
 /// Toggles for the features Kernest generates from glyph names. Only the tags
@@ -151,11 +160,72 @@ impl Default for Hinting {
 pub struct Axis {
     pub name: String,
     pub tag: String,
+    /// User-space coordinates, as in a designspace `<axis>` element.
     pub min: f64,
     pub default: f64,
     pub max: f64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// avar: piecewise-linear user → design points, sorted by user value.
+    /// Empty means user and design coordinates are the same.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub map: Vec<(f64, f64)>,
+    /// STAT axis value labels: the names apps show for positions on this axis.
+    /// Empty means the axis has no named values.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<AxisValue>,
+}
+
+/// One STAT axis value label. Values are in user coordinates, as in a designspace
+/// `<label>` and the STAT axis value tables.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AxisValue {
+    pub name: String,
+    /// The nominal user value this label names.
+    pub value: f64,
+    /// Optional range of user values the label covers (a format 2 axis value).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// Whether apps may leave this name out of a style name (e.g. "Regular").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub elidable: bool,
+    /// A linked user value (a format 3 axis value), e.g. Bold linking to Regular.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_value: Option<f64>,
+}
+
+/// One variable font cut from the family: a name, the file it exports to, the part
+/// of each axis it covers, and the glyphs it keeps. Written as a designspace 5
+/// `<variable-font>`; because fontc ignores those, export compiles each one from a
+/// reduced designspace instead.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariableFontSetting {
+    pub name: String,
+    /// Base file name (no extension) for the exported variable font.
+    pub file_name: String,
+    /// Per-axis user-range restrictions. An axis not listed keeps its full range.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub axes: Vec<VariableAxisSubset>,
+    /// Glyphs to keep; empty keeps every glyph. `.notdef` and component targets are
+    /// always kept so the subset still composes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub glyphs: Vec<String>,
+}
+
+/// The part of one axis a variable font covers, in user coordinates. A missing
+/// bound falls back to the axis's own minimum or maximum.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariableAxisSubset {
+    pub tag: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -477,7 +547,12 @@ pub fn in_bracket(font: &Font, ranges: &[AxisRange], loc: &BTreeMap<String, f64>
         let v = loc
             .get(&r.tag)
             .copied()
-            .or_else(|| font.axes.iter().find(|a| a.tag == r.tag).map(|a| a.default))
+            .or_else(|| {
+                font.axes
+                    .iter()
+                    .find(|a| a.tag == r.tag)
+                    .map(|a| crate::designspace::design_bounds(a).1)
+            })
             .unwrap_or(0.0);
         r.contains(v)
     })
@@ -779,7 +854,9 @@ impl Font {
             notes: String::new(),
             feature_settings: FeatureSettings::default(),
             palettes: Vec::new(),
+            master_palettes: BTreeMap::new(),
             filters: Vec::new(),
+            variable_fonts: Vec::new(),
         }
     }
 

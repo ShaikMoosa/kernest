@@ -4,7 +4,8 @@ use std::path::Path;
 
 use kernest_core::sample::sample_font;
 use kernest_core::{
-    geometry, layers, structure, Axis, AxisRange, Font, Instance, KernPair, NodeKind, Shape,
+    geometry, layers, structure, Axis, AxisRange, AxisValue, Font, Instance, KernPair, NodeKind,
+    Shape, VariableAxisSubset, VariableFontSetting,
 };
 use kernest_import::import;
 
@@ -17,6 +18,8 @@ fn two_masters() -> Font {
         default: 400.0,
         max: 700.0,
         hidden: false,
+        map: Vec::new(),
+        labels: Vec::new(),
     };
     let f = structure::set_axes(&sample_font(), vec![wght]).unwrap();
     let (mut f, bold) =
@@ -108,6 +111,71 @@ fn designspace_round_trip() {
         v.sort_by(|a, b| (&a.left, &a.right).cmp(&(&b.left, &b.right)));
     }
     assert_eq!(f.kerning, want);
+}
+
+#[test]
+fn designspace_axis_map_round_trip() {
+    let mut src = two_masters();
+    // User 400..700 maps to design 400..900, with a bend at user 550 → design 600.
+    src.axes[0].map = vec![(400.0, 400.0), (550.0, 600.0), (700.0, 900.0)];
+    let dir = tempfile::tempdir().unwrap();
+    let ds = kernest_export::write_sources(&src, dir.path()).unwrap();
+    let xml = fs::read_to_string(&ds).unwrap();
+    assert!(xml.contains("<map input=\"550\" output=\"600\"/>"), "{xml}");
+    let imp = import(&ds).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let f = &imp.font;
+    assert_eq!(f.axes, src.axes);
+    for (a, b) in f.masters.iter().zip(&src.masters) {
+        assert_eq!(a.location, b.location, "{}", a.name);
+    }
+    assert_eq!(f.instances, src.instances);
+    for g in &src.glyphs {
+        assert_eq!(f.glyph(&g.name).unwrap().layers, g.layers, "{}", g.name);
+    }
+}
+
+#[test]
+fn glyphs_axis_map_round_trip() {
+    let mut src = two_masters();
+    src.axes[0].map = vec![(400.0, 400.0), (550.0, 600.0), (700.0, 900.0)];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Mapped.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let imp = import(&path).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let f = &imp.font;
+    assert_eq!(f.axes, src.axes);
+    assert_eq!(f.masters, src.masters);
+    assert_eq!(f.instances, src.instances);
+    for g in &src.glyphs {
+        assert_eq!(f.glyph(&g.name).unwrap().layers, g.layers, "{}", g.name);
+    }
+}
+
+#[test]
+fn glyphs_axis_location_import() {
+    // Masters carry user locations ("Axis Location") instead of a font-wide mapping.
+    let master = |id: &str, name: &str, design: f64, user: f64| {
+        format!(
+            "{{\naxesValues = (\n{design}\n);\ncustomParameters = (\n{{\nname = \"Axis Location\";\nvalue = (\n{{\nAxis = Weight;\nLocation = {user};\n}}\n);\n}}\n);\nid = {id};\nname = {name};\n}}"
+        )
+    };
+    let file = format!(
+        "{{\n.appVersion = \"3260\";\n.formatVersion = 3;\naxes = (\n{{\nname = Weight;\ntag = wght;\n}}\n);\nfamilyName = LocTest;\nfontMaster = (\n{},\n{}\n);\nunitsPerEm = 1000;\nglyphs = (\n{{\nglyphname = A;\nlayers = (\n{{\nlayerId = m01;\nwidth = 500;\n}},\n{{\nlayerId = m02;\nwidth = 600;\n}}\n);\n}}\n);\n}}",
+        master("m01", "Regular", 400.0, 400.0),
+        master("m02", "Bold", 900.0, 700.0),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Loc.glyphs");
+    fs::write(&path, file).unwrap();
+    let f = import(&path).unwrap().font;
+    assert_eq!(f.axes.len(), 1);
+    let a = &f.axes[0];
+    assert_eq!((a.min, a.default, a.max), (400.0, 400.0, 700.0));
+    assert_eq!(a.map, vec![(400.0, 400.0), (700.0, 900.0)]);
+    // Master locations stay in design units.
+    assert_eq!(f.masters[1].location.get("wght"), Some(&900.0));
 }
 
 #[test]
@@ -935,6 +1003,200 @@ fn compiled_ttf_round_trip() {
     );
     assert_eq!(kern_value(f, "T", "o"), -60.0);
     assert_eq!(kern_value(f, "L", "T"), -80.0);
+}
+
+#[test]
+fn compiled_variable_avar_round_trip() {
+    let mut src = two_masters();
+    src.axes[0].map = vec![(400.0, 400.0), (550.0, 600.0), (700.0, 900.0)];
+    let dir = tempfile::tempdir().unwrap();
+    let opts = kernest_export::ExportOptions {
+        variable: true,
+        statics: false,
+        ttf: true,
+        otf: false,
+        woff2: false,
+        remove_overlaps: false,
+        apply_metrics_keys: true,
+        autohint: false,
+        production_names: false,
+        out_dir: dir.path().to_path_buf(),
+    };
+    let r = kernest_export::export(&src, &opts).unwrap();
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    let path = std::path::PathBuf::from(&r.files[0].path);
+    let imp = import(&path).unwrap();
+    let f = &imp.font;
+    assert_eq!(f.axes.len(), 1);
+    let a = &f.axes[0];
+    assert_eq!((a.min, a.default, a.max), (400.0, 400.0, 700.0));
+    assert!(!a.map.is_empty(), "avar was lost");
+
+    // A compiled font keeps only the normalized avar, not the original design scale,
+    // so the map comes back on the user scale. What must survive is the normalized
+    // user -> design shape: compare it at several points across the axis.
+    let norm_shape = |ax: &Axis, t: f64| -> f64 {
+        let user = if t < 0.0 {
+            ax.default + t * (ax.default - ax.min)
+        } else {
+            ax.default + t * (ax.max - ax.default)
+        };
+        let d = kernest_core::designspace::user_to_design(ax, user);
+        let (dmin, dflt, dmax) = kernest_core::designspace::design_bounds(ax);
+        if d < dflt {
+            (d - dflt) / (dflt - dmin)
+        } else if d > dflt {
+            (d - dflt) / (dmax - dflt)
+        } else {
+            0.0
+        }
+    };
+    for t in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+        let want = norm_shape(&src.axes[0], t);
+        let got = norm_shape(a, t);
+        assert!((want - got).abs() < 0.01, "t={t}: want {want}, got {got}");
+    }
+    // The bend is preserved: normalized user 0.5 lands at normalized design 0.4.
+    assert!((norm_shape(a, 0.5) - 0.4).abs() < 0.01);
+    // Masters sit at the reimported design extremes (the user scale here).
+    let bold = f
+        .masters
+        .iter()
+        .find(|m| m.name.contains("max"))
+        .expect("a max master");
+    assert!(
+        (bold.location["wght"] - 700.0).abs() < 0.05,
+        "{:?}",
+        bold.location
+    );
+}
+
+#[test]
+fn designspace_stat_labels_round_trip() {
+    let mut src = two_masters();
+    src.axes[0].labels = vec![
+        AxisValue {
+            name: "Regular".into(),
+            value: 400.0,
+            min: None,
+            max: None,
+            elidable: true,
+            linked_value: Some(700.0),
+        },
+        AxisValue {
+            name: "Bold".into(),
+            value: 700.0,
+            min: None,
+            max: None,
+            elidable: false,
+            linked_value: None,
+        },
+        AxisValue {
+            name: "Semibold".into(),
+            value: 600.0,
+            min: Some(550.0),
+            max: Some(650.0),
+            elidable: false,
+            linked_value: None,
+        },
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let ds = kernest_export::write_sources(&src, dir.path()).unwrap();
+    let xml = fs::read_to_string(&ds).unwrap();
+    assert!(xml.contains("<labels>"), "{xml}");
+    assert!(xml.contains("uservalue=\"400\""), "{xml}");
+    assert!(xml.contains("linkeduservalue=\"700\""), "{xml}");
+    assert!(xml.contains("elidable=\"true\""), "{xml}");
+    let imp = import(&ds).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    assert_eq!(imp.font.axes, src.axes);
+}
+
+#[test]
+fn designspace_variable_fonts_round_trip() {
+    let mut src = two_masters();
+    src.variable_fonts = vec![
+        VariableFontSetting {
+            name: "Light".into(),
+            file_name: "Sample-Light".into(),
+            axes: vec![VariableAxisSubset {
+                tag: "wght".into(),
+                min: Some(400.0),
+                max: Some(500.0),
+            }],
+            glyphs: Vec::new(),
+        },
+        VariableFontSetting {
+            name: "Bold".into(),
+            file_name: "Sample-Bold".into(),
+            axes: vec![VariableAxisSubset {
+                tag: "wght".into(),
+                min: Some(500.0),
+                max: Some(700.0),
+            }],
+            glyphs: Vec::new(),
+        },
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let ds = kernest_export::write_sources(&src, dir.path()).unwrap();
+    let xml = fs::read_to_string(&ds).unwrap();
+    assert!(xml.contains("<variable-fonts>"), "{xml}");
+    assert!(xml.contains("filename=\"Sample-Light\""), "{xml}");
+    assert!(xml.contains("userminimum=\"400\""), "{xml}");
+    assert!(xml.contains("usermaximum=\"500\""), "{xml}");
+    let imp = import(&ds).unwrap();
+    assert_eq!(imp.font.variable_fonts, src.variable_fonts);
+}
+
+#[test]
+fn compiled_variable_stat_round_trip() {
+    let mut src = two_masters();
+    src.axes[0].labels = vec![
+        AxisValue {
+            name: "Regular".into(),
+            value: 400.0,
+            min: None,
+            max: None,
+            elidable: true,
+            linked_value: Some(700.0),
+        },
+        AxisValue {
+            name: "Bold".into(),
+            value: 700.0,
+            min: None,
+            max: None,
+            elidable: false,
+            linked_value: None,
+        },
+        AxisValue {
+            name: "Semibold".into(),
+            value: 600.0,
+            min: Some(550.0),
+            max: Some(650.0),
+            elidable: false,
+            linked_value: None,
+        },
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let opts = kernest_export::ExportOptions {
+        variable: true,
+        statics: false,
+        ttf: true,
+        otf: false,
+        woff2: false,
+        remove_overlaps: false,
+        apply_metrics_keys: true,
+        autohint: false,
+        production_names: false,
+        out_dir: dir.path().to_path_buf(),
+    };
+    let r = kernest_export::export(&src, &opts).unwrap();
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    let path = std::path::PathBuf::from(&r.files[0].path);
+    let imp = import(&path).unwrap();
+    let f = &imp.font;
+    assert_eq!(f.axes.len(), 1);
+    assert_eq!(f.axes[0].labels, src.axes[0].labels);
 }
 
 #[test]

@@ -253,11 +253,17 @@ Open **Font Info** (Ctrl+I) to set:
   - **Increase x-height up to:** at sizes up to this one, the x-height is rounded up so lowercase letters stay legible (14 by default; 0 turns it off).
   - **Hint composites as whole glyphs:** hints accented letters and other composites as one shape, instead of through their components.
 - **Axes:** for example Weight (`wght`) from 100 to 900, with a default value.
+  - **Mapping** (avar): apps use *user* values (the numbers in a font menu or CSS), masters use *design* values. Add points to map one to the other, for example a Weight axis whose user 400–700 covers design 400–900. User values must rise strictly and design values never fall; points stay inside the axis range. With no points, user and design values are the same.
+  - **Values** (STAT): names for the styles at each position on the axis, such as Regular at 400 or Bold at 700. Apps show these names. Each value can carry a range (from–to) it covers and link to another axis's value; instances take their style name from these names.
   - Removing an axis takes masters and instances off it (their positions on that axis are dropped) and deletes intermediate and alternate layers that use it. Kernest asks first, and Ctrl+Z undoes it.
-- **Masters:** each master is a full set of outlines at a location on the axes. Add a master by copying an existing one, then edit its outlines.
+- **Masters:** each master is a full set of outlines at a location on the axes. Add a master by copying an existing one, then edit its outlines. **Add from font…** brings a master in from another font (a compiled font, or a Kernest, Glyphs, UFO or designspace source): pick the source master and its location, and Kernest reports which glyphs are compatible and which differ before anything is added.
 - **Instances:** named styles such as SemiBold at a location between masters. They become static fonts on export; untick **Export** on an instance to leave it out.
   - **Weight class** and **Width class** set the numbers apps use to sort and match styles (weight 1–1000, width 1–9). Leave them empty (**Automatic**) to take them from the instance's position on the Weight or Width axis, or from its name.
   - **Style link** marks an instance as the Bold, Italic or Bold Italic of another instance (or of the family). Exported fonts then carry the right style-map names, so apps group Regular and Bold as one family.
+  - **Generate as New Font** turns the instances into masters of a brand-new font, opened in its own window: one master per instance at its location, with the outlines interpolated. Handy for turning a variable design into a static family you can then edit per style.
+- **Variable fonts:** by default export builds one variable font covering every axis. **Add variable font** defines extra variable fonts from the same family: each keeps a name, a file name, a range of each axis (empty ends use the axis range) and a set of glyphs (empty keeps every glyph). Export writes one variable file per entry, so a family can ship e.g. a full Weight×Width font plus a lighter Text-only cut.
+
+**File › Compare with Font…** opens a report comparing the open font with another font: family info, metrics, axes, masters, glyphs and kerning, side by side, with the differences listed. Use it to check what changed between two versions or against a reference font.
 
 Switch the master you're editing with the buttons at the top right. Previews interpolate live. Kernest checks that every glyph can be interpolated, meaning the same number of paths, nodes and components in each master, and lists the glyphs that can't be in the **Incompatible** category of Font View.
 
@@ -280,7 +286,7 @@ OpenType features are the substitutions and positioning rules that run when text
 
 **File › Export › Font…** (Ctrl+E) builds fonts with [fontc](https://github.com/googlefonts/fontc):
 
-- **Variable font** (`Family-VF.ttf`): built from all the masters. It needs at least two masters, an axis, a master at the default location, and glyphs that can be interpolated.
+- **Variable font** (`Family-VF.ttf`): built from all the masters. It needs at least two masters, an axis, a master at the default location, and glyphs that can be interpolated. If Font Info › **Variable fonts** defines extra cuts, export writes one variable file per entry, each with its own axis ranges and glyph set.
 - **Static fonts** (`Family-Style.ttf`): one per exported instance, or one per master if there are no instances. Instances between masters are interpolated by Kernest first. Each static font's weight class (used by apps to sort and match styles) comes from its **Weight class** in Font Info, or from its position on the Weight axis, or from its style name (Thin, Light, Bold…) if there's no Weight axis; its width class comes from **Width class** or a Width axis. Style-linked instances carry the style-map names that group them with their base family.
 
 Choose the formats:
@@ -315,9 +321,11 @@ Kernest makes colour fonts in the **COLRv1** format: glyphs built from coloured 
    - **Radial gradient:** outwards from a centre, up to a radius.
    - Gradients go through two or more colour stops, each with a palette colour, a position and an opacity.
 
-The paint of a colour layer is the same in every master, but its drawing can differ: colour layers must match point for point across masters, like the outlines, and they interpolate in variable fonts.
+By default a colour layer's paint is the same in every master. In the **Paint…** dialog the **Master** list lets you give one master its own paint — gradient points, stops and opacities — while the others keep theirs; **All masters** sets every master at once. Colour layers must match point for point across masters, like the outlines, and they interpolate in variable fonts.
 
-On export, every colour layer becomes a glyph of its own (`O.color0`, `O.color1`, …), and Kernest writes the `COLR` and `CPAL` tables into TTF, OTF and WOFF2 files, static and variable. Glyphs whose layers are all solid, opaque colours also get a COLRv0 record, so Windows 10 and older apps can show them in colour too.
+For colour that changes between masters, Font Info › **Per-master colours** gives a master its own palette: tick the master, then edit its colours. On export Kernest stacks the masters' colours as cross-fading layers, so a variable font shows each master's palette exactly at its location and blends between them.
+
+On export, every colour layer becomes a glyph of its own (`O.color0`, `O.color1`, …), and Kernest writes the `COLR` and `CPAL` tables into TTF, OTF and WOFF2 files, static and variable. Glyphs whose layers are all solid, opaque colours also get a COLRv0 record, so Windows 10 and older apps can show them in colour too. In variable fonts, gradient points, stop positions and opacities that differ between masters are written as COLRv1 variation deltas, so they interpolate along with the outlines.
 
 ## Import
 

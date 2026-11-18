@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use glyphs_reader::{Font as GFont, InstanceType, NodeType, Shape as GShape};
+use kernest_core::designspace::design_to_user;
 use kernest_core::{
     Anchor, Axis, AxisRange, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master,
     Metrics, Node, NodeKind, Path as KPath, Shape, SmartAxis, StyleLink,
@@ -20,7 +21,9 @@ pub fn import(path: &Path) -> Result<Imported, String> {
     }
     let mut warnings = Vec::new();
 
-    // Axes: Glyphs only stores master positions, so the range is what the masters span.
+    // Axes: Glyphs only stores master positions (design coordinates), so the design
+    // range is what the masters span; "Axis Mappings"/"Axis Location" (already merged
+    // by glyphs-reader) give the user range and the avar map.
     let default = g.masters.get(g.default_master_idx).unwrap_or(&g.masters[0]);
     let axes: Vec<Axis> = g
         .axes
@@ -33,14 +36,30 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                 .filter_map(|m| m.axes_values.get(i).map(|v| v.0))
                 .collect();
             let dflt = default.axes_values.get(i).map(|v| v.0).unwrap_or(0.0);
-            Axis {
+            let mut axis = Axis {
                 name: a.name.clone(),
                 tag: a.tag.clone(),
                 min: vals.iter().copied().fold(dflt, f64::min),
                 default: dflt,
                 max: vals.iter().copied().fold(dflt, f64::max),
                 hidden: a.hidden.unwrap_or(false),
+                map: Vec::new(),
+                labels: Vec::new(),
+            };
+            if let Some(m) = g.axis_mappings.get(&a.name) {
+                let mut pts: Vec<(f64, f64)> = m.iter().map(|(u, d)| (u.0, d.0)).collect();
+                pts.sort_by(|x, y| x.0.total_cmp(&y.0));
+                if !pts.iter().all(|(u, d)| u == d) {
+                    // The mapping defines the full range; masters may span only part of it.
+                    let dmin = pts.iter().map(|(_, d)| *d).fold(axis.min, f64::min);
+                    let dmax = pts.iter().map(|(_, d)| *d).fold(axis.max, f64::max);
+                    axis.map = pts;
+                    axis.min = design_to_user(&axis, dmin);
+                    axis.default = design_to_user(&axis, axis.default);
+                    axis.max = design_to_user(&axis, dmax);
+                }
             }
+            axis
         })
         .collect();
     let location = |values: &[_]| -> BTreeMap<String, f64> {
@@ -354,7 +373,9 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         notes: String::new(),
         feature_settings: Default::default(),
         palettes: Vec::new(),
+        master_palettes: Default::default(),
         filters: Vec::new(),
+        variable_fonts: Vec::new(),
     };
     let master_ids: HashMap<String, String> = ids
         .iter()
