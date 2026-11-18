@@ -136,7 +136,7 @@ The rest of the plan, in order. Each phase is built, tested, checked in the app,
 | 4 | 1.7 | Guides, background layer, transform panel (scale, rotate, mirror, skew), measure tool, snap to grid | ✅ v1.7 |
 | 5 | 1.8 | Knife, open corners, reconnect and tidy up paths, lock and focus; Filter menu (Round Corners, Offset Curve, Transformations) | ✅ v1.8 |
 | 6 | 2.0 | Python scripting (Script menu, macro panel) and plug-ins (filters, reporters), Settings window | ✅ v2.0 |
-| 7 | 2.1 | Export UFO, Save As `.glyphs`, open compiled fonts, import SVG outlines, AFM and `.fea` | ✅ next release |
+| 7 | 2.1 | Export UFO, Save As `.glyphs`, open compiled fonts, import SVG outlines, AFM and `.fea` | ✅ v2.1 |
 | 8 | 2.2 | Font View list view, languages and missing glyphs, smart filters, batch rename and batch commands | ⏳ planned |
 | 9 | 2.3 | Axis mappings (avar) and STAT, several variable fonts per family, add masters from other fonts, compare fonts | ⏳ planned |
 | 10 | 2.4 | Alignment zones and stems, PostScript hints, TrueType zones, pixel preview, manual TrueType instructions | ⏳ planned |
