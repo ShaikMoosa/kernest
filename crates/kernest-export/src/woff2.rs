@@ -44,7 +44,17 @@ pub fn to_woff2(sfnt: &[u8]) -> Result<Vec<u8>, String> {
                 .map(|d| (tag.to_be_bytes(), d.as_bytes()))
         })
         .collect();
-    tables.sort_by_key(|t| t.0); // glyf comes before loca, as WOFF2 requires
+    tables.sort_by_key(|t| t.0);
+    // WOFF2 requires loca to immediately follow glyf in the table directory; sorting
+    // by tag alone leaves head/hhea/hmtx between them.
+    if let Some(g) = tables.iter().position(|t| t.0 == *b"glyf") {
+        if let Some(l) = tables.iter().position(|t| t.0 == *b"loca") {
+            if l != g + 1 {
+                let loca = tables.remove(l);
+                tables.insert(g + 1, loca);
+            }
+        }
+    }
 
     let mut directory = Vec::new();
     let mut stream = Vec::new();

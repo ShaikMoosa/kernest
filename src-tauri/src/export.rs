@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use kernest_export::{export, ExportOptions, ExportReport};
+use kernest_export::{export, ExportOptions, ExportReport, UfoExportOptions, UfoExportReport};
 use tauri::State;
 
 use crate::commands::{doc_mut, lock, AppState, CmdResult};
@@ -59,4 +59,38 @@ pub async fn export_font(
     })
     .await
     .map_err(|e| format!("Export stopped unexpectedly: {e}"))?
+}
+
+/// Writes editable UFO sources and a designspace into `out_dir`, honouring the
+/// user's master selection, smart-component and colour-layer choices.
+#[tauri::command]
+pub async fn export_ufo(
+    state: State<'_, AppState>,
+    out_dir: String,
+    masters: Option<Vec<String>>,
+    decompose_smart: Option<bool>,
+    color_layers: Option<bool>,
+) -> CmdResult<UfoExportReport> {
+    let out_dir = PathBuf::from(out_dir.trim());
+    if out_dir.as_os_str().is_empty() {
+        return Err("Choose a folder to export to.".into());
+    }
+    if !out_dir.is_absolute() {
+        return Err(format!(
+            "\"{}\" isn't a full folder path. Use Browse…, or type a path such as C:\\Fonts.",
+            out_dir.display()
+        ));
+    }
+    let font = {
+        let mut guard = lock(&state)?;
+        doc_mut(&mut guard)?.font.clone()
+    };
+    let opts = UfoExportOptions {
+        masters: masters.unwrap_or_default(),
+        decompose_smart: decompose_smart.unwrap_or(false),
+        color_layers: color_layers.unwrap_or(false),
+    };
+    tauri::async_runtime::spawn_blocking(move || kernest_export::export_ufo(&font, &out_dir, &opts))
+        .await
+        .map_err(|e| format!("Export stopped unexpectedly: {e}"))?
 }

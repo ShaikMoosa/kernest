@@ -8,10 +8,14 @@ repository.workspace = true
 
 [dependencies]
 kernest-core = { path = "../kernest-core" }
+brotli-decompressor = "6"
 glyphs-reader = "2.0.0"
 norad = "0.19.2"
 ordered-float = "5"
+read-fonts = "0.44"
+skrifa = "0.47"
 serde.workspace = true
+usvg = { version = "0.50.0", default-features = false }
 
 [dev-dependencies]
 kernest-export = { path = "../kernest-export" }

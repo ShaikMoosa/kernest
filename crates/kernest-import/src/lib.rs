@@ -6,8 +6,17 @@
 //! Anything Kernest can't represent yet (brace and bracket layers, sparse sources,
 //! non-kerning groups…) is left out and listed in [`Imported::warnings`].
 
+mod compiled;
 mod glyphs;
+mod glyphs_write;
+mod metrics;
+mod svg;
 mod ufo;
+mod woff2;
+
+pub use glyphs_write::{glyphs_source, write_glyphs};
+pub use metrics::{apply_metrics, from_font, parse_afm, KeepSide, SourceMetrics};
+pub use svg::{svg_shapes, Placement};
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -24,9 +33,18 @@ pub struct Imported {
 }
 
 /// File types that can be imported, for file dialogs.
-pub const EXTENSIONS: [&str; 4] = ["glyphs", "glyphspackage", "ufo", "designspace"];
+pub const EXTENSIONS: [&str; 7] = [
+    "glyphs",
+    "glyphspackage",
+    "ufo",
+    "designspace",
+    "otf",
+    "ttf",
+    "woff2",
+];
 
-/// Imports a `.glyphs`, `.glyphspackage`, `.ufo` or `.designspace` file.
+/// Imports a font source (`.glyphs`, `.glyphspackage`, `.ufo`, `.designspace`) or a
+/// compiled font (`.otf`, `.ttf`, `.woff2`).
 pub fn import(path: &Path) -> Result<Imported, String> {
     let ext = path
         .extension()
@@ -40,8 +58,9 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         "glyphs" | "glyphspackage" => glyphs::import(path)?,
         "ufo" => ufo::import_ufo(path)?,
         "designspace" => ufo::import_designspace(path)?,
+        "otf" | "ttf" | "woff2" => compiled::import_compiled(path)?,
         _ => {
-            let kinds = ".glyphs, .glyphspackage, .ufo and .designspace";
+            let kinds = ".glyphs, .glyphspackage, .ufo, .designspace, .otf, .ttf and .woff2";
             return Err(format!(
                 "Kernest can import {kinds} files, not \"{}\".",
                 path.display()

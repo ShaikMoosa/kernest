@@ -3,8 +3,8 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
-import { backend, errorMessage, isTauri, type DocStatus, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type OutputLine, type PluginInfo, type ScriptEntry, type Settings } from "./lib/backend";
-import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, loadRecents, openExternal, pickFontToOpen, pickSavePath, pickScript, pickSourceToImport, rememberRecent, type RecentFont } from "./lib/desktop";
+import { backend, errorMessage, isTauri, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement } from "./lib/backend";
+import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, loadRecents, openExternal, pickFeaFile, pickFontToOpen, pickGlyphsSavePath, pickMetricsSource, pickSavePath, pickScript, pickSourceToImport, pickSvgFiles, rememberRecent, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu, type MenuItem } from "./components/TitleBar";
 import { SHORTCUT_ACTIONS, effectiveShortcut, matchShortcut, parseShortcut } from "./lib/shortcuts";
 import { loadTheme, saveTheme, type ThemePref } from "./lib/theme";
@@ -19,7 +19,11 @@ import { TextView } from "./components/TextView";
 import { KerningView } from "./components/KerningView";
 import { FontInfoView } from "./components/FontInfoView";
 import { ExportDialog } from "./components/ExportDialog";
+import { UfoExportDialog } from "./components/UfoExportDialog";
 import { FilterDialog } from "./components/FilterDialog";
+import { SvgImportDialog } from "./components/SvgImportDialog";
+import { MetricsImportDialog } from "./components/MetricsImportDialog";
+import { FeatureImportDialog } from "./components/FeatureImportDialog";
 import { ImportNotesDialog } from "./components/ImportNotesDialog";
 import { AboutDialog } from "./components/AboutDialog";
 import { ScriptDialog } from "./components/ScriptDialog";
@@ -85,6 +89,7 @@ export default function App() {
   const [addGlyphSets, setAddGlyphSets] = useState<GlyphSetInfo[] | null>(null);
   const [fontSelection, setFontSelection] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [exportingUfo, setExportingUfo] = useState(false);
   const [about, setAbout] = useState(false);
   const [theme, setThemeState] = useState<ThemePref>(loadTheme);
   // The UI language; changing it re-renders everything (t() reads the current one).
@@ -208,12 +213,12 @@ export default function App() {
     if (path) await importPath(path, true);
   }, [confirmDiscard, importPath, fail]);
 
-  /** Opens a .kernest font or imports a source, from Explorer or a drop on the window. */
+  /** Opens a .kernest font or imports a source or compiled font, from Explorer or a drop on the window. */
   const openAny = useCallback(async (path: string) => {
     const kind = classifyPath(path);
     if (kind === "kernest") return openPath(kernestRoot(path));
-    if (kind === "source") return importPath(path);
-    fail(t("Kernest opens .kernest fonts and imports .glyphs, .glyphspackage, .ufo and .designspace sources."));
+    if (kind === "source" || kind === "compiled") return importPath(path);
+    fail(t("Kernest opens .kernest fonts and imports .glyphs, .glyphspackage, .ufo, .designspace, .otf, .ttf and .woff2 fonts."));
   }, [openPath, importPath, fail]);
 
   // Fonts from outside: the paths Kernest was started with, paths from a second launch
@@ -262,6 +267,18 @@ export default function App() {
       fail(e);
     }
   }, [font, refreshStatusAfterSave, fail]);
+
+  const saveAsGlyphs = useCallback(async () => {
+    if (!font) return;
+    try {
+      const path = await pickGlyphsSavePath(font.familyName);
+      if (!path) return;
+      const saved = await backend.saveGlyphs(path);
+      setToast({ kind: "info", text: t("Saved to {path}", { path: saved }) });
+    } catch (e) {
+      fail(e);
+    }
+  }, [font, fail]);
 
   const save = useCallback(async () => {
     if (!font) return;
@@ -392,6 +409,86 @@ export default function App() {
     const glyphs = active === null ? fontSelection : [];
     applyFilter(last.name, last.params, glyphs, last.allMasters).catch(fail);
   }, [font, active, fontSelection, applyFilter, fail]);
+
+  // ---------- Import SVG outlines (S23) ----------
+  const [svgDialog, setSvgDialog] = useState<{ mode: "files" | "paste"; files?: string[]; glyph?: string } | null>(null);
+
+  const importSvgFiles = useCallback(async () => {
+    if (!font) return;
+    const files = await pickSvgFiles();
+    if (files.length) setSvgDialog({ mode: "files", files });
+  }, [font]);
+
+  const pasteSvg = useCallback(() => {
+    if (active?.startsWith("g:")) setSvgDialog({ mode: "paste", glyph: active.slice(2) });
+  }, [active]);
+
+  const applySvg = useCallback(async (placement: SvgPlacement, svgText: string | null) => {
+    if (!font || !svgDialog) return;
+    if (svgDialog.mode === "files") {
+      const r = await backend.importSvgFiles(svgDialog.files ?? [], font.masterId, placement);
+      setSvgDialog(null);
+      onStructureChanged(r.status);
+      const notes = r.warnings.map((w) => translateMessage(w));
+      if (r.changed.length) notes.unshift(tn(r.changed.length, "Imported SVG into {n} glyph.", "Imported SVG into {n} glyphs."));
+      if (notes.length) setToast({ kind: "info", text: notes.join(" ") });
+    } else {
+      const glyph = svgDialog.glyph ?? "";
+      const r = await backend.importSvgText(glyph, layerOf[glyph] ?? font.masterId, svgText ?? "", placement);
+      setSvgDialog(null);
+      onStructureChanged(r.status);
+      const notes = r.warnings.map((w) => translateMessage(w));
+      if (notes.length) setToast({ kind: "info", text: notes.join(" ") });
+    }
+  }, [font, svgDialog, layerOf, onStructureChanged]);
+
+  // ---------- Import metrics (S24) ----------
+  const [metricsDialog, setMetricsDialog] = useState<{ path: string; info: MetricsSourceInfo } | null>(null);
+
+  const importMetrics = useCallback(async () => {
+    if (!font) return;
+    const path = await pickMetricsSource();
+    if (!path) return;
+    try {
+      const info = await backend.readMetricsSource(path);
+      setMetricsDialog({ path, info });
+    } catch (e) {
+      fail(e);
+    }
+  }, [font, fail]);
+
+  const applyMetrics = useCallback(async (sourceMasterId: string, keep: KeepSide, widths: boolean, kerning: boolean) => {
+    if (!font || !metricsDialog) return;
+    const r = await backend.importMetrics(metricsDialog.path, font.masterId, sourceMasterId, keep, widths, kerning);
+    setMetricsDialog(null);
+    onStructureChanged(r.status);
+    const notes = r.warnings.map((w) => translateMessage(w));
+    if (r.changed.length) notes.unshift(tn(r.changed.length, "Imported metrics for {n} glyph.", "Imported metrics for {n} glyphs."));
+    if (notes.length) setToast({ kind: "info", text: notes.join(" ") });
+  }, [font, metricsDialog, onStructureChanged]);
+
+  // ---------- Import features (.fea) ----------
+  const [featureDialog, setFeatureDialog] = useState<{ path: string; preview: FeatureImportPreview } | null>(null);
+
+  const importFeatures = useCallback(async () => {
+    if (!font) return;
+    const path = await pickFeaFile();
+    if (!path) return;
+    try {
+      const preview = await backend.previewFeatureImport(path);
+      setFeatureDialog({ path, preview });
+    } catch (e) {
+      fail(e);
+    }
+  }, [font, fail]);
+
+  const applyFeatureImport = useCallback(async () => {
+    if (!font || !featureDialog) return;
+    const r = await backend.importFeatures(featureDialog.path);
+    setFeatureDialog(null);
+    onCommitted(r.status);
+    setToast({ kind: "info", text: t("Imported features.") });
+  }, [font, featureDialog, onCommitted]);
 
   // ---------- Scripts, plug-ins and settings ----------
 
@@ -651,10 +748,17 @@ export default function App() {
         { label: t("Open Sample Font"), onSelect: openSample },
         { label: t("Import…"), shortcut: shortcutText("import"), onSelect: () => importSource(false), separatorBefore: true },
         { label: t("Import Folder…"), onSelect: () => importSource(true) },
+        { label: t("Import SVG…"), onSelect: font ? importSvgFiles : undefined },
+        { label: t("Import Metrics…"), onSelect: font ? importMetrics : undefined },
+        { label: t("Import Features…"), onSelect: font ? importFeatures : undefined },
         { label: t("Save"), shortcut: shortcutText("save"), onSelect: font ? save : undefined, separatorBefore: true },
         { label: t("Save As…"), shortcut: shortcutText("save-as"), onSelect: font ? saveAs : undefined },
+        { label: t("Save As .glyphs…"), onSelect: font ? saveAsGlyphs : undefined },
         { label: t("Close Font"), onSelect: font ? closeFont : undefined },
-        { label: t("Export…"), shortcut: shortcutText("export"), onSelect: font ? () => setExporting(true) : undefined, separatorBefore: true },
+        { label: t("Export"), separatorBefore: true, submenu: [
+          { label: t("Font…"), shortcut: shortcutText("export"), onSelect: font ? () => setExporting(true) : undefined },
+          { label: t("UFO…"), onSelect: font ? () => setExportingUfo(true) : undefined },
+        ] },
         { label: t("Font Info…"), shortcut: shortcutText("font-info"), onSelect: font ? openInfo : undefined },
       ],
     },
@@ -666,6 +770,7 @@ export default function App() {
         { label: t("Cut"), shortcut: "Ctrl+X", onSelect: inGlyph ? () => sendEditCommand("cut") : undefined, separatorBefore: true },
         { label: t("Copy"), shortcut: "Ctrl+C", onSelect: inGlyph ? () => sendEditCommand("copy") : undefined },
         { label: t("Paste"), shortcut: "Ctrl+V", onSelect: inGlyph ? () => sendEditCommand("paste") : undefined },
+        { label: t("Paste SVG…"), onSelect: inGlyph ? pasteSvg : undefined },
         { label: t("Edit Background"), shortcut: shortcutText("edit-background"), onSelect: inGlyph ? () => sendEditCommand("edit-background") : undefined, separatorBefore: true },
         { label: t("Selection to Background"), shortcut: shortcutText("selection-to-background"), onSelect: inGlyph ? () => sendEditCommand("to-background") : undefined },
         { label: t("Add to Background"), shortcut: shortcutText("add-to-background"), onSelect: inGlyph ? () => sendEditCommand("add-to-background") : undefined },
@@ -826,6 +931,7 @@ export default function App() {
       )}
       {importNotes && <ImportNotesDialog {...importNotes} onClose={() => setImportNotes(null)} />}
       {exporting && font && <ExportDialog fontPath={font.path} onClose={() => setExporting(false)} />}
+      {exportingUfo && font && <UfoExportDialog fontPath={font.path} onClose={() => setExportingUfo(false)} />}
       {filterDialog && font && filterGlyph && (
         <FilterDialog
           name={filterDialog}
@@ -834,6 +940,31 @@ export default function App() {
           selection={active === null ? fontSelection : []}
           onCancel={() => setFilterDialog(null)}
           onApply={applyFilter}
+        />
+      )}
+      {svgDialog && font && (
+        <SvgImportDialog
+          mode={svgDialog.mode}
+          files={svgDialog.files}
+          glyph={svgDialog.glyph}
+          onCancel={() => setSvgDialog(null)}
+          onApply={applySvg}
+        />
+      )}
+      {metricsDialog && font && (
+        <MetricsImportDialog
+          path={metricsDialog.path}
+          info={metricsDialog.info}
+          onCancel={() => setMetricsDialog(null)}
+          onApply={applyMetrics}
+        />
+      )}
+      {featureDialog && font && (
+        <FeatureImportDialog
+          path={featureDialog.path}
+          preview={featureDialog.preview}
+          onCancel={() => setFeatureDialog(null)}
+          onApply={applyFeatureImport}
         />
       )}
       {glyphSets && (

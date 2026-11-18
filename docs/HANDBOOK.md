@@ -31,6 +31,7 @@ A Kernest font is a **`.kernest` folder**. Inside it, `font.json` holds the font
 - **Font sources** open the same ways and are imported:
   - right-click a `.ufo` or `.glyphspackage` folder › **Open in Kernest**;
   - double-click a `.glyphs` or `.designspace` file, or use **Open with › Kernest**. Kernest only becomes their default app if no other app has claimed them.
+  - Compiled `.otf`, `.ttf` and `.woff2` fonts dropped on the window are imported too.
 - **One window at a time:** if Kernest is already running, the font opens in that window, which asks first if there are unsaved changes.
 
 ## Font View
@@ -238,13 +239,13 @@ Font Info › **Notes** is a free text box for remarks to yourself about the fon
 OpenType features are the substitutions and positioning rules that run when text is shaped: ligatures, stylistic alternates, mark placement and so on. Font Info › **Features** is where they come from.
 
 - **Automatic features:** Kernest reads your glyph names and offers a switch for each feature it can build: `liga` from ligature names like `f_i`, `ss01`…`ss20` from suffixes like `a.ss01`, and `aalt` gathering the alternates. Turn a switch on and the feature is generated for you; the **Generated code** disclosure shows exactly what will be compiled.
-- **Your own code:** the editor below the switches is for hand-written feature code, with line numbers. **Apply features** compiles it; errors are listed with their line and column, and clicking an error jumps to that line. When it compiles cleanly you'll see "Compiled with no errors." A hand-written feature replaces the generated one with the same tag; your code is used as-is.
+- **Your own code:** the editor below the switches is for hand-written feature code, with line numbers. **Apply features** compiles it; errors are listed with their line and column, and clicking an error jumps to that line. When it compiles cleanly you'll see "Compiled with no errors." A hand-written feature replaces the generated one with the same tag; your code is used as-is. **File › Import Features…** merges a `.fea` file in, showing what's new and what it replaces first (see [Import](#features-1)).
 - **In exported fonts:** generated and hand-written features are compiled together into GSUB/GPOS, alongside the mark and kerning features Kernest builds from anchors and kerning.
 - **Preview in text tabs:** the **Features** button in a text tab lists every available feature with a checkbox, plus **Shape preview**. With Shape preview on, the sample text is shaped with the ticked features (using the same engine as browsers), so you can see `fi` become a ligature or `a` become its `ss01` alternate. Spacing edits are paused while Shape preview is on; turn it off to edit kerning again.
 
 ## Export
 
-**File › Export** (Ctrl+E) builds fonts with [fontc](https://github.com/googlefonts/fontc):
+**File › Export › Font…** (Ctrl+E) builds fonts with [fontc](https://github.com/googlefonts/fontc):
 
 - **Variable font** (`Family-VF.ttf`): built from all the masters. It needs at least two masters, an axis, a master at the default location, and glyphs that can be interpolated.
 - **Static fonts** (`Family-Style.ttf`): one per exported instance, or one per master if there are no instances. Instances between masters are interpolated by Kernest first. Each static font's weight class (used by apps to sort and match styles) comes from its **Weight class** in Font Info, or from its position on the Weight axis, or from its style name (Thin, Light, Bold…) if there's no Weight axis; its width class comes from **Width class** or a Width axis. Style-linked instances carry the style-map names that group them with their base family.
@@ -262,6 +263,11 @@ And what happens before building:
 - **Autohint** adds TrueType hinting instructions to TTF and WOFF2 files, static and variable, using the settings in Font Info › Hinting. Hinting makes text crisper at small sizes on Windows. OTF files aren't affected. Kernest hints with [tilvisan](https://github.com/simoncozens/tilvisan), a Rust port of ttfautohint.
 
 Kerning and kerning groups are compiled into GPOS, and your feature code — generated and hand-written (see [Features](#features)) — is included. Glyphs that aren't set to export are left out.
+
+### Editable sources
+
+- **File › Export › UFO…** writes editable sources instead of compiled fonts: one `.ufo` per chosen master, plus a `.designspace` tying them together, for editing in other font tools. Tick the masters to write (the default one is marked), and choose whether to **decompose smart components** (flatten smart glyphs to outlines; otherwise they stay plain components) and write **colour layers** as named UFO layers.
+- **File › Save As .glyphs…** writes a Glyphs 3 `.glyphs` copy of the open font. This is a copy out: the working document stays a `.kernest` font, since Glyphs cannot hold everything Kernest keeps (colour layers, guides, notes).
 
 ## Colour fonts
 
@@ -285,10 +291,29 @@ On export, every colour layer becomes a glyph of its own (`O.color0`, `O.color1`
 
 - **Glyphs:** `.glyphs` (Glyphs 2 and 3) and `.glyphspackage`.
 - **UFO:** a single `.ufo` (one master), or a `.designspace` with its UFO sources.
+- **Compiled fonts:** `.otf`, `.ttf` and `.woff2`. Kernest draws the outlines back out of the built font and brings over metrics and kerning. A variable font gives the default master and each axis extreme; intermediate masters and named instances beyond these are approximations. Compiled fonts have no editable components or feature code, so outlines arrive as paths and features are left out.
 
 `.glyphspackage` and `.ufo` sources are folders. Use **File › Import Folder…** to pick the folder, or pick any file inside it with Import….
 
 Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers and, from Glyphs files, metrics keys (glyph-wide and per layer) and the hinting settings in a **TTFAutohint options** custom parameter. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
+
+### SVG outlines
+
+**File › Import SVG…** imports one SVG file per glyph, matched by file name: `A.svg` goes to glyph `A`, and files with no matching glyph are left out. **Edit › Paste SVG…** (in a glyph tab) pastes SVG text copied from Figma, Illustrator or another vector editor into the current glyph. Both offer three placements:
+
+- **Fit cap height:** scales the drawing to the master's cap height and sits it on the baseline.
+- **Keep size at origin:** keeps the drawing's size and moves its bottom-left corner to the origin.
+- **Keep as is:** only flips the vertical axis; the coordinates stay as they are.
+
+Strokes, text and images are left out; convert them to filled outlines in your vector editor first. The glyph gets symmetric sidebearings from the drawing's bounds, and each import is one undo step.
+
+### Metrics
+
+**File › Import Metrics…** brings widths, sidebearings and kerning from an AFM file or another font — a `.kernest`, Glyphs, UFO or compiled font, choosing which master to read. Tick what to import (widths and sidebearings, kerning, or both) and which sidebearing to keep: the outline slides so the source's left or right sidebearing stays fixed while the imported width is applied. Kerning pairs are merged over the current ones; pairs pointing at glyphs this font doesn't have are left out. Locked glyphs are skipped. One undo step.
+
+### Features
+
+**File › Import Features…** merges a `.fea` file into the hand-written feature code (see [Features](#features)). Before applying, a dialog lists what's new and what replaces existing features, plus any problems in the merged code. A feature block in the file replaces the current block with the same tag; new tags are appended; language systems, lookups and comments outside feature blocks are kept, and repeated `languagesystem` lines are dropped. One undo step.
 
 ## Scripting and plug-ins
 

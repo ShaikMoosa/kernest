@@ -101,4 +101,11 @@ export const DYNAMIC_KEYS = [
   "Filter",
   "Reporter",
   "General",
+  // SVG import placement options
+  "Fit cap height",
+  "Scales the drawing to the master's cap height and sits it on the baseline.",
+  "Keep size at origin",
+  "Keeps the drawing's size and moves its bottom-left corner to the origin.",
+  "Keep as is",
+  "Only flips the vertical axis; the coordinates stay as they are.",
 ];

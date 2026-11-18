@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use kernest_core::designspace::Location;
+use kernest_core::fea_import::merge_features;
 use kernest_core::features::{available, check, generate, handwritten_tags};
 use kernest_core::geometry::svg_path;
 use kernest_core::interpolate::Interpolator;
@@ -105,6 +106,75 @@ pub fn set_automatic_features(
         next.feature_settings.automatic = automatic.into_iter().collect();
         Ok(next)
     })
+}
+
+// ---------- Import features from a .fea file ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureImportPreview {
+    /// Tags the file adds that the font didn't have.
+    added: Vec<String>,
+    /// Tags the file replaces because the font already had them.
+    replaced: Vec<String>,
+    /// Problems the merged code would have, shown before applying.
+    diagnostics: Vec<DiagnosticView>,
+}
+
+fn read_fea(path: &str) -> CmdResult<String> {
+    let path = path.trim();
+    std::fs::read_to_string(path).map_err(|e| format!("\"{path}\" couldn't be read: {e}"))
+}
+
+fn preview_in(doc: &Document, incoming: &str) -> CmdResult<FeatureImportPreview> {
+    let merged = merge_features(&doc.font.features, incoming)?;
+    let mut probe = doc.font.clone();
+    probe.features = merged.text;
+    Ok(FeatureImportPreview {
+        added: merged.added,
+        replaced: merged.replaced,
+        diagnostics: check(&probe)
+            .into_iter()
+            .map(|d| DiagnosticView {
+                line: d.line,
+                column: d.column,
+                message: d.message,
+            })
+            .collect(),
+    })
+}
+
+/// Shows what a `.fea` file would add and replace, without changing the font.
+#[tauri::command]
+pub fn preview_feature_import(
+    state: State<AppState>,
+    path: String,
+) -> CmdResult<FeatureImportPreview> {
+    let incoming = read_fea(&path)?;
+    let mut guard = lock(&state)?;
+    preview_in(doc_mut(&mut guard)?, &incoming)
+}
+
+fn import_in(doc: &mut Document, incoming: &str) -> CmdResult<FeaturesView> {
+    let merged = merge_features(&doc.font.features, incoming)?;
+    let mut next = doc.font.clone();
+    next.features = merged.text;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(view(doc))
+}
+
+/// Merges a `.fea` file into the feature text as one undoable step.
+#[tauri::command]
+pub fn import_features(state: State<AppState>, path: String) -> CmdResult<FeaturesView> {
+    let incoming = read_fea(&path)?;
+    let mut guard = lock(&state)?;
+    import_in(doc_mut(&mut guard)?, &incoming)
 }
 
 #[derive(Serialize)]
@@ -366,5 +436,30 @@ mod tests {
         assert!(v.handwritten.contains(&"ss01".to_string()));
         assert!(!v.available.contains(&"ss01".to_string()));
         assert_eq!(v.diagnostics[0].line, 2);
+    }
+
+    #[test]
+    fn feature_import_previews_then_applies_as_one_step() {
+        let mut doc = doc_with_alternates();
+        doc.font.features = "feature liga {\n  sub f i by f_i;\n} liga;\n".into();
+        let original = doc.font.clone();
+        let incoming = "feature ss01 {\n  sub a by a.ss01;\n} ss01;\nfeature liga {\n  sub f i by f_i;\n} liga;\n";
+        let p = preview_in(&doc, incoming).unwrap();
+        assert_eq!(p.added, vec!["ss01".to_string()]);
+        assert_eq!(p.replaced, vec!["liga".to_string()]);
+        assert!(p.diagnostics.is_empty());
+        let v = import_in(&mut doc, incoming).unwrap();
+        assert!(v.status.can_undo && v.status.dirty);
+        assert!(v.text.contains("sub a by a.ss01;"));
+        doc.history.undo(&mut doc.font);
+        assert_eq!(doc.font, original);
+    }
+
+    #[test]
+    fn feature_import_preview_reports_problems_before_applying() {
+        let doc = doc_with_alternates();
+        let p = preview_in(&doc, "feature ss02 {\n  sub a by missing;\n} ss02;\n").unwrap();
+        assert_eq!(p.added, vec!["ss02".to_string()]);
+        assert!(!p.diagnostics.is_empty());
     }
 }

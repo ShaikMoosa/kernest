@@ -1,0 +1,629 @@
+//! Writing a Kernest font as a Glyphs 3 `.glyphs` source (OpenStep plist text).
+//!
+//! glyphs-reader only reads, so the plist is written by hand. The output is shaped
+//! to read back through [`crate::glyphs::import`]: masters and axes, glyph layers
+//! (master, brace, bracket and smart poles), components with `piece` values, anchors,
+//! kerning groups and pairs, metrics keys, names, features and hinting.
+//!
+//! Glyphs normalises some things on the way back in (feature code is re-wrapped, axis
+//! ranges are rebuilt from the master positions), so those round-trip in meaning rather
+//! than byte for byte. Colour layers, palettes, guides and notes are not written: the
+//! reader does not bring them back, and notes are private to Kernest.
+
+use std::fmt::Write as _;
+use std::path::Path;
+
+use kernest_core::{Font, Glyph, Layer, NodeKind, Shape};
+
+/// Writes `font` as a Glyphs 3 `.glyphs` file at `path`.
+pub fn write_glyphs(font: &Font, path: &Path) -> Result<(), String> {
+    std::fs::write(path, glyphs_source(font))
+        .map_err(|e| format!("could not write \"{}\": {e}", path.display()))
+}
+
+/// A number as Glyphs writes it: no trailing `.0` on whole values.
+fn num(v: f64) -> String {
+    if v == v.trunc() && v.abs() < 1e15 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
+}
+
+/// A plist string atom, quoted and escaped when it isn't a bare word.
+fn q(s: &str) -> String {
+    let bare = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_$/:.-".contains(c));
+    if bare {
+        return s.to_string();
+    }
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn node_type(kind: NodeKind, smooth: bool) -> &'static str {
+    match (kind, smooth) {
+        (NodeKind::Line, false) => "l",
+        (NodeKind::Line, true) => "ls",
+        (NodeKind::Curve, false) => "c",
+        (NodeKind::Curve, true) => "cs",
+        (NodeKind::QCurve, false) => "q",
+        (NodeKind::QCurve, true) => "qs",
+        (NodeKind::OffCurve, _) => "o",
+    }
+}
+
+/// One path or component as a Glyphs 3 `shapes` entry.
+fn shape(s: &Shape) -> String {
+    match s {
+        Shape::Path(p) => {
+            let nodes: Vec<String> = p
+                .nodes
+                .iter()
+                .map(|n| {
+                    format!(
+                        "({},{},{})",
+                        num(n.x),
+                        num(n.y),
+                        node_type(n.kind, n.smooth)
+                    )
+                })
+                .collect();
+            format!(
+                "{{\nclosed = {};\nnodes = (\n{}\n);\n}}",
+                if p.closed { 1 } else { 0 },
+                nodes.join(",\n")
+            )
+        }
+        Shape::Component {
+            base,
+            transform,
+            smart,
+            ..
+        } => {
+            let mut s = format!("{{\nref = {};\n", q(base));
+            let [xx, xy, yx, yy, dx, dy] = *transform;
+            if (dx, dy) != (0.0, 0.0) {
+                let _ = writeln!(s, "pos = ({},{});", num(dx), num(dy));
+            }
+            // Glyphs stores a component as position, scale and rotation; shear can't be
+            // carried, so the matrix is split into a rotation and a (signed) scale.
+            if [xx, xy, yx, yy] != [1.0, 0.0, 0.0, 1.0] {
+                let sx = (xx * xx + xy * xy).sqrt();
+                let (c, sn) = if sx > 0.0 {
+                    (xx / sx, xy / sx)
+                } else {
+                    (1.0, 0.0)
+                };
+                let sy = c * yy - sn * yx;
+                let angle = sn.atan2(c).to_degrees();
+                if (sx, sy) != (1.0, 1.0) {
+                    let _ = writeln!(s, "scale = ({},{});", num(sx), num(sy));
+                }
+                if angle != 0.0 {
+                    let _ = writeln!(s, "angle = {};", num(angle));
+                }
+            }
+            if !smart.is_empty() {
+                let pieces: Vec<String> = smart
+                    .iter()
+                    .map(|(k, v)| format!("{} = {};", q(k), num(*v)))
+                    .collect();
+                let _ = writeln!(s, "piece = {{\n{}\n}};", pieces.join("\n"));
+            }
+            s.push('}');
+            s
+        }
+    }
+}
+
+fn anchors(l: &Layer) -> String {
+    if l.anchors.is_empty() {
+        return String::new();
+    }
+    let items: Vec<String> = l
+        .anchors
+        .iter()
+        .map(|a| {
+            format!(
+                "{{\nname = {};\npos = ({},{});\n}}",
+                q(&a.name),
+                num(a.x),
+                num(a.y)
+            )
+        })
+        .collect();
+    format!("anchors = (\n{}\n);\n", items.join(",\n"))
+}
+
+/// A layer's metrics keys, written on the layer so each master keeps its own.
+fn metrics_keys(l: &Layer) -> String {
+    let mut s = String::new();
+    for (key, val) in [
+        ("metricLeft", &l.metrics_keys.left),
+        ("metricRight", &l.metrics_keys.right),
+        ("metricWidth", &l.metrics_keys.width),
+    ] {
+        if let Some(v) = val {
+            let _ = writeln!(s, "{key} = {};", q(v));
+        }
+    }
+    s
+}
+
+fn shapes(l: &Layer) -> String {
+    if l.shapes.is_empty() {
+        return String::new();
+    }
+    let items: Vec<String> = l.shapes.iter().map(shape).collect();
+    format!("shapes = (\n{}\n);\n", items.join(",\n"))
+}
+
+/// The body shared by every kind of layer: width, keys, anchors and shapes.
+fn layer_body(l: &Layer) -> String {
+    format!(
+        "{}{}{}width = {};",
+        metrics_keys(l),
+        anchors(l),
+        shapes(l),
+        num(l.width)
+    )
+}
+
+/// The Glyphs id of a master: Kernest's own stable id.
+fn master_gid(m: &kernest_core::Master) -> &str {
+    &m.id
+}
+
+/// One glyph's layers, in Glyphs form: a layer per master, then smart poles, brace
+/// (intermediate) and bracket (alternate) layers. Colour layers are left out.
+fn glyph_layers(font: &Font, g: &Glyph) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for m in &font.masters {
+        let Some(l) = g.layer(&m.id).filter(|l| l.is_master()) else {
+            continue;
+        };
+        // A smart glyph's master layer is the minimum pole. Glyphs reads an
+        // omitted pole as the maximum, so mark it explicitly or the min and max
+        // poles collapse to the same location and fail to interpolate.
+        let pole = if g.smart_axes.is_empty() {
+            String::new()
+        } else {
+            let sel: Vec<String> = g
+                .smart_axes
+                .iter()
+                .map(|a| format!("{} = 1;", q(&a.name)))
+                .collect();
+            format!("partSelection = {{\n{}\n}};\n", sel.join("\n"))
+        };
+        out.push(format!(
+            "{{\nlayerId = {};\n{}{}\n}}",
+            q(master_gid(m)),
+            pole,
+            layer_body(l)
+        ));
+    }
+    for l in g.layers.iter().filter(|l| l.color.is_none()) {
+        if l.is_master() {
+            continue;
+        }
+        let gid = q(&l.master_id);
+        let lid = q(l.id.as_deref().unwrap_or(&l.master_id));
+        if let Some(pos) = &l.smart {
+            // A smart pole: 1 is the axis minimum, 2 the maximum.
+            let sel: Vec<String> = g
+                .smart_axes
+                .iter()
+                .map(|a| {
+                    let at_max = pos.get(&a.name).is_some_and(|v| *v >= a.max);
+                    format!("{} = {};", q(&a.name), if at_max { 2 } else { 1 })
+                })
+                .collect();
+            out.push(format!(
+                "{{\nassociatedMasterId = {gid};\nlayerId = {lid};\npartSelection = {{\n{}\n}};\n{}\n}}",
+                sel.join("\n"),
+                layer_body(l)
+            ));
+        } else if let Some(loc) = &l.location {
+            let coords: Vec<String> = font
+                .axes
+                .iter()
+                .map(|a| num(loc.get(&a.tag).copied().unwrap_or(a.default)))
+                .collect();
+            out.push(format!(
+                "{{\nassociatedMasterId = {gid};\nattr = {{\ncoordinates = (\n{}\n);\n}};\nlayerId = {lid};\n{}\n}}",
+                coords.join(",\n"),
+                layer_body(l)
+            ));
+        } else if !l.bracket.is_empty() {
+            let rules: Vec<String> = font
+                .axes
+                .iter()
+                .map(|a| {
+                    let r = l.bracket.iter().find(|r| r.tag == a.tag);
+                    let mut s = String::from("{");
+                    if let Some(r) = r {
+                        if let Some(v) = r.min {
+                            let _ = write!(s, "min = {};", num(v));
+                        }
+                        if let Some(v) = r.max {
+                            let _ = write!(s, "max = {};", num(v));
+                        }
+                    }
+                    s.push('}');
+                    s
+                })
+                .collect();
+            out.push(format!(
+                "{{\nassociatedMasterId = {gid};\nattr = {{\naxisRules = (\n{}\n);\n}};\nlayerId = {lid};\n{}\n}}",
+                rules.join(",\n"),
+                layer_body(l)
+            ));
+        }
+    }
+    out.join(",\n")
+}
+
+fn glyph(font: &Font, g: &Glyph) -> String {
+    let mut s = String::from("{\n");
+    if !g.export {
+        s.push_str("export = 0;\n");
+    }
+    let _ = writeln!(s, "glyphname = {};", q(&g.name));
+    match g.unicodes.len() {
+        0 => {}
+        1 => {
+            let _ = writeln!(s, "unicode = {};", g.unicodes[0].0);
+        }
+        _ => {
+            let cps: Vec<String> = g.unicodes.iter().map(|c| c.0.to_string()).collect();
+            let _ = writeln!(s, "unicode = (\n{}\n);", cps.join(",\n"));
+        }
+    }
+    if let Some(k) = &g.left_group {
+        let _ = writeln!(s, "kernLeft = {};", q(k));
+    }
+    if let Some(k) = &g.right_group {
+        let _ = writeln!(s, "kernRight = {};", q(k));
+    }
+    if !g.smart_axes.is_empty() {
+        let parts: Vec<String> = g
+            .smart_axes
+            .iter()
+            .map(|a| {
+                format!(
+                    "{{\nbottomValue = {};\nname = {};\ntopValue = {};\n}}",
+                    num(a.min),
+                    q(&a.name),
+                    num(a.max)
+                )
+            })
+            .collect();
+        let _ = writeln!(s, "partsSettings = (\n{}\n);", parts.join(",\n"));
+    }
+    let _ = writeln!(s, "layers = (\n{}\n);", glyph_layers(font, g));
+    s.push('}');
+    s
+}
+
+/// Splits feature code into the `feature tag { … } tag;` blocks and everything else
+/// (languagesystems, classes, lookups), which Glyphs keeps as a prefix.
+fn split_features(code: &str) -> (String, Vec<(String, String)>) {
+    let mut prefix = String::new();
+    let mut blocks = Vec::new();
+    let b = code.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if let Some((tag, body, end)) = feature_block(code, i) {
+            blocks.push((tag, body));
+            i = end;
+        } else {
+            prefix.push(code[i..].chars().next().unwrap());
+            i += code[i..].chars().next().unwrap().len_utf8();
+        }
+    }
+    (prefix, blocks)
+}
+
+/// If a `feature <tag> { … } <tag>;` block starts at `i` (on a statement boundary),
+/// returns its tag, inner code and the index just past it.
+fn feature_block(code: &str, i: usize) -> Option<(String, String, usize)> {
+    let rest = &code[i..];
+    let boundary = i == 0
+        || code[..i]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_whitespace() || c == ';');
+    if !boundary || !rest.starts_with("feature") {
+        return None;
+    }
+    let after = &rest["feature".len()..];
+    if !after.starts_with(|c: char| c.is_whitespace()) {
+        return None;
+    }
+    let after = after.trim_start();
+    let tag_len = after
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .map(char::len_utf8)
+        .sum::<usize>();
+    if tag_len == 0 {
+        return None;
+    }
+    let tag = after[..tag_len].to_string();
+    let after = after[tag_len..].trim_start();
+    if !after.starts_with('{') {
+        return None;
+    }
+    // Brace-match to the closing brace (feature bodies hold no unbalanced braces).
+    let bytes = after.as_bytes();
+    let mut depth = 0usize;
+    let mut close = None;
+    for (j, c) in bytes.iter().enumerate() {
+        match c {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(j);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let body = after[1..close].trim().to_string();
+    let mut end = i + (rest.len() - after.len()) + close + 1;
+    // Skip the trailing ` tag;`.
+    let tail = code[end..].trim_start();
+    if let Some(stripped) = tail.strip_prefix(&tag) {
+        let stripped = stripped.trim_start();
+        if let Some(stripped) = stripped.strip_prefix(';') {
+            end = code.len() - stripped.len();
+        }
+    }
+    Some((tag, body, end))
+}
+
+fn features(code: &str) -> String {
+    let (prefix, blocks) = split_features(code);
+    let prefix = prefix.trim();
+    let mut s = String::new();
+    if !prefix.is_empty() {
+        let _ = writeln!(
+            s,
+            "featurePrefixes = (\n{{\ncode = {};\nname = Prefix;\n}}\n);",
+            q(prefix)
+        );
+    }
+    if !blocks.is_empty() {
+        let feats: Vec<String> = blocks
+            .iter()
+            .map(|(tag, body)| format!("{{\ncode = {};\ntag = {};\n}}", q(body), q(tag)))
+            .collect();
+        let _ = writeln!(s, "features = (\n{}\n);", feats.join(",\n"));
+    }
+    s
+}
+
+/// The autohinting custom parameter value, from Kernest's hinting settings.
+fn hinting_options(h: &kernest_core::Hinting) -> String {
+    let mut s = format!(
+        "-l {} -r {} -x {}",
+        h.range_min, h.range_max, h.increase_x_height
+    );
+    if h.hint_composites {
+        s.push_str(" -c");
+    }
+    s
+}
+
+/// The full `.glyphs` plist text for a font.
+pub fn glyphs_source(font: &Font) -> String {
+    let info = &font.info;
+    let mut s = String::from("{\n.appVersion = \"3260\";\n.formatVersion = 3;\n");
+
+    // Axes: Glyphs keeps only name, tag and hidden; ranges come back from the masters.
+    if !font.axes.is_empty() {
+        let axes: Vec<String> = font
+            .axes
+            .iter()
+            .map(|a| {
+                let mut e = format!("{{\nname = {};\ntag = {};\n", q(&a.name), q(&a.tag));
+                if a.hidden {
+                    e.push_str("hidden = 1;\n");
+                }
+                e.push('}');
+                e
+            })
+            .collect();
+        let _ = writeln!(s, "axes = (\n{}\n);", axes.join(",\n"));
+    }
+
+    // Names: familyName is always top-level; the rest live in properties.
+    let _ = writeln!(s, "familyName = {};", q(&info.family_name));
+    let mut props: Vec<String> = Vec::new();
+    let mut prop = |key: &str, val: &Option<String>| {
+        if let Some(v) = val {
+            props.push(format!(
+                "{{\nkey = {};\nvalues = (\n{{\nlanguage = dflt;\nvalue = {};\n}}\n);\n}}",
+                q(key),
+                q(v)
+            ));
+        }
+    };
+    prop("designers", &info.designer);
+    prop("copyrights", &info.copyright);
+    prop("designerURL", &info.designer_url);
+    prop("manufacturers", &info.manufacturer);
+    prop("manufacturerURL", &info.manufacturer_url);
+    prop("licenses", &info.license);
+    prop("licenseURL", &info.license_url);
+    prop("descriptions", &info.description);
+    prop("trademarks", &info.trademark);
+    prop("sampleTexts", &info.sample_text);
+    prop("vendorID", &info.vendor_id);
+    if !props.is_empty() {
+        let _ = writeln!(s, "properties = (\n{}\n);", props.join(",\n"));
+    }
+
+    // Custom parameters: glyph order, the default master, vendor ID and hinting.
+    let mut params: Vec<String> = Vec::new();
+    let order: Vec<String> = font.glyphs.iter().map(|g| q(&g.name)).collect();
+    params.push(format!(
+        "{{\nname = glyphOrder;\nvalue = (\n{}\n);\n}}",
+        order.join(",\n")
+    ));
+    let default = kernest_core::interpolate::default_master(font);
+    params.push(format!(
+        "{{\nname = \"Variable Font Origin\";\nvalue = {};\n}}",
+        q(&default.id)
+    ));
+    if let Some(v) = &info.vendor_id {
+        params.push(format!("{{\nname = vendorID;\nvalue = {};\n}}", q(v)));
+    }
+    if let Some(h) = &info.hinting {
+        params.push(format!(
+            "{{\nname = \"TTFAutohint options\";\nvalue = {};\n}}",
+            q(&hinting_options(h))
+        ));
+    }
+    let _ = writeln!(s, "customParameters = (\n{}\n);", params.join(",\n"));
+
+    let _ = writeln!(s, "unitsPerEm = {};", info.units_per_em);
+    let _ = writeln!(s, "versionMajor = {};", info.version_major);
+    let _ = writeln!(s, "versionMinor = {};", info.version_minor);
+
+    // Metrics: a type list, then each master's values in the same order.
+    s.push_str("metrics = (\n{type = ascender;},\n{type = \"cap height\";},\n{type = \"x-height\";},\n{type = baseline;},\n{type = descender;},\n{type = \"italic angle\";}\n);\n");
+    let masters: Vec<String> = font
+        .masters
+        .iter()
+        .map(|m| {
+            let vals: Vec<String> = font
+                .axes
+                .iter()
+                .map(|a| num(m.location.get(&a.tag).copied().unwrap_or(a.default)))
+                .collect();
+            let mv = &m.metrics;
+            format!(
+                "{{\naxesValues = (\n{}\n);\nid = {};\nmetricValues = (\n{{pos = {};}},\n{{pos = {};}},\n{{pos = {};}},\n{{}},\n{{pos = {};}},\n{{pos = {};}}\n);\nname = {};\n}}",
+                vals.join(",\n"),
+                q(master_gid(m)),
+                num(mv.ascender),
+                num(mv.cap_height),
+                num(mv.x_height),
+                num(mv.descender),
+                num(mv.italic_angle),
+                q(&m.name)
+            )
+        })
+        .collect();
+    let _ = writeln!(s, "fontMaster = (\n{}\n);", masters.join(",\n"));
+
+    // Instances: single (static) instances only, with their class and style-link overrides.
+    if !font.instances.is_empty() {
+        let insts: Vec<String> = font
+            .instances
+            .iter()
+            .map(|i| {
+                let vals: Vec<String> = font
+                    .axes
+                    .iter()
+                    .map(|a| num(i.location.get(&a.tag).copied().unwrap_or(a.default)))
+                    .collect();
+                let mut e = format!("{{\naxesValues = (\n{}\n);\n", vals.join(",\n"));
+                if !i.export {
+                    e.push_str("exports = 0;\n");
+                }
+                if let Some(w) = i.weight_class {
+                    let _ = writeln!(e, "weightClass = {w};");
+                }
+                if let Some(w) = i.width_class {
+                    let _ = writeln!(e, "widthClass = {w};");
+                }
+                if let Some(link) = &i.style_link {
+                    if link.bold {
+                        e.push_str("isBold = 1;\n");
+                    }
+                    if link.italic {
+                        e.push_str("isItalic = 1;\n");
+                    }
+                    if !link.base.is_empty() {
+                        let _ = writeln!(e, "linkStyle = {};", q(&link.base));
+                    }
+                }
+                let _ = writeln!(e, "name = {};\n}}", q(&i.name));
+                e
+            })
+            .collect();
+        let _ = writeln!(s, "instances = (\n{}\n);", insts.join(",\n"));
+    }
+
+    // Kerning: master id → left side → right side → value, groups as @MMK_L_/@MMK_R_.
+    if !font.kerning.is_empty() {
+        let side = |s: &str, left: bool| -> String {
+            match s.strip_prefix('@') {
+                Some(g) => format!("@MMK_{}_{g}", if left { "L" } else { "R" }),
+                None => s.to_string(),
+            }
+        };
+        let mut masters_k: Vec<String> = Vec::new();
+        for m in &font.masters {
+            let Some(pairs) = font.kerning.get(&m.id) else {
+                continue;
+            };
+            if pairs.is_empty() {
+                continue;
+            }
+            let mut lefts: Vec<(String, Vec<(String, f64)>)> = Vec::new();
+            for p in pairs {
+                let l = side(&p.left, true);
+                let r = side(&p.right, false);
+                match lefts.iter_mut().find(|(k, _)| *k == l) {
+                    Some((_, rs)) => rs.push((r, p.value)),
+                    None => lefts.push((l, vec![(r, p.value)])),
+                }
+            }
+            let left_entries: Vec<String> = lefts
+                .iter()
+                .map(|(l, rs)| {
+                    let rights: Vec<String> = rs
+                        .iter()
+                        .map(|(r, v)| format!("{} = {};", q(r), num(*v)))
+                        .collect();
+                    format!("{} = {{\n{}\n}};", q(l), rights.join("\n"))
+                })
+                .collect();
+            masters_k.push(format!(
+                "{} = {{\n{}\n}};",
+                q(master_gid(m)),
+                left_entries.join("\n")
+            ));
+        }
+        if !masters_k.is_empty() {
+            let _ = writeln!(s, "kerningLTR = {{\n{}\n}};", masters_k.join("\n"));
+        }
+    }
+
+    let feat = features(&font.features);
+    s.push_str(&feat);
+
+    let glyphs: Vec<String> = font.glyphs.iter().map(|g| glyph(font, g)).collect();
+    let _ = writeln!(s, "glyphs = (\n{}\n);", glyphs.join(",\n"));
+    s.push_str("}\n");
+    s
+}
