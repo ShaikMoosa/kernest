@@ -191,6 +191,74 @@ pub fn flatten_layer(font: &Font, layer: &Layer) -> Layer {
     out
 }
 
+/// The layer with every component — smart or ordinary — replaced by its outlines,
+/// transforms composed. Smart components resolve at the layer's own smart values
+/// first; ordinary components recurse into the base glyph's layer for this master.
+pub fn decompose_layer(font: &Font, layer: &Layer) -> Layer {
+    let mut out = layer.clone();
+    let mut shapes = Vec::with_capacity(layer.shapes.len());
+    push_decomposed(
+        font,
+        layer,
+        &layer.shapes,
+        crate::model::IDENTITY,
+        0,
+        &mut shapes,
+    );
+    out.shapes = shapes;
+    out
+}
+
+fn push_decomposed(
+    font: &Font,
+    owner: &Layer,
+    shapes: &[Shape],
+    t: [f64; 6],
+    depth: usize,
+    out: &mut Vec<Shape>,
+) {
+    for s in shapes {
+        match s {
+            Shape::Path(p) => out.push(Shape::Path(Path {
+                locked: false,
+                closed: p.closed,
+                nodes: p
+                    .nodes
+                    .iter()
+                    .map(|n| Node {
+                        x: t[0] * n.x + t[2] * n.y + t[4],
+                        y: t[1] * n.x + t[3] * n.y + t[5],
+                        ..*n
+                    })
+                    .collect(),
+            })),
+            Shape::Component {
+                base,
+                transform,
+                smart,
+                ..
+            } => {
+                if depth > 32 {
+                    continue;
+                }
+                let ct = compose(&t, transform);
+                let is_smart = font.glyph(base).is_some_and(|g| g.is_smart());
+                match (is_smart && depth < 16)
+                    .then(|| instance_for(font, base, owner, smart))
+                    .flatten()
+                {
+                    Some(inst) => push_decomposed(font, owner, &inst.shapes, ct, depth + 1, out),
+                    None => {
+                        if let Some(bl) = font.glyph(base).and_then(|g| g.layer(&owner.master_id)) {
+                            push_decomposed(font, owner, &bl.shapes, ct, depth + 1, out);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The font with every smart component turned into outlines, as exported. Smart
 /// glyphs themselves keep their master layers; their pole layers are dropped.
 pub fn flatten_font(font: &Font) -> Font {

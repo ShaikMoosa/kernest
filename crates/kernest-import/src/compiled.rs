@@ -184,6 +184,7 @@ fn build(font: &FontRef) -> Result<Imported, String> {
             notes: String::new(),
             feature_settings: Default::default(),
             palettes: Vec::new(),
+            filters: Vec::new(),
         },
         warnings,
     })

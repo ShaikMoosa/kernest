@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use crate::glyphdata::{codepoint_for_name, name_for};
+use crate::glyphdata::{codepoint_for_name, codepoints_for, name_for, LANGUAGES};
 use crate::model::{Codepoint, Font, Glyph, Layer, Node, Path, Shape};
 
 type R<T> = Result<T, String>;
@@ -212,6 +212,61 @@ pub fn remove_glyphs(font: &Font, names: &[String]) -> R<Font> {
     Ok(f)
 }
 
+/// Per-language coverage for the Languages sidebar: how many of a language's
+/// drawable code points the font encodes, and which ones are missing.
+pub struct Coverage {
+    pub language: &'static str,
+    pub present: usize,
+    pub total: usize,
+    pub missing: Vec<u32>,
+}
+
+fn encoded(font: &Font) -> HashSet<u32> {
+    font.glyphs
+        .iter()
+        .flat_map(|g| g.unicodes.iter().map(|c| c.0))
+        .collect()
+}
+
+pub fn coverage(font: &Font) -> Vec<Coverage> {
+    let present = encoded(font);
+    LANGUAGES
+        .iter()
+        .map(|l| {
+            let cps = codepoints_for(l.set_ids);
+            let missing: Vec<u32> = cps
+                .iter()
+                .copied()
+                .filter(|cp| !present.contains(cp))
+                .collect();
+            Coverage {
+                language: l.name,
+                present: cps.len() - missing.len(),
+                total: cps.len(),
+                missing,
+            }
+        })
+        .collect()
+}
+
+/// The glyphs a language still needs, ready to add; unknown languages error.
+pub fn missing_glyphs(font: &Font, language: &str) -> R<Vec<NewGlyph>> {
+    let lang = LANGUAGES
+        .iter()
+        .find(|l| l.name == language)
+        .ok_or_else(|| format!("There is no language named \"{language}\"."))?;
+    let present = encoded(font);
+    Ok(codepoints_for(lang.set_ids)
+        .iter()
+        .copied()
+        .filter(|cp| !present.contains(cp))
+        .map(|cp| NewGlyph {
+            name: name_for(cp),
+            codepoint: Some(cp),
+        })
+        .collect())
+}
+
 /// `outer ∘ inner` for transforms `[xx, xy, yx, yy, dx, dy]`.
 fn compose(o: [f64; 6], i: [f64; 6]) -> [f64; 6] {
     [
@@ -316,6 +371,29 @@ mod tests {
         assert_eq!(r.font.glyph("ellipsis").unwrap().unicodes[0].0, 0x2026);
         assert_eq!(r.font.glyphs.last().unwrap().name, "ellipsis");
         r.font.validate().unwrap();
+    }
+
+    #[test]
+    fn language_coverage_and_add_missing() {
+        let font = sample_font();
+        let cov = coverage(&font);
+        assert_eq!(cov.len(), LANGUAGES.len());
+        let latin = cov.iter().find(|c| c.language == "Latin").unwrap();
+        assert!(latin.present > 0 && latin.present < latin.total);
+        assert!(!latin.missing.contains(&('A' as u32)));
+        let greek = cov.iter().find(|c| c.language == "Greek").unwrap();
+        assert_eq!(greek.present, 0);
+        assert!(greek.total > 100);
+        // Adding the missing Greek glyphs fills the coverage.
+        let list = missing_glyphs(&font, "Greek").unwrap();
+        assert_eq!(list.len(), greek.missing.len());
+        let added = add_glyphs(&font, &list).unwrap();
+        let cov2 = coverage(&added.font);
+        let greek2 = cov2.iter().find(|c| c.language == "Greek").unwrap();
+        assert_eq!(greek2.present, greek2.total);
+        assert!(greek2.missing.is_empty());
+        assert!(missing_glyphs(&added.font, "Greek").unwrap().is_empty());
+        assert!(missing_glyphs(&font, "Klingon").is_err());
     }
 
     #[test]

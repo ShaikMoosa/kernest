@@ -101,6 +101,8 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
   const setAxes = (v: Axis[] | null) => { drafts.current.axes = v; setAxesState(v); };
   const setInstances = (v: Instance[] | null) => { drafts.current.instances = v; setInstState(v); };
   const [adding, setAdding] = useState<{ name: string; copyFrom: string; location: Location } | null>(null);
+  // A draft of the glyph-order text; null means "show the saved order, not editing".
+  const [orderText, setOrderText] = useState<string | null>(null);
 
   const reload = useCallback(() => backend.fontInfo().then((i) => { setInfo(i); }, onError), [onError]);
   useEffect(() => { reload(); }, [reload, version]);
@@ -381,6 +383,31 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
         </section>
 
         <FeaturesSection version={version} onChanged={onChanged} onError={onError} />
+
+        <section className="fi-section" aria-labelledby="fi-order">
+          <div className="fi-head">
+            <h2 id="fi-order" className="k-subtitle">{t("Glyph order")}</h2>
+            <span className="k-caption muted">{t("The order glyphs export in. One name per line; .notdef is always first.")}</span>
+          </div>
+          <textarea
+            className="notes-area glyph-order-area"
+            aria-label={t("Glyph order")}
+            spellCheck={false}
+            value={orderText ?? info.glyphOrder.join("\n")}
+            onChange={(e) => setOrderText(e.target.value)}
+          />
+          {orderText !== null && (
+            <div className="fi-actions">
+              <span className="k-caption muted">{t("Every glyph must appear once. The order is saved with the font and used on export.")}</span>
+              <span className="spacer" />
+              <button className="btn btn-secondary btn-sm" onClick={() => setOrderText(null)}>{t("Discard")}</button>
+              <button className="btn btn-primary btn-sm" onClick={async () => {
+                const names = orderText.split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
+                if (await apply(() => backend.setGlyphOrder(names))) setOrderText(null);
+              }}>{t("Apply order")}</button>
+            </div>
+          )}
+        </section>
 
         <section className="fi-section" aria-labelledby="fi-notes">
           <div className="fi-head">

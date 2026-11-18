@@ -9,6 +9,8 @@
 
 pub mod anchors;
 pub mod background;
+pub mod batch;
+pub mod clipboard;
 pub mod color;
 pub mod decompose;
 pub mod designspace;
@@ -26,11 +28,14 @@ pub mod layers;
 pub mod measure;
 pub mod metricskeys;
 pub mod model;
+pub mod order;
 pub mod overlap;
 pub mod package;
 pub mod pathops;
+pub mod rename;
 pub mod sample;
 pub mod smart;
+pub mod smartfilter;
 pub mod structure;
 pub mod text;
 pub mod transform;

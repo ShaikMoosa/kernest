@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import type { FontView, GlyphSummary } from "../lib/backend";
+import { backend, errorMessage, type FontView, type GlyphFilter, type GlyphSummary, type LanguageCoverage, type MissingGlyph } from "../lib/backend";
 import { SearchIcon } from "./Icons";
 import { t, tn } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
+import { GlyphListView, type DragHandlers, type ListEdit } from "./GlyphListView";
+import { SmartFilterDialog } from "./SmartFilterDialog";
+import { BatchMenu } from "./BatchMenu";
 
 const CATEGORY_ORDER = ["Uppercase", "Lowercase", "Letter", "Number", "Punctuation", "Symbol", "Separator", "Mark", "Other"];
 
-function GlyphCell({ glyph, font, selected, onSelect, onOpen }: { glyph: GlyphSummary; font: FontView; selected: boolean; onSelect: (e: React.MouseEvent) => void; onOpen: () => void }) {
+function GlyphCell({ glyph, font, selected, onSelect, onOpen, drag, dragging, drop }: { glyph: GlyphSummary; font: FontView; selected: boolean; onSelect: (e: React.MouseEvent) => void; onOpen: () => void; drag: DragHandlers; dragging: boolean; drop: boolean }) {
   const { ascender, descender } = font.metrics;
   const h = ascender - descender;
   // Square view box centred on the advance width, so every glyph uses the same scale.
   const x0 = glyph.width / 2 - h / 2;
   const empty = !glyph.svg;
   return (
-    <button className={`glyph-cell${selected ? " is-selected" : ""}${empty ? " is-empty" : ""}`} onClick={onSelect} onDoubleClick={onOpen} title={t("{name} — double-click to edit", { name: glyph.name })}>
+    <button className={`glyph-cell${selected ? " is-selected" : ""}${empty ? " is-empty" : ""}${dragging ? " is-dragging" : ""}${drop ? " is-drop" : ""}`} {...drag} onClick={onSelect} onDoubleClick={onOpen} title={t("{name} — double-click to edit", { name: glyph.name })}>
       <span className="glyph-art">
         {empty ? (
           <span className="glyph-placeholder">{glyph.character?.trim() ? glyph.character : ""}</span>
@@ -42,10 +45,52 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen }: { glyph: GlyphSu
 }
 
 /** S03 · Font View — grid of glyphs with category sidebar and glyph info. */
-export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void }) {
+export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void> }) {
   const [category, setCategory] = useState<string>("All");
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<"grid" | "list">(() => (localStorage.getItem("kernest.fontViewMode") === "list" ? "list" : "grid"));
+  const [cellSize, setCellSize] = useState(() => Math.min(160, Math.max(64, Number(localStorage.getItem("kernest.cellSize")) || 84)));
+  const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [filterMatch, setFilterMatch] = useState<Set<string> | null>(null);
+  const [filterDialog, setFilterDialog] = useState<{ initial: GlyphFilter | null } | null>(null);
+  const [filterError, setFilterError] = useState<string | null>(null);
+  const [languages, setLanguages] = useState<LanguageCoverage[]>([]);
+  const [openLanguage, setOpenLanguage] = useState<string | null>(null);
+  const [missing, setMissing] = useState<MissingGlyph[]>([]);
+  const [languageError, setLanguageError] = useState<string | null>(null);
+  // Drag-to-reorder: the glyph being dragged and the one it would drop before.
+  const [dragName, setDragName] = useState<string | null>(null);
+  const [dropName, setDropName] = useState<string | null>(null);
+
+  // Coverage follows the glyph set; the Missing list loads only for the open language.
+  useEffect(() => {
+    let live = true;
+    backend.languageCoverage()
+      .then((l) => { if (live) { setLanguages(l); setLanguageError(null); } })
+      .catch((e) => { if (live) setLanguageError(errorMessage(e)); });
+    return () => { live = false; };
+  }, [font.glyphs]);
+  useEffect(() => {
+    if (!openLanguage) { setMissing([]); return; }
+    let live = true;
+    backend.missingGlyphs(openLanguage)
+      .then((m) => { if (live) setMissing(m); })
+      .catch((e) => { if (live) setLanguageError(errorMessage(e)); });
+    return () => { live = false; };
+  }, [openLanguage, font.glyphs]);
+
+  // Evaluate the active filter against the current font; a deleted filter deselects itself.
+  useEffect(() => {
+    if (!activeFilter) { setFilterMatch(null); return; }
+    const f = font.filters.find((x) => x.name === activeFilter);
+    if (!f) { setActiveFilter(null); return; }
+    let live = true;
+    backend.evaluateFilter(f)
+      .then((names) => { if (live) { setFilterMatch(new Set(names)); setFilterError(null); } })
+      .catch((e) => { if (live) { setFilterMatch(new Set()); setFilterError(errorMessage(e)); } });
+    return () => { live = false; };
+  }, [activeFilter, font.filters, font.glyphs]);
 
   // Keep the selection to glyphs that still exist, and tell the app (for Remove Glyph).
   useEffect(() => {
@@ -65,16 +110,56 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     return font.glyphs.filter((g) => {
+      if (filterMatch && !filterMatch.has(g.name)) return false;
       if (category === "Incompatible") { if (g.compatible) return false; }
       else if (category !== "All" && g.category !== category) return false;
       if (!q) return true;
       return g.name.toLowerCase().includes(q) || g.unicode?.toLowerCase() === q.replace(/^u\+/, "") || g.character === query.trim();
     });
-  }, [font.glyphs, category, query]);
+  }, [font.glyphs, category, query, filterMatch]);
 
   const drawn = font.glyphs.filter((g) => g.svg).length;
   const selectedGlyphs = font.glyphs.filter((g) => selection.has(g.name));
   const one = selectedGlyphs.length === 1 ? selectedGlyphs[0] : null;
+
+  // Info-box drafts follow the selected glyph and any refresh (undo, list edits).
+  const [tagsDraft, setTagsDraft] = useState("");
+  const [prodDraft, setProdDraft] = useState("");
+  const [leftDraft, setLeftDraft] = useState("");
+  const [rightDraft, setRightDraft] = useState("");
+  const oneTags = one?.tags.join(", ") ?? "";
+  const oneProd = one?.productionName ?? "";
+  const oneLeft = one?.leftGroup ?? "";
+  const oneRight = one?.rightGroup ?? "";
+  useEffect(() => { setTagsDraft(oneTags); }, [one?.name, oneTags]);
+  useEffect(() => { setProdDraft(oneProd); }, [one?.name, oneProd]);
+  useEffect(() => { setLeftDraft(oneLeft); setRightDraft(oneRight); }, [one?.name, oneLeft, oneRight]);
+
+  function commitTags() {
+    if (one && onSetTags && tagsDraft !== oneTags) onSetTags(one.name, tagsDraft.split(","));
+  }
+  function commitProd() {
+    if (one && onSetProductionName && prodDraft.trim() !== oneProd) onSetProductionName(one.name, prodDraft);
+  }
+  function commitGroups() {
+    if (one && onSetGroups && (leftDraft !== oneLeft || rightDraft !== oneRight)) {
+      onSetGroups(one.name, leftDraft.trim() || null, rightDraft.trim() || null);
+    }
+  }
+  function listEdit(edit: ListEdit) {
+    if (edit.kind === "metric") onSetMetric?.(edit.glyph, edit.metric, edit.value);
+    else if (edit.kind === "groups") onSetGroups?.(edit.glyph, edit.left, edit.right);
+    else if (edit.kind === "rename") onRenameGlyph?.(edit.glyph, edit.name);
+    else onSetTags?.(edit.glyph, edit.tags);
+  }
+  function switchMode(m: "grid" | "list") {
+    setMode(m);
+    localStorage.setItem("kernest.fontViewMode", m);
+  }
+  function resizeCells(v: number) {
+    setCellSize(v);
+    localStorage.setItem("kernest.cellSize", String(v));
+  }
 
   function select(g: GlyphSummary, e: React.MouseEvent) {
     setSelection((prev) => {
@@ -96,6 +181,66 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
 
   const fmt = (v: number | null) => (v === null ? "—" : String(Math.round(v)));
 
+  // Move `drag` to just before `drop` in the full working order (not the filtered view),
+  // so a drag reorders the font even when only some glyphs are shown.
+  function reorder(drag: string, drop: string) {
+    if (!onReorder || drag === drop) return;
+    const order = font.glyphs.map((g) => g.name).filter((n) => n !== drag);
+    const at = order.indexOf(drop);
+    if (at < 0) return;
+    order.splice(at, 0, drag);
+    onReorder(order);
+  }
+
+  // HTML5 drag handlers shared by the grid cells and the list rows. Empty when the
+  // app can't reorder (browser mock), so nothing is draggable there.
+  function dragProps(name: string): DragHandlers {
+    if (!onReorder) return {};
+    return {
+      draggable: true,
+      onDragStart: (e) => { e.dataTransfer.setData("text/plain", name); e.dataTransfer.effectAllowed = "move"; setDragName(name); },
+      onDragEnd: () => { setDragName(null); setDropName(null); },
+      onDragOver: (e) => { if (!dragName) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dropName !== name) setDropName(name); },
+      onDragLeave: () => { if (dropName === name) setDropName(null); },
+      onDrop: (e) => {
+        e.preventDefault();
+        const drag = dragName ?? e.dataTransfer.getData("text/plain");
+        setDragName(null); setDropName(null);
+        if (drag) reorder(drag, name);
+      },
+    };
+  }
+
+  async function saveFilters(next: GlyphFilter[]) {
+    if (!onSetFilters) return;
+    try {
+      await onSetFilters(next);
+      setFilterError(null);
+    } catch (e) {
+      setFilterError(errorMessage(e));
+      throw e;
+    }
+  }
+
+  async function saveSelectionAsList() {
+    const base = t("Selection");
+    const taken = new Set(font.filters.map((f) => f.name.toLowerCase()));
+    let name = base;
+    for (let i = 2; taken.has(name.toLowerCase()); i++) name = `${base} ${i}`;
+    await saveFilters([...font.filters, { name, kind: "list", glyphs: [...selection] }]);
+    setActiveFilter(name);
+  }
+
+  async function saveFromDialog(saved: GlyphFilter) {
+    const editing = filterDialog?.initial;
+    const next = editing
+      ? font.filters.map((f) => (f.name === editing.name ? saved : f))
+      : [...font.filters, saved];
+    await saveFilters(next);
+    setFilterDialog(null);
+    setActiveFilter(saved.name);
+  }
+
   return (
     <div className="fontview">
       <aside className="sidebar">
@@ -114,6 +259,64 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
             </li>
           ))}
         </ul>
+        <p className="k-overline muted sidebar-heading">{t("Languages")}</p>
+        <ul className="list">
+          {languages.map((l) => (
+            <li key={l.language} className="language-item">
+              <button className={`list-item${openLanguage === l.language ? " is-selected" : ""}`} aria-expanded={openLanguage === l.language} onClick={() => setOpenLanguage(openLanguage === l.language ? null : l.language)}>
+                <span>{t(l.language)}</span>
+                <span className="list-meta">{l.present} / {l.total}</span>
+              </button>
+              {openLanguage === l.language && (
+                <div className="language-missing">
+                  {missing.length ? (
+                    <>
+                      <p className="k-caption muted">{tn(missing.length, "{n} glyph missing", "{n} glyphs missing")}</p>
+                      <div className="missing-list">
+                        {missing.map((m) => {
+                          const ch = String.fromCodePoint(parseInt(m.unicode, 16));
+                          return <span key={m.name} className="missing-chip" title={`${m.name} · U+${m.unicode}`}>{ch.trim() ? ch : m.name}</span>;
+                        })}
+                      </div>
+                      {onAddMissing && (
+                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => onAddMissing(l.language).catch(() => {})}>{t("Add Missing")}</button>
+                      )}
+                    </>
+                  ) : (
+                    <p className="k-caption muted">{t("Nothing missing")}</p>
+                  )}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+        {languageError && <p className="notice notice-danger k-caption sidebar-notice">{languageError}</p>}
+        {onSetFilters && (
+          <>
+            <p className="k-overline muted sidebar-heading">{t("Filters")}</p>
+            <ul className="list">
+              {font.filters.map((f) => (
+                <li key={f.name} className="filter-item">
+                  <button className={`list-item${activeFilter === f.name ? " is-selected" : ""}`} onClick={() => setActiveFilter(activeFilter === f.name ? null : f.name)} title={f.kind === "list" ? t("List filter") : t("Smart filter")}>
+                    <span>{f.name}</span>
+                    <span className="list-meta">{f.kind === "list" ? t("list") : t("smart")}</span>
+                  </button>
+                  <button type="button" className="icon-btn" aria-label={t("Edit filter {name}", { name: f.name })} onClick={() => setFilterDialog({ initial: f })}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" /></svg>
+                  </button>
+                  <button type="button" className="icon-btn" aria-label={t("Delete filter {name}", { name: f.name })} onClick={() => saveFilters(font.filters.filter((x) => x.name !== f.name)).catch(() => {})}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="sidebar-actions">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setFilterDialog({ initial: null })}>{t("New Filter…")}</button>
+              <button type="button" className="btn btn-secondary btn-sm" disabled={selection.size === 0} onClick={() => saveSelectionAsList().catch(() => {})}>{t("Save Selection as List")}</button>
+            </div>
+            {filterError && <p className="notice notice-danger k-caption sidebar-notice">{filterError}</p>}
+          </>
+        )}
         <span className="spacer" />
         <section className="glyph-info" aria-label={t("Glyph info")}>
           {one ? (
@@ -128,7 +331,57 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
                 <label><span className="k-caption muted">{t("Width")}</span><output className="metric">{fmt(one.width)}</output></label>
                 <label><span className="k-caption muted">{t("RSB")}</span><output className="metric">{fmt(one.rsb)}</output></label>
               </div>
-              <p className="k-caption muted">{t(one.category)}{one.export ? "" : ` · ${t("not exported")}`}</p>
+              <p className="k-caption muted">{t(one.category)}{one.subcategory ? ` · ${t(one.subcategory)}` : ""} · {t(one.script)}{one.export ? "" : ` · ${t("not exported")}`}</p>
+              {onSetTags && (
+                <label className="field info-field">
+                  <span className="k-caption muted">{t("Tags")}</span>
+                  <input
+                    className="text-input"
+                    value={tagsDraft}
+                    placeholder={t("tag, tag")}
+                    onChange={(e) => setTagsDraft(e.target.value)}
+                    onBlur={commitTags}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                  />
+                </label>
+              )}
+              {onSetGroups && (
+                <div className="row info-groups">
+                  <label className="field">
+                    <span className="k-caption muted">{t("Left group")}</span>
+                    <input
+                      className="text-input"
+                      value={leftDraft}
+                      onChange={(e) => setLeftDraft(e.target.value)}
+                      onBlur={commitGroups}
+                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="k-caption muted">{t("Right group")}</span>
+                    <input
+                      className="text-input"
+                      value={rightDraft}
+                      onChange={(e) => setRightDraft(e.target.value)}
+                      onBlur={commitGroups}
+                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                    />
+                  </label>
+                </div>
+              )}
+              {onSetProductionName && (
+                <label className="field info-field">
+                  <span className="k-caption muted">{t("Production name")}</span>
+                  <input
+                    className="text-input"
+                    value={prodDraft}
+                    placeholder={one.name}
+                    onChange={(e) => setProdDraft(e.target.value)}
+                    onBlur={commitProd}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                  />
+                </label>
+              )}
             </>
           ) : (
             <p className="k-caption muted">{selectedGlyphs.length > 1 ? tn(selectedGlyphs.length, "{n} glyph selected", "{n} glyphs selected") : t("Select a glyph to see its metrics.")}</p>
@@ -149,13 +402,28 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
       </aside>
       <main className="grid-area">
         <div className="grid-header">
-          <h2 className="k-subtitle">{category === "All" ? t("All glyphs") : t(category)}</h2>
+          <h2 className="k-subtitle">{activeFilter ?? (category === "All" ? t("All glyphs") : t(category))}</h2>
           <span className="k-caption muted">{tn(shown.length, "{n} glyph", "{n} glyphs")}</span>
           <span className="spacer" />
+          <div className="segmented" role="group" aria-label={t("Font view layout")}>
+            <button type="button" className={`segment${mode === "grid" ? " is-selected" : ""}`} aria-pressed={mode === "grid"} onClick={() => switchMode("grid")}>{t("Grid")}</button>
+            <button type="button" className={`segment${mode === "list" ? " is-selected" : ""}`} aria-pressed={mode === "list"} onClick={() => switchMode("list")}>{t("List")}</button>
+          </div>
+          {mode === "grid" && (
+            <label className="cell-size">
+              <span className="k-caption muted">{t("Cell size")}</span>
+              <input type="range" min={64} max={160} step={8} value={cellSize} onChange={(e) => resizeCells(Number(e.target.value))} aria-label={t("Cell size")} />
+            </label>
+          )}
           {onAddGlyphs && <button type="button" className="btn btn-secondary btn-sm" onClick={onAddGlyphs}>{t("Add Glyphs…")}</button>}
+          {onRenameGlyphs && <button type="button" className="btn btn-secondary btn-sm" onClick={onRenameGlyphs}>{t("Rename Glyphs…")}</button>}
+          {onBatch && <BatchMenu count={selection.size} onRun={onBatch} />}
         </div>
         {shown.length ? (
-          <div className="glyph-grid" role="list" onKeyDown={(e) => {
+          mode === "list" ? (
+            <GlyphListView glyphs={shown} selection={selection} onSelect={select} onOpen={onOpenGlyph} onEdit={listEdit} onSetExport={(names, on) => onSetExport?.(names, on)} dragProps={dragProps} dragName={dragName} dropName={dropName} />
+          ) : (
+          <div className="glyph-grid" role="list" style={{ "--k-cell-size": `${cellSize}px` } as React.CSSProperties} onKeyDown={(e) => {
             // Enter opens the selected glyphs in Edit View tabs.
             if (e.key === "Enter" && selection.size) {
               e.preventDefault();
@@ -163,9 +431,10 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
             }
           }}>
             {shown.map((g) => (
-              <GlyphCell key={g.name} glyph={g} font={font} selected={selection.has(g.name)} onSelect={(e) => select(g, e)} onOpen={() => onOpenGlyph(g.name)} />
+              <GlyphCell key={g.name} glyph={g} font={font} selected={selection.has(g.name)} onSelect={(e) => select(g, e)} onOpen={() => onOpenGlyph(g.name)} drag={dragProps(g.name)} dragging={dragName === g.name} drop={dropName === g.name && dragName !== g.name} />
             ))}
           </div>
+          )
         ) : (
           <div className="empty">
             <p className="k-subtitle">{t("No glyphs match “{query}”", { query })}</p>
@@ -178,6 +447,9 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
         <span className="spacer" />
         <span>{t("Master: {master}", { master: font.masters.find((m) => m.id === font.masterId)?.name ?? "" })} · {font.path ?? t("Not saved yet")}</span>
       </footer>
+      {filterDialog && onSetFilters && (
+        <SmartFilterDialog initial={filterDialog.initial} onCancel={() => setFilterDialog(null)} onSave={saveFromDialog} />
+      )}
     </div>
   );
 }

@@ -93,6 +93,8 @@ pub struct FontInfoView {
     /// Colour palettes (CSS colours `#rrggbbaa`), all the same length.
     palettes: Vec<Vec<kernest_core::color::Color>>,
     default_master_id: String,
+    /// The working glyph order; export follows it (`.notdef` always first).
+    glyph_order: Vec<String>,
     /// Design-space problems that block interpolation or export.
     warnings: Vec<String>,
     /// Number of glyphs whose masters can't be interpolated.
@@ -125,6 +127,7 @@ fn info_view(doc: &Document) -> FontInfoView {
         grid: f.info.grid,
         palettes: f.palettes.clone(),
         default_master_id: default_master(f).id.clone(),
+        glyph_order: f.glyphs.iter().map(|g| g.name.clone()).collect(),
         warnings: structure::warnings(f),
         incompatible: f
             .glyphs
@@ -259,6 +262,12 @@ pub fn remove_master(state: State<AppState>, id: String) -> CmdResult<FontInfoVi
 #[tauri::command]
 pub fn set_instances(state: State<AppState>, instances: Vec<Instance>) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_instances(f, instances))
+}
+
+/// Sets the working glyph order (Font View drag or the Font Info text); export follows it.
+#[tauri::command]
+pub fn set_glyph_order(state: State<AppState>, order: Vec<String>) -> CmdResult<FontInfoView> {
+    edit(&state, |f| kernest_core::order::set_order(f, &order))
 }
 
 #[derive(Serialize)]

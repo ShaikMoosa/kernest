@@ -3,7 +3,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
-import { backend, errorMessage, isTauri, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement } from "./lib/backend";
+import { backend, errorMessage, isTauri, type BatchOperation, type ClipGlyph, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PasteMode, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement } from "./lib/backend";
 import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, loadRecents, openExternal, pickFeaFile, pickFontToOpen, pickGlyphsSavePath, pickMetricsSource, pickSavePath, pickScript, pickSourceToImport, pickSvgFiles, rememberRecent, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu, type MenuItem } from "./components/TitleBar";
 import { SHORTCUT_ACTIONS, effectiveShortcut, matchShortcut, parseShortcut } from "./lib/shortcuts";
@@ -12,6 +12,9 @@ import { StartWindow } from "./components/StartWindow";
 import { NewFontDialog } from "./components/NewFontDialog";
 import { AddGlyphsDialog } from "./components/AddGlyphsDialog";
 import { CompositesDialog } from "./components/CompositesDialog";
+import { PasteSpecialDialog } from "./components/PasteSpecialDialog";
+import { RenameDialog } from "./components/RenameDialog";
+import { FeatureLinesDialog } from "./components/FeatureLinesDialog";
 import { FontViewScreen } from "./components/FontViewScreen";
 import { EditView, sendEditCommand } from "./components/EditView";
 import { AddIcon, CloseIcon } from "./components/Icons";
@@ -30,6 +33,8 @@ import { ScriptDialog } from "./components/ScriptDialog";
 import { PluginFilterDialog } from "./components/PluginFilterDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { language, LANGUAGES, saveLanguage, t, tn, translateMessage, type Lang } from "./lib/i18n";
+import { copyGlyphsToClipboard } from "./lib/glyphClipboard";
+import { formatGlyphNames, NAME_FORMATS, type NameFormat } from "./lib/glyphNames";
 
 const CLEAN: DocStatus = { dirty: false, canUndo: false, canRedo: false };
 
@@ -370,7 +375,9 @@ export default function App() {
 
   const onStructureChanged = useCallback((s: DocStatus) => {
     setStatus(s);
-    refreshAll(font?.masterId).catch(fail);
+    // Returned so callers that activate freshly saved data (filters) wait for the
+    // refreshed font prop before selecting it.
+    return refreshAll(font?.masterId).catch(fail);
   }, [refreshAll, font?.masterId, fail]);
 
   const showAddGlyphs = useCallback(() => {
@@ -620,6 +627,23 @@ export default function App() {
 
   const [composites, setComposites] = useState<{ initial: string } | null>(null);
 
+  // ---------- Batch rename ----------
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [featureLines, setFeatureLines] = useState<string[] | null>(null);
+
+  /** Renames glyphs and updates every reference; warns about changed feature lines. */
+  const applyRename = useCallback(async (renames: Record<string, string>) => {
+    const r = await backend.renameGlyphs(renames);
+    onStructureChanged(r.status);
+    if (r.changedFeatureLines.length) setFeatureLines(r.changedFeatureLines);
+    else setToast({ kind: "info", text: tn(Object.keys(renames).length, "Renamed {n} glyph", "Renamed {n} glyphs") });
+  }, [onStructureChanged]);
+
+  /** A single name edited in the list view goes through the same rename engine. */
+  const renameOne = useCallback((glyph: string, name: string) => {
+    applyRename({ [glyph]: name }).catch(fail);
+  }, [applyRename, fail]);
+
   /** Glyph › Locked: a locked glyph refuses edits and is skipped by filters. */
   const toggleGlyphLocked = useCallback(async (names: string[]) => {
     if (!font || names.length === 0) return;
@@ -642,6 +666,82 @@ export default function App() {
     const skipped = r.skipped.length ? ` · ${tn(r.skipped.length, "{n} skipped (no recipe, missing parts or already drawn)", "{n} skipped (no recipe, missing parts or already drawn)")}` : "";
     setToast({ kind: "info", text: r.built.length ? `${tn(r.built.length, "Built {n} composite", "Built {n} composites")}${skipped}` : t("Nothing built: no recipes, missing parts, or the glyphs already have outlines.") });
   }, [onStructureChanged]);
+
+  /** Font View › Batch: one edit over the whole selection, in a single undo step. */
+  const runBatch = useCallback(async (operation: string) => {
+    if (!font || fontSelection.length === 0) return;
+    const names = fontSelection;
+    try {
+      if (operation === "set-anchors") {
+        await setAnchors(names);
+        return;
+      }
+      if (operation === "create-composite") {
+        await createComposites(names);
+        return;
+      }
+      if (operation === "update-metrics") {
+        const r = await backend.updateMetricsFor(names);
+        onStructureChanged(r.status);
+        setToast(r.problems.length
+          ? { kind: "danger", text: tn(r.problems.length, "Metrics updated; {n} key couldn't be applied: {problems}", "Metrics updated; {n} keys couldn't be applied: {problems}", { problems: r.problems.slice(0, 3).map((p) => translateMessage(p)).join("; ") }) }
+          : { kind: "info", text: t("Metrics updated") });
+        return;
+      }
+      const r = await backend.batchPathOperation(names, font.masterId, operation as BatchOperation);
+      onStructureChanged(r.status);
+      setToast({ kind: "info", text: tn(names.length, "Applied to {n} glyph", "Applied to {n} glyphs") });
+    } catch (e) {
+      fail(e);
+    }
+  }, [font, fontSelection, setAnchors, createComposites, onStructureChanged, fail]);
+
+  // ---------- Copy & Paste Special ----------
+  const [pasteOpen, setPasteOpen] = useState(false);
+
+  /** The glyphs the copy actions act on, in font order. */
+  const targetGlyphs = useMemo(() => {
+    if (!font) return [];
+    const names = new Set(glyphTargets);
+    return font.glyphs.filter((g) => names.has(g.name));
+  }, [font, glyphTargets]);
+
+  const copyGlyphs = useCallback(async () => {
+    if (targetGlyphs.length === 0) return;
+    try {
+      const n = await copyGlyphsToClipboard(targetGlyphs.map((g) => g.name));
+      setToast({ kind: "info", text: tn(n, "Copied {n} glyph", "Copied {n} glyphs") });
+    } catch (e) {
+      fail(e);
+    }
+  }, [targetGlyphs, fail]);
+
+  const copyNames = useCallback(async (format: NameFormat) => {
+    if (targetGlyphs.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(formatGlyphNames(targetGlyphs, format));
+      setToast({ kind: "info", text: tn(targetGlyphs.length, "Copied {n} name", "Copied {n} names") });
+    } catch (e) {
+      fail(e);
+    }
+  }, [targetGlyphs, fail]);
+
+  const pasteSpecial = useCallback(async (mode: PasteMode, glyphs: ClipGlyph[]) => {
+    const r = await backend.pasteSpecial(mode, glyphTargets, glyphs);
+    setPasteOpen(false);
+    onStructureChanged(r.status);
+    setToast({ kind: "info", text: tn(glyphs.length, "Pasted {n} glyph", "Pasted {n} glyphs") });
+  }, [glyphTargets, onStructureChanged]);
+
+  /** Font View drag (or Font Info text): a new working glyph order, in one undo step. */
+  const reorderGlyphs = useCallback(async (order: string[]) => {
+    try {
+      const info = await backend.setGlyphOrder(order);
+      onStructureChanged(info.status);
+    } catch (e) {
+      fail(e);
+    }
+  }, [onStructureChanged, fail]);
 
   const undoRedo = useCallback(async (redo: boolean) => {
     if (!font) return;
@@ -771,6 +871,9 @@ export default function App() {
         { label: t("Copy"), shortcut: "Ctrl+C", onSelect: inGlyph ? () => sendEditCommand("copy") : undefined },
         { label: t("Paste"), shortcut: "Ctrl+V", onSelect: inGlyph ? () => sendEditCommand("paste") : undefined },
         { label: t("Paste SVG…"), onSelect: inGlyph ? pasteSvg : undefined },
+        { label: t("Copy Glyphs"), onSelect: font && glyphTargets.length ? copyGlyphs : undefined, separatorBefore: true },
+        { label: t("Copy Glyph Names"), submenu: NAME_FORMATS.map((f) => ({ label: t(f.label), onSelect: font && glyphTargets.length ? () => copyNames(f.id) : undefined })) },
+        { label: t("Paste Special…"), onSelect: font ? () => setPasteOpen(true) : undefined },
         { label: t("Edit Background"), shortcut: shortcutText("edit-background"), onSelect: inGlyph ? () => sendEditCommand("edit-background") : undefined, separatorBefore: true },
         { label: t("Selection to Background"), shortcut: shortcutText("selection-to-background"), onSelect: inGlyph ? () => sendEditCommand("to-background") : undefined },
         { label: t("Add to Background"), shortcut: shortcutText("add-to-background"), onSelect: inGlyph ? () => sendEditCommand("add-to-background") : undefined },
@@ -783,6 +886,7 @@ export default function App() {
       items: [
         { label: t("Add Glyphs…"), shortcut: shortcutText("add-glyphs"), onSelect: font ? showAddGlyphs : undefined },
         { label: glyphTargets.length > 1 ? tn(glyphTargets.length, "Remove {n} Glyph", "Remove {n} Glyphs") : t("Remove Glyph"), shortcut: shortcutText("remove-glyph"), onSelect: font && glyphTargets.length ? () => removeGlyphs(glyphTargets) : undefined },
+        { label: t("Rename Glyphs…"), onSelect: font ? () => setRenameOpen(true) : undefined },
         { label: t("Add Component…"), shortcut: shortcutText("add-component"), onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
         { label: t("Set Anchors"), shortcut: shortcutText("set-anchors"), onSelect: font && glyphTargets.length ? () => setAnchors(glyphTargets) : undefined, separatorBefore: true },
         { label: t("Create Composites…"), onSelect: font ? () => setComposites({ initial: glyphTargets.join(" ") }) : undefined },
@@ -897,7 +1001,7 @@ export default function App() {
             <button className="btn btn-secondary" onClick={openInfo} title={t("Font Info (Ctrl+I)")}>{t("Font Info")}</button>
             <button className="btn btn-primary" onClick={() => setExporting(true)} title={t("Export fonts (Ctrl+E)")}>{t("Export")}</button>
           </div>
-          {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} onSelectionChange={setFontSelection} onAddGlyphs={showAddGlyphs} onSetExport={(names, on) => backend.setGlyphExport(names, on).then(onStructureChanged, fail)} />}
+          {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} onSelectionChange={setFontSelection} onAddGlyphs={showAddGlyphs} onSetExport={(names, on) => backend.setGlyphExport(names, on).then(onStructureChanged, fail)} onSetFilters={(filters) => backend.setFilters(filters).then(onStructureChanged, fail)} onSetTags={(glyph, tags) => backend.setGlyphTags(glyph, tags).then(onStructureChanged, fail)} onSetProductionName={(glyph, name) => backend.setProductionName(glyph, name).then(onStructureChanged, fail)} onSetGroups={(glyph, left, right) => backend.setGlyphGroups(glyph, left, right).then(onStructureChanged, fail)} onRenameGlyphs={() => setRenameOpen(true)} onBatch={runBatch} onReorder={reorderGlyphs} onRenameGlyph={renameOne} onSetMetric={(glyph, metric, value) => backend.setMetric(glyph, font.masterId, metric, value).then((r) => onStructureChanged(r.status), fail)} onAddMissing={(language) => backend.addMissing(language).then((r) => onStructureChanged(r.status), fail)} />}
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
@@ -1001,6 +1105,18 @@ export default function App() {
       {composites && (
         <CompositesDialog initial={composites.initial} onCancel={() => setComposites(null)} onCreate={createComposites} />
       )}
+      {renameOpen && font && (
+        <RenameDialog
+          allNames={font.glyphs.map((g) => g.name)}
+          selection={fontSelection}
+          onCancel={() => setRenameOpen(false)}
+          onRename={applyRename}
+        />
+      )}
+      {pasteOpen && font && (
+        <PasteSpecialDialog targets={glyphTargets} onCancel={() => setPasteOpen(false)} onPaste={pasteSpecial} />
+      )}
+      {featureLines && <FeatureLinesDialog lines={featureLines} onClose={() => setFeatureLines(null)} />}
       {scriptDialog && (
         <ScriptDialog
           mode={scriptDialog.mode}

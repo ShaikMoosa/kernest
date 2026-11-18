@@ -106,6 +106,7 @@ fn interpolated_font(
         notes: String::new(),
         feature_settings: Default::default(),
         palettes: Vec::new(),
+        filters: Vec::new(),
     };
     (scratch, bad)
 }

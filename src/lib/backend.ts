@@ -37,10 +37,17 @@ export interface GlyphSummary {
   unicode: string | null;
   character: string | null;
   category: string;
+  subcategory: string;
+  script: string;
   export: boolean;
   width: number;
   lsb: number | null;
   rsb: number | null;
+  leftGroup: string | null;
+  rightGroup: string | null;
+  tags: string[];
+  /** The name this glyph exports under when production names are used. */
+  productionName?: string;
   /** SVG path data in font units, y up. Empty when the glyph has no outlines. */
   svg: string;
   /** False when this glyph's masters can't be interpolated. */
@@ -81,7 +88,43 @@ export interface FontView {
   glyphs: GlyphSummary[];
   /** The default colour palette (CSS colours), for drawing colour glyphs. */
   palette?: string[];
+  /** Saved smart and list filters for the Font View sidebar. */
+  filters: GlyphFilter[];
   status: DocStatus;
+}
+
+/** One smart-filter condition. Boolean rules match when the property equals `value`. */
+export type FilterRule =
+  | { type: "category"; value: string }
+  | { type: "subcategory"; value: string }
+  | { type: "case"; value: string }
+  | { type: "script"; value: string }
+  | { type: "hasComponents"; value: boolean }
+  | { type: "hasAnchors"; value: boolean }
+  | { type: "hasUnicode"; value: boolean }
+  | { type: "compatible"; value: boolean }
+  | { type: "export"; value: boolean }
+  | { type: "metricsKeysOutOfSync"; value: boolean }
+  | { type: "colorGlyph"; value: boolean }
+  | { type: "smartGlyph"; value: boolean }
+  | { type: "nameContains"; value: string }
+  | { type: "nameStarts"; value: string }
+  | { type: "nameEnds"; value: string }
+  | { type: "tagsContain"; value: string };
+
+/** All/Any over rules and nested groups. An empty group matches every glyph. */
+export interface FilterRuleGroup {
+  all: boolean;
+  rules: FilterRule[];
+  groups: FilterRuleGroup[];
+}
+
+/** A saved Font View filter: smart filters use `rules`, list filters use `glyphs`. */
+export interface GlyphFilter {
+  name: string;
+  kind: "smart" | "list";
+  rules?: FilterRuleGroup;
+  glyphs?: string[];
 }
 
 /** A component reference: base glyph name and affine transform [xx, xy, yx, yy, dx, dy]. */
@@ -306,6 +349,8 @@ export interface FontInfo {
   /** Colour palettes (CSS colours #rrggbbaa); every palette has the same length. */
   palettes: string[][];
   defaultMasterId: string;
+  /** The working glyph order; export follows it (.notdef always first). */
+  glyphOrder: string[];
   /** Design-space problems that block interpolation or export. */
   warnings: string[];
   /** Number of glyphs whose masters can't be interpolated. */
@@ -436,6 +481,23 @@ export interface AddGlyphsResult {
   status: DocStatus;
 }
 
+export interface RenameResult {
+  status: DocStatus;
+  /** Feature-code lines the rename rewrote, shown as a warning. */
+  changedFeatureLines: string[];
+}
+
+export interface LanguageCoverage {
+  language: string;
+  present: number;
+  total: number;
+}
+
+export interface MissingGlyph {
+  name: string;
+  unicode: string;
+}
+
 /** One anchor's move, in font units. */
 export interface AnchorMove {
   name: string;
@@ -534,6 +596,8 @@ export interface Backend {
   updateMaster(id: string, name: string, location: Location, metrics: Metrics): Promise<FontInfo>;
   removeMaster(id: string): Promise<FontInfo>;
   setInstances(instances: Instance[]): Promise<FontInfo>;
+  /** Reorders the working glyphs; export follows the new order. */
+  setGlyphOrder(order: string[]): Promise<FontInfo>;
   compatibility(): Promise<{ glyph: string; issues: string[] }[]>;
   /** Compiles a variable font and/or static fonts (TrueType) into `outDir`. */
   exportFont(variable: boolean, statics: boolean, outDir: string, options?: ExportFormats): Promise<ExportReport>;
@@ -543,6 +607,14 @@ export interface Backend {
   setMetricsKey(glyph: string, masterId: string, metric: MetricName, key: string | null): Promise<LayerView>;
   /** Glyph › Update Metrics: applies every metrics key in the font. */
   updateMetrics(): Promise<{ problems: string[]; status: DocStatus }>;
+  /** Font View › Batch: applies a path operation to every selected glyph (one undo step). */
+  batchPathOperation(glyphs: string[], masterId: string, operation: BatchOperation): Promise<{ status: DocStatus }>;
+  /** Font View › Batch › Update Metrics: applies metrics keys only to the selected glyphs. */
+  updateMetricsFor(glyphs: string[]): Promise<{ problems: string[]; status: DocStatus }>;
+  /** The named glyphs with every master's layer, for the Kernest clipboard. */
+  copyGlyphs(names: string[]): Promise<ClipGlyph[]>;
+  /** Edit › Paste Special: same-named glyphs, the selection in order, or as components. */
+  pasteSpecial(mode: PasteMode, targets: string[], glyphs: ClipGlyph[]): Promise<{ status: DocStatus }>;
   /** Opens a .glyphs, .glyphspackage, .ufo or .designspace source as a new, unsaved font. */
   importFont(path: string): Promise<ImportResult>;
   /** Writes the open font as a Glyphs 3 .glyphs source (a copy out). Returns the path written. */
@@ -561,6 +633,22 @@ export interface Backend {
   removeGlyphs(names: string[]): Promise<DocStatus>;
   /** Marks glyphs as exported or not (unexported glyphs are left out of fonts). */
   setGlyphExport(names: string[], exportGlyph: boolean): Promise<DocStatus>;
+  /** Replaces one glyph's tags (trimmed, deduped). One undoable step. */
+  setGlyphTags(glyph: string, tags: string[]): Promise<DocStatus>;
+  /** Sets a glyph's production name (empty clears it). One undoable step. */
+  setProductionName(glyph: string, name: string): Promise<DocStatus>;
+  /** Replaces the saved smart and list filters. One undoable step. */
+  setFilters(filters: GlyphFilter[]): Promise<DocStatus>;
+  /** The glyph names a filter matches; read-only preview for the rule builder. */
+  evaluateFilter(filter: GlyphFilter): Promise<string[]>;
+  /** Renames glyphs from an old→new map and updates every reference. One undoable step. */
+  renameGlyphs(renames: Record<string, string>): Promise<RenameResult>;
+  /** Per language: how many of its code points the font encodes, out of how many. */
+  languageCoverage(): Promise<LanguageCoverage[]>;
+  /** The glyphs a language still needs; read-only, for the sidebar's Missing list. */
+  missingGlyphs(language: string): Promise<MissingGlyph[]>;
+  /** Adds every glyph a language is missing, as one undoable step. */
+  addMissing(language: string): Promise<AddGlyphsResult>;
   /** Correct Path Direction or Add Extremes on one layer (Add Extremes: only `paths`, if given). */
   pathOperation(glyph: string, masterId: string, operation: PathOperation, paths?: number[]): Promise<LayerView>;
   /** Node-context-menu path edits; `warning` when only the current master could change. */
@@ -620,6 +708,20 @@ export interface Backend {
 }
 
 export type PathOperation = "correct-direction" | "add-extremes" | "remove-overlap";
+export type BatchOperation =
+  | "correct-direction"
+  | "remove-overlap"
+  | "tidy-up"
+  | "round-coordinates"
+  | "decompose";
+export type PasteMode = "same-name" | "selection" | "components";
+/** A glyph on the Kernest clipboard, as the engine serialises it (all masters' layers). */
+export interface ClipGlyph {
+  name: string;
+  unicodes?: number[];
+  layers: unknown[];
+  [key: string]: unknown;
+}
 
 export type PathEditOperation =
   | "knife"
@@ -696,6 +798,8 @@ export interface ExportFormats {
   applyMetricsKeys: boolean;
   /** Add TrueType hinting to TTF and WOFF2 files. */
   autohint: boolean;
+  /** Name glyphs in the compiled fonts by their production names. */
+  productionNames: boolean;
 }
 
 /** Choices for exporting editable UFO sources (File › Export › UFO…). */
@@ -845,11 +949,17 @@ const tauriBackend: Backend = {
   updateMaster: (id, name, location, metrics) => invoke("update_master", { id, name, location, metrics }),
   removeMaster: (id) => invoke("remove_master", { id }),
   setInstances: (instances) => invoke("set_instances", { instances }),
+  setGlyphOrder: (order) => invoke("set_glyph_order", { order }),
   compatibility: () => invoke("compatibility"),
   exportFont: (variable, statics, outDir, options) => invoke("export_font", { variable, statics, outDir, ...options }),
   exportUfo: (outDir, options) => invoke("export_ufo", { outDir, ...options }),
   setMetricsKey: (glyph, masterId, metric, key) => invoke("set_metrics_key", { glyph, masterId, metric, key }),
   updateMetrics: () => invoke("update_metrics"),
+  batchPathOperation: (glyphs, masterId, operation) =>
+    invoke("batch_path_operation", { glyphs, masterId, operation }),
+  updateMetricsFor: (glyphs) => invoke("update_metrics_for", { glyphs }),
+  copyGlyphs: (names) => invoke("copy_glyphs", { names }),
+  pasteSpecial: (mode, targets, glyphs) => invoke("paste_special", { mode, targets, glyphs }),
   importFont: (path) => invoke("import_font", { path }),
   saveGlyphs: (path) => invoke("save_glyphs", { path }),
   importSvgText: (glyph, masterId, svg, placement) => invoke("import_svg_text", { glyph, masterId, svg, placement }),
@@ -859,6 +969,14 @@ const tauriBackend: Backend = {
   addGlyphs: (text, glyphSets) => invoke("add_glyphs", { text, glyphSets }),
   removeGlyphs: (names) => invoke("remove_glyphs", { names }),
   setGlyphExport: (names, exportGlyph) => invoke("set_glyph_export", { names, export: exportGlyph }),
+  setGlyphTags: (glyph, tags) => invoke("set_glyph_tags", { glyph, tags }),
+  setProductionName: (glyph, name) => invoke("set_production_name", { glyph, name }),
+  setFilters: (filters) => invoke("set_filters", { filters }),
+  evaluateFilter: (filter) => invoke("evaluate_filter", { filter }),
+  renameGlyphs: (renames) => invoke("rename_glyphs", { renames }),
+  languageCoverage: () => invoke("language_coverage"),
+  missingGlyphs: (language) => invoke("missing_glyphs", { language }),
+  addMissing: (language) => invoke("add_missing", { language }),
   pathOperation: (glyph, masterId, operation, paths) => invoke("path_operation", { glyph, masterId, operation, paths }),
   pathEdit: (glyph, masterId, operation, opts) => invoke("path_edit", { glyph, masterId, operation, paths: opts?.paths, nodes: opts?.nodes, points: opts?.points }),
   setPathLocked: (glyph, masterId, path, locked) => invoke("set_path_locked", { glyph, masterId, path, locked }),
@@ -1038,7 +1156,8 @@ function mockFontView(d: MockDoc, masterId?: string): FontView {
     masterId: master.id,
     metrics: master.metrics,
     status: status(d),
-    glyphs: d.glyphs.map((g) => ({ name: g.name, unicode: g.unicode, character: g.character, category: g.category, export: true, width: g.width, ...sb(d, g), svg: pathsToSvg(resolved(d, g)), compatible: true })),
+    filters: [],
+    glyphs: d.glyphs.map((g) => ({ name: g.name, unicode: g.unicode, character: g.character, category: g.category, subcategory: "", script: "Latin", export: true, width: g.width, ...sb(d, g), leftGroup: null, rightGroup: null, tags: [], svg: pathsToSvg(resolved(d, g)), compatible: true })),
   };
 }
 
@@ -1151,7 +1270,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, grid: d.grid ?? null, palettes: [], defaultMasterId: def.id, warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, grid: d.grid ?? null, palettes: [], defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -1177,7 +1296,28 @@ function checkLocation(d: MockDoc, loc: Location): Location {
 }
 
 const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
-const MOCK_SETS: Record<string, number[]> = { "latin-basic": range(0x20, 0x7e), "latin-1": range(0xa0, 0xff), cyrillic: range(0x410, 0x44f) };
+const MOCK_SETS: Record<string, number[]> = {
+  "latin-basic": range(0x20, 0x7e),
+  "latin-1": range(0xa0, 0xff).filter((cp) => cp !== 0xad),
+  punctuation: [0x2013, 0x2014, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2026, 0x20ac],
+  cyrillic: range(0x410, 0x44f),
+  "latin-ext-a": range(0x100, 0x17f),
+  "latin-ext-additional": range(0x1e00, 0x1eff),
+  greek: range(0x370, 0x3ff).filter((cp) => ![0x378, 0x379, 0x380, 0x381, 0x382, 0x383, 0x38b, 0x38d, 0x3a2].includes(cp)),
+  "cyrillic-extended": [...range(0x400, 0x4ff), ...range(0x500, 0x52f)],
+  arabic: [...range(0x600, 0x6ff), ...range(0xfb50, 0xfdff), ...range(0xfe70, 0xfeff)],
+  hebrew: range(0x590, 0x5ff),
+};
+
+const MOCK_LANGUAGES: [string, string[]][] = [
+  ["Latin", ["latin-basic", "latin-1", "latin-ext-a", "latin-ext-additional"]],
+  ["Greek", ["greek"]],
+  ["Cyrillic", ["cyrillic", "cyrillic-extended"]],
+  ["Arabic", ["arabic"]],
+  ["Hebrew", ["hebrew"]],
+];
+
+const hexCp = (cp: number) => cp.toString(16).toUpperCase().padStart(4, "0");
 
 const mockSettings: Settings = { pluginEnabled: {}, shortcuts: {}, pythonPath: null };
 const mockSettingsView = (): Settings => ({
@@ -1190,8 +1330,15 @@ const mockBackend: Backend = {
   async glyphSets() {
     return [
       { id: "latin-basic", name: "Latin Basic (ASCII)", count: 95 },
-      { id: "latin-1", name: "Latin-1 Supplement", count: 96 },
+      { id: "latin-1", name: "Latin-1 Supplement", count: 95 },
+      { id: "punctuation", name: "General Punctuation", count: 9 },
       { id: "cyrillic", name: "Cyrillic Basic", count: 64 },
+      { id: "latin-ext-a", name: "Latin Extended-A", count: 128 },
+      { id: "latin-ext-additional", name: "Latin Extended Additional", count: 256 },
+      { id: "greek", name: "Greek", count: 135 },
+      { id: "cyrillic-extended", name: "Cyrillic Extended", count: 298 },
+      { id: "arabic", name: "Arabic", count: 972 },
+      { id: "hebrew", name: "Hebrew", count: 57 },
     ];
   },
   async newFont(familyName, sets) {
@@ -1337,6 +1484,9 @@ const mockBackend: Backend = {
     });
     return editMeta(d, (m) => { m.instances = clean; });
   },
+  async setGlyphOrder() {
+    throw "Glyph order needs the desktop app (npm run tauri dev).";
+  },
   async exportFont() {
     throw "Exporting fonts needs the desktop app (npm run tauri dev).";
   },
@@ -1348,6 +1498,18 @@ const mockBackend: Backend = {
   },
   async updateMetrics() {
     throw "Metrics keys need the desktop app (npm run tauri dev).";
+  },
+  async batchPathOperation() {
+    throw "Batch edits need the desktop app (npm run tauri dev).";
+  },
+  async updateMetricsFor() {
+    throw "Metrics keys need the desktop app (npm run tauri dev).";
+  },
+  async copyGlyphs() {
+    throw "Copying glyphs needs the desktop app (npm run tauri dev).";
+  },
+  async pasteSpecial() {
+    throw "Paste Special needs the desktop app (npm run tauri dev).";
   },
   async importFont() {
     throw "Importing fonts needs the desktop app (npm run tauri dev).";
@@ -1375,6 +1537,40 @@ const mockBackend: Backend = {
   },
   async setGlyphExport() {
     throw "Changing export settings needs the desktop app (npm run tauri dev).";
+  },
+  async setGlyphTags() {
+    throw "Tags need the desktop app (npm run tauri dev).";
+  },
+  async setProductionName() {
+    throw "Production names need the desktop app (npm run tauri dev).";
+  },
+  async setFilters() {
+    throw "Saving filters needs the desktop app (npm run tauri dev).";
+  },
+  async evaluateFilter() {
+    throw "Filters need the desktop app (npm run tauri dev).";
+  },
+  async renameGlyphs() {
+    throw "Renaming needs the desktop app (npm run tauri dev).";
+  },
+  async languageCoverage() {
+    const glyphs = mock?.glyphs ?? [];
+    return MOCK_LANGUAGES.map(([language, sets]) => {
+      const cps = [...new Set(sets.flatMap((s) => MOCK_SETS[s] ?? []))];
+      const present = cps.filter((cp) => glyphs.some((g) => g.unicode === hexCp(cp))).length;
+      return { language, present, total: cps.length };
+    });
+  },
+  async missingGlyphs(language) {
+    const glyphs = mock?.glyphs ?? [];
+    const sets = MOCK_LANGUAGES.find(([l]) => l === language)?.[1] ?? [];
+    const cps = [...new Set(sets.flatMap((s) => MOCK_SETS[s] ?? []))];
+    return cps
+      .filter((cp) => !glyphs.some((g) => g.unicode === hexCp(cp)))
+      .map((cp) => ({ name: `uni${hexCp(cp)}`, unicode: hexCp(cp) }));
+  },
+  async addMissing() {
+    throw "Adding glyphs needs the desktop app (npm run tauri dev).";
   },
   async pathOperation() {
     throw "Path operations need the desktop app (npm run tauri dev).";

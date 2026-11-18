@@ -112,7 +112,8 @@ fn designspace_round_trip() {
 
 #[test]
 fn ufo_export_round_trip() {
-    let src = two_masters();
+    let mut src = two_masters();
+    src.glyph_mut("H").unwrap().production_name = Some("Hprod".into());
     let dir = tempfile::tempdir().unwrap();
     let opts = kernest_export::UfoExportOptions {
         masters: vec![],
@@ -133,6 +134,7 @@ fn ufo_export_round_trip() {
         let got = f.glyph(&g.name).unwrap();
         assert_eq!(got.layers, g.layers, "{}", g.name);
         assert_eq!(got.unicodes, g.unicodes, "{}", g.name);
+        assert_eq!(got.production_name, g.production_name, "{}", g.name);
     }
     let mut want = src.kerning.clone();
     for v in want.values_mut() {
@@ -184,6 +186,7 @@ fn glyphs_round_trip() {
         .unwrap()
         .metrics_keys
         .right = Some("=|T+10".into());
+    src.glyph_mut("H").unwrap().production_name = Some("Hprod".into());
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("RoundTrip.glyphs");
@@ -226,6 +229,7 @@ fn glyphs_round_trip() {
             "{}",
             g.name
         );
+        assert_eq!(got.production_name, g.production_name, "{}", g.name);
         assert_eq!(got.layers, g.layers, "{}", g.name);
     }
     let mut want = src.kerning.clone();
@@ -850,6 +854,7 @@ fn export_static(src: &Font, dir: &Path, fmt: &str) -> std::path::PathBuf {
         remove_overlaps: false,
         apply_metrics_keys: true,
         autohint: false,
+        production_names: false,
         out_dir: dir.to_path_buf(),
     };
     let r = kernest_export::export(src, &opts).unwrap();

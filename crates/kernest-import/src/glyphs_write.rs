@@ -298,6 +298,9 @@ fn glyph(font: &Font, g: &Glyph) -> String {
     if let Some(k) = &g.right_group {
         let _ = writeln!(s, "kernRight = {};", q(k));
     }
+    if let Some(p) = &g.production_name {
+        let _ = writeln!(s, "productionName = {};", q(p));
+    }
     if !g.smart_axes.is_empty() {
         let parts: Vec<String> = g
             .smart_axes
