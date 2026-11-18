@@ -22,6 +22,7 @@ pub async fn export_font(
     remove_overlaps: Option<bool>,
     apply_metrics_keys: Option<bool>,
     autohint: Option<bool>,
+    production_names: Option<bool>,
 ) -> CmdResult<ExportReport> {
     if !variable && !statics {
         return Err("Choose at least one kind of font to export.".into());
@@ -53,6 +54,7 @@ pub async fn export_font(
                 remove_overlaps: remove_overlaps.unwrap_or(false),
                 apply_metrics_keys: apply_metrics_keys.unwrap_or(true),
                 autohint: autohint.unwrap_or(false),
+                production_names: production_names.unwrap_or(false),
                 out_dir,
             },
         )

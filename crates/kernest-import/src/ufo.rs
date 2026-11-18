@@ -395,6 +395,16 @@ fn build(
     let skip: HashSet<String> = lib_strings(def, "public.skipExportGlyphs")
         .into_iter()
         .collect();
+    let ps_names: HashMap<String, String> = def
+        .lib
+        .get("public.postscriptNames")
+        .and_then(|v| v.as_dictionary())
+        .map(|d| {
+            d.iter()
+                .filter_map(|(k, v)| v.as_string().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
 
     let mut open_points = 0;
     let mut glyphs: Vec<Glyph> = names
@@ -410,6 +420,7 @@ fn build(
             );
             g.export = !skip.contains(n);
             g.note = src.note.clone().filter(|s| !s.is_empty());
+            g.production_name = ps_names.get(n).cloned();
             for (k, &i) in order.iter().enumerate() {
                 if let Some(ug) = sources[i].2.get_glyph(n) {
                     g.layers.push(layer(&master_id(k), ug, &mut open_points));
@@ -492,6 +503,7 @@ fn build(
         notes: String::new(),
         feature_settings: Default::default(),
         palettes: Vec::new(),
+        filters: Vec::new(),
     }
 }
 

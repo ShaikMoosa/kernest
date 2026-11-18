@@ -78,6 +78,36 @@ pub fn validate(key: &str) -> Result<(), String> {
     parse(key).map(|_| ())
 }
 
+/// Rewrites the glyph a metrics key follows when that glyph is renamed, keeping
+/// the opposite-side mark and any arithmetic. `None` when the key is a fixed value
+/// or follows a glyph that is not being renamed.
+pub fn rename_in_key(
+    key: &str,
+    renames: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    let parsed = parse(key).ok()?;
+    let (name, opposite) = match &parsed.source {
+        Source::Same(n) => (n, false),
+        Source::Opposite(n) => (n, true),
+        Source::Value(_) => return None,
+    };
+    let new = renames.get(name)?;
+    let mut out = String::from("=");
+    if opposite {
+        out.push('|');
+    }
+    out.push_str(new);
+    if let Some((op, v)) = parsed.op {
+        out.push(op);
+        if v.fract() == 0.0 && v.abs() < 1e15 {
+            out.push_str(&format!("{}", v as i64));
+        } else {
+            out.push_str(&format!("{v}"));
+        }
+    }
+    Some(out)
+}
+
 /// The other glyphs a layer's keys depend on.
 fn references(layer: &Layer) -> Vec<String> {
     let k = &layer.metrics_keys;
@@ -180,14 +210,24 @@ pub fn apply_layer(font: &Font, glyph: &str, key: &str) -> Result<Option<Layer>,
 /// Returns the updated font and the problems found (missing glyphs, loops, bad keys);
 /// keys with problems are skipped.
 pub fn apply_all(font: &Font) -> (Font, Vec<String>) {
+    apply_some(font, None)
+}
+
+/// Like [`apply_all`] but only the glyphs in `only` are updated (`None` means all).
+/// Referenced glyphs are still visited first so a key reads up-to-date values, but
+/// their own keys are left alone when they are outside the selection.
+pub fn apply_some(font: &Font, only: Option<&[String]>) -> (Font, Vec<String>) {
     let mut f = font.clone();
     let mut problems = Vec::new();
     // Glyphs with keys, ordered so that references come before the glyphs using them.
     // Locked glyphs keep their metrics as they are.
+    let in_scope = |name: &str| only.is_none_or(|o| o.iter().any(|n| n == name));
     let with_keys: Vec<String> = font
         .glyphs
         .iter()
-        .filter(|g| !g.locked && g.layers.iter().any(|l| !l.metrics_keys.is_empty()))
+        .filter(|g| {
+            !g.locked && in_scope(&g.name) && g.layers.iter().any(|l| !l.metrics_keys.is_empty())
+        })
         .map(|g| g.name.clone())
         .collect();
     let mut order: Vec<String> = Vec::new();
@@ -266,6 +306,18 @@ mod tests {
         assert!(parse("=|").is_err());
     }
 
+    #[test]
+    fn renames_the_glyph_a_key_follows() {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("H".to_string(), "Hh".to_string());
+        assert_eq!(rename_in_key("=H", &m).as_deref(), Some("=Hh"));
+        assert_eq!(rename_in_key("=|H+10", &m).as_deref(), Some("=|Hh+10"));
+        assert_eq!(rename_in_key("=H*1.5", &m).as_deref(), Some("=Hh*1.5"));
+        // Fixed values and unrelated glyphs are left alone.
+        assert_eq!(rename_in_key("=40", &m), None);
+        assert_eq!(rename_in_key("=o", &m), None);
+    }
+
     fn sb(f: &Font, g: &str) -> (f64, f64) {
         sidebearings(f, f.glyph(g).unwrap().layer("m01").unwrap()).unwrap()
     }
@@ -304,6 +356,19 @@ mod tests {
         let (f3, _) = apply_all(&f);
         let (n_l, n_r) = sb(&f3, "n");
         assert!((n_l - h_r).abs() < 1e-9 && (n_r - 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn applies_only_the_selection() {
+        let mut f = sample_font();
+        f.glyph_mut("n").unwrap().layers[0].metrics_keys.left = Some("=H".into());
+        f.glyph_mut("l").unwrap().layers[0].metrics_keys.left = Some("=n".into());
+        let n_before = sb(&f, "n");
+        let (f2, problems) = apply_some(&f, Some(&["l".into()]));
+        assert!(problems.is_empty(), "{problems:?}");
+        // n is outside the selection, so its own key is not applied.
+        assert_eq!(sb(&f2, "n"), n_before);
+        assert!((sb(&f2, "l").0 - n_before.0).abs() < 1e-9);
     }
 
     #[test]

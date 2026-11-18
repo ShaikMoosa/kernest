@@ -44,6 +44,8 @@ pub struct ExportOptions {
     /// Add TrueType hinting instructions (TTF and WOFF2; OTF is unaffected), with the
     /// font's hinting settings.
     pub autohint: bool,
+    /// Name glyphs in the compiled fonts by their production names.
+    pub production_names: bool,
     pub out_dir: PathBuf,
 }
 
@@ -59,6 +61,7 @@ impl ExportOptions {
             remove_overlaps: false,
             apply_metrics_keys: true,
             autohint: false,
+            production_names: false,
             out_dir: out_dir.into(),
         }
     }
@@ -130,10 +133,14 @@ pub fn preview_ttf(
             master_source(font, m, &m.name, true)
         }
     };
-    let mut order: Vec<String> = src.layers.iter().map(|(n, _)| n.clone()).collect();
-    if !order.iter().any(|n| n == ".notdef") {
-        order.insert(0, ".notdef".into());
-    }
+    // Mirrors to_ufo: .notdef is glyph id 0 even if the source order lists it later.
+    let mut order: Vec<String> = vec![".notdef".into()];
+    order.extend(
+        src.layers
+            .iter()
+            .filter(|(n, _)| n != ".notdef")
+            .map(|(n, _)| n.clone()),
+    );
     let dir =
         tempfile::tempdir().map_err(|e| format!("could not create a temporary folder: {e}"))?;
     let path = dir.path().join("preview.ufo");
@@ -305,7 +312,12 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     // Smart components become outlines; the compiler only sees plain shapes.
     let flat = kernest_core::smart::flatten_font(font);
     // Components sit where their anchors say, so exported positions are current.
-    let aligned = kernest_core::anchors::align_all(&flat);
+    let mut aligned = kernest_core::anchors::align_all(&flat);
+    if !opts.production_names {
+        for g in &mut aligned.glyphs {
+            g.production_name = None;
+        }
+    }
     let font = &aligned;
     let keyed;
     let font = if opts.apply_metrics_keys {
@@ -327,6 +339,18 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                 return bytes;
             }
             let with = colr::glyph_ids(ids_from)
+                .map(|mut ids| {
+                    // Colour glyphs are looked up by source name; with production
+                    // names the compiled font carries those instead.
+                    for g in &font.glyphs {
+                        if let Some(p) = &g.production_name {
+                            if let Some(&id) = ids.get(p) {
+                                ids.insert(g.name.clone(), id);
+                            }
+                        }
+                    }
+                    ids
+                })
                 .and_then(|ids| colr::tables(&colored, &font.palettes, &ids))
                 .and_then(|(c, p)| colr::add_tables(&bytes, &c, &p));
             match with {
@@ -664,6 +688,7 @@ pub fn export_ufo(
     opts: &UfoExportOptions,
 ) -> Result<UfoExportReport, String> {
     use std::collections::HashSet;
+    std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
     let mut work = if opts.decompose_smart {
         kernest_core::smart::flatten_font(font)
     } else {
@@ -913,6 +938,71 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn production_names_reach_ufo_and_compiled_fonts() {
+        let mut f = two_masters();
+        f.glyph_mut("H").unwrap().production_name = Some("Hprod".into());
+        // UFO sources always carry the map, under the source names.
+        let dir = tempfile::tempdir().unwrap();
+        export_ufo(
+            &f,
+            dir.path(),
+            &UfoExportOptions {
+                masters: vec![],
+                decompose_smart: false,
+                color_layers: false,
+            },
+        )
+        .unwrap();
+        let ufo = norad::Font::load(dir.path().join("master0.ufo")).unwrap();
+        let map = ufo
+            .lib
+            .get("public.postscriptNames")
+            .and_then(|v| v.as_dictionary())
+            .expect("postscriptNames map");
+        assert_eq!(map.get("H").and_then(|v| v.as_string()), Some("Hprod"));
+        assert!(ufo.get_glyph("H").is_some());
+        assert!(ufo.get_glyph("Hprod").is_none());
+
+        let post_names = |bytes: &[u8]| -> Vec<String> {
+            let font = FontRef::new(bytes).unwrap();
+            let post = font.post().unwrap();
+            (0..font.maxp().unwrap().num_glyphs())
+                .map(|g| {
+                    post.glyph_name(write_fonts::types::GlyphId16::new(g))
+                        .unwrap()
+                        .to_string()
+                })
+                .collect()
+        };
+        // Compiled fonts (variable TTF/OTF plus one static TTF/OTF per master):
+        // the option decides which names the post table carries.
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(true, true, out.path());
+        opts.otf = true;
+        let plain = export(&f, &opts).unwrap();
+        assert!(plain.problems.is_empty(), "{:?}", plain.problems);
+        assert_eq!(plain.files.len(), 6);
+        for file in &plain.files {
+            let names = post_names(&std::fs::read(&file.path).unwrap());
+            assert!(names.contains(&"H".to_string()), "{}: {names:?}", file.path);
+            assert!(!names.contains(&"Hprod".to_string()), "{}", file.path);
+        }
+        opts.production_names = true;
+        let prod = export(&f, &opts).unwrap();
+        assert!(prod.problems.is_empty(), "{:?}", prod.problems);
+        assert_eq!(prod.files.len(), plain.files.len());
+        for file in &prod.files {
+            let names = post_names(&std::fs::read(&file.path).unwrap());
+            assert!(
+                names.contains(&"Hprod".to_string()),
+                "{}: {names:?}",
+                file.path
+            );
+            assert!(!names.contains(&"H".to_string()), "{}", file.path);
+        }
+    }
+
+    #[test]
     fn file_stems() {
         assert_eq!(file_stem("Kernest Sans"), "KernestSans");
         assert_eq!(file_stem("Semi Bold"), "SemiBold");
@@ -932,6 +1022,62 @@ pub(crate) mod tests {
         assert_eq!(advance(&bytes, 'H'), 680);
         assert!(f.fvar().is_err(), "static fonts have no fvar");
         assert!(f.gpos().is_ok(), "kerning is compiled into GPOS");
+    }
+
+    fn ufo_glyph_order(ufo: &norad::Font) -> Vec<String> {
+        ufo.lib
+            .get("public.glyphOrder")
+            .and_then(|v| v.as_array())
+            .expect("glyphOrder array")
+            .iter()
+            .map(|v| v.as_string().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn custom_glyph_order_reaches_ufo_and_preview() {
+        let f = sample_font();
+        let order: Vec<String> = f.glyphs.iter().map(|g| g.name.clone()).rev().collect();
+        let f = kernest_core::order::set_order(&f, &order).unwrap();
+        let m = &f.masters[0];
+        let ufo = to_ufo(&master_source(&f, m, &m.name, true)).unwrap();
+        let want: Vec<String> = std::iter::once(".notdef".to_string())
+            .chain(order.iter().cloned())
+            .collect();
+        assert_eq!(ufo_glyph_order(&ufo), want);
+        let (bytes, prev) = preview_ttf(&f, &m.id, None).unwrap();
+        assert_eq!(prev, want);
+        let font = FontRef::new(&bytes).unwrap();
+        let post = font.post().unwrap();
+        let names: Vec<String> = (0..font.maxp().unwrap().num_glyphs())
+            .map(|g| {
+                post.glyph_name(write_fonts::types::GlyphId16::new(g))
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            names, want,
+            "the compiled font's glyph ids follow the order"
+        );
+    }
+
+    #[test]
+    fn notdef_mid_list_still_exports_first() {
+        let mut f = sample_font();
+        let mut nd = f.glyph("H").unwrap().clone();
+        nd.name = ".notdef".into();
+        nd.unicodes.clear();
+        f.glyphs.push(nd);
+        let last = f.glyphs.len() - 1;
+        f.glyphs.swap(3, last);
+        let m = &f.masters[0];
+        let ufo = to_ufo(&master_source(&f, m, &m.name, true)).unwrap();
+        let got = ufo_glyph_order(&ufo);
+        assert_eq!(got[0], ".notdef");
+        assert_eq!(got.len(), f.glyphs.len());
+        let (_, prev) = preview_ttf(&f, &m.id, None).unwrap();
+        assert_eq!(prev, got);
     }
 
     #[test]
@@ -1903,10 +2049,13 @@ pub(crate) mod tests {
                 },
             ],
         };
-        let f = color::set_paint(&f, "H", &top, grad).unwrap();
+        let mut f = color::set_paint(&f, "H", &top, grad).unwrap();
+        // Production names rename H in the compiled font; COLR must still find it.
+        f.glyph_mut("H").unwrap().production_name = Some("Hprod".into());
         let out = tempfile::tempdir().unwrap();
         let opts = ExportOptions {
             otf: true,
+            production_names: true,
             ..ExportOptions::ttf(true, true, out.path())
         };
         let r = export(&f, &opts).unwrap();

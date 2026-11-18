@@ -36,7 +36,7 @@ A Kernest font is a **`.kernest` folder**. Inside it, `font.json` holds the font
 
 ## Font View
 
-The **Font** tab shows every glyph as a cell.
+The **Font** tab shows every glyph as a cell. Switch between **Grid** and **List** at the top right; in Grid, the slider next to it sets the cell size. Both choices are remembered.
 
 - **Find glyphs:** filter by category on the left, or search by name, Unicode value (`0041` or `U+0041`) or the character itself.
 - **Select:** click a glyph. Ctrl+click and Shift+click select more than one.
@@ -51,6 +51,39 @@ The **Font** tab shows every glyph as a cell.
   - Components that use a removed glyph are turned into outlines in the other glyphs, so nothing changes shape.
   - Kerning pairs that name a removed glyph are removed too.
   - You can undo it with Ctrl+Z.
+
+### List view
+
+**List** shows the glyphs as a table: name, Unicode, category, subcategory, LSB, RSB, width, left and right group, export and tags. Click a column heading to sort by it (click again for descending, a third time to return to the font's own order). Double-click a cell to edit it in place — width and sidebearings, groups, tags, export, and the name (which renames the glyph everywhere, see below); Enter or clicking away keeps the change, Escape cancels. Each edit is one undo step. With one glyph selected, the box under the sidebar shows its category, subcategory and script, and lets you set its tags and kerning groups.
+
+### The sidebar: categories, languages, filters
+
+- **Categories** groups glyphs by what they are (Uppercase, Lowercase, Number, Punctuation, Symbol, Separator…).
+- **Languages** shows, per language, how many of its characters the font already has (`95 / 574`). Click a language to see the missing characters and **Add Missing** to add them all in one undo step.
+- **Filters** holds saved smart filters and lists (below). Click one to show only its glyphs; click again to show all.
+
+### Smart filters
+
+**New Filter…** builds a filter from rules: category, subcategory, case, script, name contains / starts / ends, tag contains, and yes/no rules such as has components, has anchors, has Unicode, masters compatible, exported, metrics keys out of sync, colour glyph, smart glyph. Combine rules with **All** (every rule must match) or **Any** (one is enough), and nest groups to any depth. The dialog shows a live count of matching glyphs as you edit. **Save Selection as List** saves the current selection as a plain list of names instead. Saving a filter switches Font View to it.
+
+### Tags, groups and production names
+
+- **Tags** are free labels you put on glyphs (from the list or the info box) to find them again with a "tag contains" filter.
+- **Left / right group** set the kerning groups a glyph belongs to.
+- **Production name** (info box) is the name the glyph gets in compiled fonts when you tick **Use production names** in the Export dialog; the working name stays as it is. UFO sources always carry the mapping.
+
+### Rename and batch commands
+
+- **Rename Glyphs…** (Glyph menu, the Font View button, or double-clicking a name in List) renames many glyphs at once: find and replace (plain text or a regular expression), add or remove a suffix, over the selection or the whole font. A preview shows old → new before you commit. Components, kerning, metrics keys, lists and feature code that name a renamed glyph are updated too; if feature code changes, Kernest shows you the rewritten lines. One undo step.
+- **Batch** (Font View button, needs a selection) applies a command to every selected glyph at once: Correct Path Direction, Remove Overlap, Tidy up Paths, Round Coordinates, Decompose Components, Update Metrics, Set Anchors, Create Composites. One undo step for the whole batch.
+
+### Copy and paste glyphs
+
+With glyphs selected, **Edit › Copy Glyphs** copies them with all their layers; **Edit › Copy Glyph Names** copies just the names in six formats (space-separated, comma-separated, one per line, slashed `/a/b`, a Python list, or a `U+0041` list). **Edit › Paste Special…** pastes copied glyphs three ways: over the glyphs with the same names, into the selected glyphs in order (keeping their names and Unicodes), or as components inside the selected glyphs (adding any missing base glyphs first). Locked glyphs refuse a paste. Each paste is one undo step.
+
+### Glyph order
+
+The order glyphs appear in Font View is the order they export in. Drag a cell (or a list row) onto another to move it before that glyph — one undo step. Dragging is paused while a column sort is active, since the sort rearranges the rows. You can also edit the order as text in **Font Info › Glyph order**: one name per line, every glyph exactly once; `.notdef` always stays first. Apply or discard the draft; applying is one undo step.
 
 ## Edit View
 
@@ -261,6 +294,7 @@ And what happens before building:
 - **Remove overlaps** merges overlapping contours in static fonts. Variable fonts keep them, because their masters must stay compatible.
 - **Apply metrics keys** re-applies every metrics key, so sidebearings are up to date.
 - **Autohint** adds TrueType hinting instructions to TTF and WOFF2 files, static and variable, using the settings in Font Info › Hinting. Hinting makes text crisper at small sizes on Windows. OTF files aren't affected. Kernest hints with [tilvisan](https://github.com/simoncozens/tilvisan), a Rust port of ttfautohint.
+- **Use production names** renames glyphs in compiled fonts to their production names (set per glyph in Font View); without it, compiled fonts keep the working names. UFO sources always carry the working → production mapping.
 
 Kerning and kerning groups are compiled into GPOS, and your feature code — generated and hand-written (see [Features](#features)) — is included. Glyphs that aren't set to export are left out.
 

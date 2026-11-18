@@ -156,7 +156,7 @@ button { cursor: default; }
 .grid-area { grid-row: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .grid-header { display: flex; align-items: center; gap: var(--k-space-8); padding: var(--k-space-16) var(--k-space-20) var(--k-space-8); }
 .glyph-grid {
-  flex: 1; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: var(--k-space-8);
+  flex: 1; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--k-cell-size, 84px), 1fr)); gap: var(--k-space-8);
   grid-auto-rows: max-content; align-content: start; padding: var(--k-space-4) var(--k-space-20) var(--k-space-20);
 }
 .glyph-cell {
@@ -293,6 +293,16 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 }
 .ctx-menu button:hover { background: var(--k-bg-hover); }
 .ctx-menu button svg { vertical-align: -2px; margin-inline-end: var(--k-space-6); }
+.batch-wrap { position: relative; display: inline-flex; }
+.batch-menu {
+  position: absolute; inset-inline-end: 0; top: calc(100% + var(--k-space-4)); z-index: 6; min-width: 200px; padding: var(--k-space-4);
+  background: var(--k-bg-surface); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-md); box-shadow: var(--k-shadow-l);
+}
+.batch-item {
+  display: block; width: 100%; padding: var(--k-space-6) var(--k-space-8); border: 0; border-radius: var(--k-radius-sm);
+  background: none; text-align: start; font: 400 12px var(--k-font-ui); color: var(--k-text-primary); cursor: pointer; white-space: nowrap;
+}
+.batch-item:hover { background: var(--k-bg-hover); }
 .ctx-note { display: block; padding: var(--k-space-6) var(--k-space-8); }
 .locked-badge { display: inline-flex; align-items: center; gap: var(--k-space-4); padding: 2px var(--k-space-8); border-radius: var(--k-radius-sm); background: var(--k-status-warning-subtle); color: var(--k-text-warning); white-space: nowrap; }
 .ctx-sep { display: block; height: 1px; margin: var(--k-space-4) 0; background: var(--k-border-default); }
@@ -311,6 +321,11 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .svg-placements .check-row { height: auto; align-items: flex-start; }
 .svg-placements .check-row input { margin-block-start: 2px; }
 .svg-placements .k-caption { display: block; }
+.paste-modes { display: flex; flex-direction: column; gap: var(--k-space-4); margin-block: var(--k-space-8); }
+.paste-modes .check-row { height: auto; align-items: flex-start; }
+.paste-modes .check-row input { margin-block-start: 2px; }
+.paste-modes .k-caption { display: block; }
+.paste-clip-names { max-height: 72px; overflow: auto; word-break: break-word; }
 .fea-import-problems { margin: var(--k-space-4) 0 0; padding-inline-start: var(--k-space-12); list-style: disc; }
 
 /* ---------- Text view (S06) & kerning window (S07) ---------- */
@@ -378,6 +393,7 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .text-field { text-align: start; padding: 0 var(--k-space-8); font: 400 13px var(--k-font-ui); }
 .notes-area { width: 100%; min-height: 120px; resize: vertical; padding: var(--k-space-8); border: 1px solid var(--k-border-strong); border-radius: var(--k-radius-md); background: var(--k-bg-app); font: 400 13px/1.5 var(--k-font-ui); color: var(--k-text-default); outline: 0; }
 .notes-area:focus { border-color: var(--k-border-focus); }
+.glyph-order-area { min-height: 96px; max-height: 240px; overflow: auto; font-family: var(--k-font-code); font-size: 12px; line-height: 1.6; }
 .fea-auto { display: flex; flex-wrap: wrap; gap: var(--k-space-8) var(--k-space-16); }
 .fea-tag { font-family: var(--k-font-code); }
 .fea-generated-wrap summary { cursor: pointer; color: var(--k-text-muted); }
@@ -405,6 +421,16 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .export-dialog { width: 600px; }
 .import-dialog { width: 560px; }
 .add-glyphs-dialog { width: 520px; }
+.rename-dialog { width: 560px; }
+.rename-dialog .dialog-body { max-height: 64vh; }
+.rename-dialog .field > .text-input { flex: none; height: var(--k-control-lg); }
+.rename-preview { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow-y: auto; padding: var(--k-space-8); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-md); background: var(--k-bg-subtle); font-family: var(--k-font-code); font-size: 12px; }
+.rename-row { display: flex; align-items: center; gap: var(--k-space-8); }
+.rename-old, .rename-arrow { color: var(--k-text-muted); }
+.rename-new { color: var(--k-text-primary); }
+.rename-row.is-invalid .rename-new { color: var(--k-text-danger); }
+.feature-lines-dialog { width: 560px; }
+.feature-lines { max-height: 240px; overflow: auto; margin: 0; padding: var(--k-space-12); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-md); background: var(--k-bg-subtle); font-family: var(--k-font-code); font-size: 12px; line-height: 1.6; white-space: pre; }
 .layer-dialog { width: 480px; }
 .metric-key { color: var(--k-accent-default); font-family: var(--k-font-code); white-space: nowrap; }
 .metric-key-clear { border: 0; background: none; padding: 0 2px; color: var(--k-text-muted, inherit); cursor: pointer; }
@@ -446,7 +472,7 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 
 /* Right-to-left (Arabic): the interface mirrors, but drawing areas, glyph cells,
    numbers, glyph names and code stay left to right. */
-.canvas-wrap, .text-canvas, .glyph-cell, .metric-input, .k-code, .kern-table .side, .side-input, .dest-input, .add-glyphs-text, .component-label, .anchor-label, .anchor-name-input, .info-comp, .guide-label, .measure-label {
+.canvas-wrap, .text-canvas, .glyph-cell, .metric-input, .k-code, .kern-table .side, .side-input, .dest-input, .add-glyphs-text, .component-label, .anchor-label, .anchor-name-input, .info-comp, .guide-label, .measure-label, .rename-dialog .text-input, .list-edit {
   direction: ltr;
 }
 [dir="rtl"] .metric-input, [dir="rtl"] .side-input { text-align: end; }
@@ -574,3 +600,48 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 
 /* Reporter plug-in text drawn over the canvas. */
 .reporter-text { font-family: var(--k-font-ui); font-weight: 500; paint-order: stroke; stroke: var(--k-editor-canvas); stroke-width: 3px; stroke-linejoin: round; }
+
+/* Font View filter sidebar and smart-filter rule builder. */
+.filter-item { display: flex; align-items: center; gap: 2px; }
+.filter-item .list-item { flex: 1; min-width: 0; }
+.filter-item .list-item span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-item .icon-btn { width: 22px; height: 22px; flex: none; }
+.sidebar-actions { display: flex; flex-wrap: wrap; gap: var(--k-space-6); padding: 0 var(--k-space-4); }
+.sidebar-notice { margin: 0 var(--k-space-4); }
+.language-missing { display: flex; flex-direction: column; align-items: flex-start; gap: var(--k-space-6); padding: var(--k-space-6) var(--k-space-4) var(--k-space-8); }
+.missing-list { display: flex; flex-wrap: wrap; gap: var(--k-space-4); max-height: 168px; overflow-y: auto; }
+.missing-chip { padding: 1px 6px; background: var(--k-bg-subtle); border-radius: var(--k-radius-sm); font: 400 12px/18px var(--k-font-code); }
+.smart-filter-dialog { width: 560px; }
+.smart-filter-dialog .dialog-body { max-height: 60vh; }
+/* .text-input's row-flex basis would become a 360px height in the column field. */
+.smart-filter-dialog .field > .text-input { flex: none; height: var(--k-control-lg); }
+.filter-group { display: flex; flex-direction: column; gap: var(--k-space-6); padding: var(--k-space-8); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-md); }
+.filter-group .filter-group { background: var(--k-bg-app); }
+.filter-rule-row { display: flex; align-items: center; gap: var(--k-space-6); }
+.filter-rule-row .select { flex: none; max-width: 45%; }
+.filter-rule-row .text-input { flex: 1; min-width: 0; }
+.filter-rule-row .icon-btn { flex: none; }
+
+/* Font View list (S04), cell size slider and info-box tag/group fields. */
+.cell-size { display: flex; align-items: center; gap: var(--k-space-6); }
+.cell-size input { width: 90px; accent-color: var(--k-accent-default); }
+.glyph-list { --k-list-min: 946px; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.glyph-list-body { flex: 1; overflow: auto; min-height: 0; }
+.glyph-list-head { position: sticky; top: 0; z-index: 1; display: grid; min-width: var(--k-list-min); height: 32px; align-items: center; background: var(--k-bg-app); border-bottom: 1px solid var(--k-border-default); }
+.list-th { border: 0; background: none; padding: 0 var(--k-space-8); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; cursor: pointer; color: var(--k-text-secondary); font: 600 11px/16px var(--k-font-ui); }
+.list-th:hover { color: var(--k-text-primary); }
+/* Sum of the column minimums, so header and rows keep the same tracks when narrow. */
+.glyph-list-row { position: absolute; inset-inline: 0; min-width: var(--k-list-min); display: grid; height: 30px; align-items: center; border-bottom: 1px solid var(--k-border-default); background: var(--k-bg-app); }
+.glyph-list-row:hover { background: var(--k-bg-hover); }
+.glyph-list-row.is-selected { background: var(--k-bg-selected); }
+.glyph-cell.is-dragging, .glyph-list-row.is-dragging { opacity: 0.4; }
+.glyph-cell.is-drop, .glyph-list-row.is-drop { outline: 2px solid var(--k-accent-default); outline-offset: -2px; }
+.glyph-list-cell { padding: 0 var(--k-space-8); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 12px/28px var(--k-font-ui); color: var(--k-text-primary); }
+.glyph-list-cell.num { font-family: var(--k-font-code); text-align: end; }
+.glyph-list-cell.name { font-weight: 600; }
+.glyph-list-cell .list-edit { width: 100%; height: 24px; flex: none; min-width: 0; }
+.glyph-list-cell input[type="checkbox"] { accent-color: var(--k-accent-default); width: 14px; height: 14px; margin: 0; }
+.info-field { margin-top: var(--k-space-8); }
+.info-field .text-input, .info-groups .text-input { flex: none; width: 100%; height: var(--k-control-md); min-width: 0; }
+.info-groups { gap: var(--k-space-8); margin-top: var(--k-space-8); }
+.info-groups .field { flex: 1; min-width: 0; }

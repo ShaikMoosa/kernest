@@ -270,9 +270,17 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     let mut order: Vec<String> = Vec::with_capacity(src.layers.len() + 1);
     if !has_notdef {
         ufo.default_layer_mut().insert_glyph(notdef(&src.metrics));
+    }
+    // Glyph id 0 is always .notdef, even if the source order lists it later.
+    for (gname, layer) in src.layers.iter().filter(|(n, _)| n == ".notdef") {
+        ufo.default_layer_mut()
+            .insert_glyph(glyph(font, gname, layer)?);
+        order.push(gname.clone());
+    }
+    if !has_notdef {
         order.push(".notdef".into());
     }
-    for (gname, layer) in &src.layers {
+    for (gname, layer) in src.layers.iter().filter(|(n, _)| n != ".notdef") {
         ufo.default_layer_mut()
             .insert_glyph(glyph(font, gname, layer)?);
         order.push(gname.clone());
@@ -290,6 +298,20 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     if !skip.is_empty() {
         ufo.lib
             .insert("public.skipExportGlyphs".into(), plist::Value::Array(skip));
+    }
+
+    // Production names: the compiler renames these glyphs in the compiled font.
+    let mut ps_names = plist::Dictionary::new();
+    for (gname, _) in &src.layers {
+        if let Some(p) = font.glyph(gname).and_then(|g| g.production_name.as_ref()) {
+            ps_names.insert(gname.clone(), plist::Value::String(p.clone()));
+        }
+    }
+    if !ps_names.is_empty() {
+        ufo.lib.insert(
+            "public.postscriptNames".into(),
+            plist::Value::Dictionary(ps_names),
+        );
     }
 
     // GDEF classes for mark attachment and ligature carets. Alternates are classed

@@ -35,8 +35,6 @@ Download the Windows setup program from the [Releases page](https://github.com/S
 
 Requirements: Windows 10 22H2 or later, x64 or ARM64. The installer downloads Microsoft Edge WebView2 if it is missing (it is built into Windows 11).
 
-The installer is not code-signed yet, so Windows SmartScreen may show "Windows protected your PC". Choose **More info › Run anyway**, and check the SHA-256 checksum listed on the release first.
-
 ## Build from source
 
 Prerequisites: [Rust](https://rustup.rs) via rustup (MSVC toolchain; the version pinned in `rust-toolchain.toml` is installed automatically), [Node.js](https://nodejs.org) 24 or later, and Visual Studio Build Tools with the "Desktop development with C++" workload.
@@ -122,7 +120,6 @@ Kernest 1.0 is complete: every milestone above has shipped.
 | Guides, background layer, transform panel (scale, rotate, mirror, skew), measure tool, snap to grid | ✅ v1.7 |
 | Path tools and filters: knife, open corners, reconnect and tidy up paths, Round Corners / Offset Curve / Transformations, lock and focus | ✅ v1.8 |
 | Python scripting and plug-ins: out-of-process runner, Script menu and macro panel, filter and reporter plug-ins, Settings window | ✅ v2.0 |
-| Code-signed installer | ⏳ planned |
 
 ### Next: one release per phase
 
@@ -137,7 +134,7 @@ The rest of the plan, in order. Each phase is built, tested, checked in the app,
 | 5 | 1.8 | Knife, open corners, reconnect and tidy up paths, lock and focus; Filter menu (Round Corners, Offset Curve, Transformations) | ✅ v1.8 |
 | 6 | 2.0 | Python scripting (Script menu, macro panel) and plug-ins (filters, reporters), Settings window | ✅ v2.0 |
 | 7 | 2.1 | Export UFO, Save As `.glyphs`, open compiled fonts, import SVG outlines, AFM and `.fea` | ✅ v2.1 |
-| 8 | 2.2 | Font View list view, languages and missing glyphs, smart filters, batch rename and batch commands | ⏳ planned |
+| 8 | 2.2 | Font View list view with sortable, editable columns; cell size slider; languages sidebar with missing glyphs and Add Missing; smart filters and saved lists; tags and groups; production names; batch rename and batch commands; copy glyph names and Paste Special; drag or text glyph order | 🚧 built, unreleased |
 | 9 | 2.3 | Axis mappings (avar) and STAT, several variable fonts per family, add masters from other fonts, compare fonts | ⏳ planned |
 | 10 | 2.4 | Alignment zones and stems, PostScript hints, TrueType zones, pixel preview, manual TrueType instructions | ⏳ planned |
 | 11 | 2.5 | Welcome screen, new font wizard, guided tour, font quality check, command line | ⏳ planned |

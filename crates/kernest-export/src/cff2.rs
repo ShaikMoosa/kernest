@@ -354,16 +354,24 @@ pub fn vf_to_otf(
                 .ok_or_else(|| format!("glyph {gid} has no name in the variable font"))
         })
         .collect::<Result<_, _>>()?;
+    // With production names the compiled names differ from the source's; map them
+    // back to find each glyph's outlines. The compiled `post` table keeps the names.
+    let to_source: BTreeMap<&str, &str> = font
+        .glyphs
+        .iter()
+        .filter_map(|g| g.production_name.as_deref().map(|p| (p, g.name.as_str())))
+        .collect();
     let order: Vec<GlyphSource> = names
         .iter()
         .map(|n| {
+            let n = to_source.get(n.as_str()).copied().unwrap_or(n.as_str());
             if font.glyph(n).is_some() {
-                Ok(GlyphSource::Glyph(n.as_str()))
+                Ok(GlyphSource::Glyph(n))
             } else if let Some((base, r)) = alternates.get(n) {
                 Ok(GlyphSource::Alternate(base.as_str(), r.as_slice()))
             } else {
                 statics
-                    .get_glyph(n.as_str())
+                    .get_glyph(n)
                     .map(GlyphSource::Static)
                     .ok_or_else(|| format!("glyph \"{n}\" is missing from the sources"))
             }

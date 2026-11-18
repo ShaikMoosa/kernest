@@ -337,10 +337,23 @@ pub(crate) fn build_cff_with(
     let mut glyphs = Vec::with_capacity(order.len());
     let mut glyph_sids = Vec::with_capacity(order.len());
     let mut bbox: Option<[i32; 4]> = None;
+    // With production names the compiled font's names differ from the UFO's;
+    // public.postscriptNames maps UFO name → compiled name, so invert it for lookups.
+    let to_source: HashMap<String, String> = ufo
+        .lib
+        .get("public.postscriptNames")
+        .and_then(|v| v.as_dictionary())
+        .map(|d| {
+            d.iter()
+                .filter_map(|(k, v)| v.as_string().map(|s| (s.to_string(), k.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
     for (gid, name) in order.iter().enumerate() {
+        let source = to_source.get(name).unwrap_or(name);
         let g = ufo
-            .get_glyph(name.as_str())
-            .ok_or_else(|| format!("glyph \"{name}\" is missing from the source"))?;
+            .get_glyph(source.as_str())
+            .ok_or_else(|| format!("glyph \"{source}\" is missing from the source"))?;
         let mut cs = Vec::new();
         contours(ufo, g, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 0, &mut cs);
         let (ops, b) = glyph_ops(&cs);

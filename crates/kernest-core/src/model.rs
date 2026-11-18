@@ -42,6 +42,9 @@ pub struct Font {
     /// colour layers refer to them by index. Palette 0 is the default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub palettes: Vec<Vec<crate::color::Color>>,
+    /// Saved smart and list filters for the Font View sidebar.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<crate::smartfilter::Filter>,
 }
 
 /// Toggles for the features Kernest generates from glyph names. Only the tags
@@ -209,6 +212,9 @@ pub struct Glyph {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// The name this glyph carries in exported fonts when production names are used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub production_name: Option<String>,
     /// A locked glyph refuses every edit until it is unlocked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locked: bool,
@@ -237,6 +243,7 @@ impl Glyph {
             right_group: None,
             tags: Vec::new(),
             note: None,
+            production_name: None,
             locked: false,
             smart_axes: Vec::new(),
             layers: Vec::new(),
@@ -772,6 +779,7 @@ impl Font {
             notes: String::new(),
             feature_settings: FeatureSettings::default(),
             palettes: Vec::new(),
+            filters: Vec::new(),
         }
     }
 

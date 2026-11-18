@@ -108,10 +108,18 @@ pub struct GlyphSummary {
     unicode: Option<String>,
     character: Option<String>,
     category: &'static str,
+    subcategory: &'static str,
+    script: &'static str,
     export: bool,
     width: f64,
     lsb: Option<f64>,
     rsb: Option<f64>,
+    left_group: Option<String>,
+    right_group: Option<String>,
+    tags: Vec<String>,
+    /// The name this glyph exports under when production names are used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    production_name: Option<String>,
     /// Outline as SVG path data in font units (y up), empty when not drawn yet.
     svg: String,
     /// False when this glyph's masters can't be interpolated.
@@ -187,6 +195,8 @@ pub struct FontView {
     glyphs: Vec<GlyphSummary>,
     /// The default colour palette, for drawing colour glyphs.
     palette: Vec<String>,
+    /// Saved smart and list filters for the Font View sidebar.
+    filters: Vec<kernest_core::smartfilter::Filter>,
     status: DocStatus,
 }
 
@@ -349,10 +359,19 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
                 unicode: cp.map(|c| c.to_string()),
                 character: cp.and_then(|c| c.char()).map(String::from),
                 category: g.category().label(),
+                subcategory: kernest_core::glyphdata::subcategory(
+                    g.unicodes.first().map(|c| c.0),
+                    &g.name,
+                ),
+                script: kernest_core::glyphdata::script_of(g),
                 export: g.export,
                 width: layer.map_or(0.0, |l| l.width),
                 lsb: sb.map(|s| s.0),
                 rsb: sb.map(|s| s.1),
+                left_group: g.left_group.clone(),
+                right_group: g.right_group.clone(),
+                tags: g.tags.clone(),
+                production_name: g.production_name.clone(),
                 svg: layer.map(|l| svg_path(font, l)).unwrap_or_default(),
                 compatible: check_glyph(font, &g.name).is_empty(),
                 locked: g.locked,
@@ -376,6 +395,7 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
         metrics: master.metrics,
         glyphs,
         palette: css_palette(font),
+        filters: font.filters.clone(),
         status: status(doc),
     })
 }
@@ -1521,6 +1541,112 @@ pub fn update_metrics(state: State<AppState>) -> CmdResult<UpdateMetricsResult> 
     }
     Ok(UpdateMetricsResult {
         problems,
+        status: status(doc),
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchResult {
+    status: DocStatus,
+}
+
+/// Font View › Batch: applies a path operation to every selected glyph in one undoable
+/// step, across compatible masters just like the single-glyph command.
+#[tauri::command]
+pub fn batch_path_operation(
+    state: State<AppState>,
+    glyphs: Vec<String>,
+    master_id: String,
+    operation: String,
+) -> CmdResult<BatchResult> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    for name in &glyphs {
+        ensure_glyph_unlocked(&doc.font, name)?;
+    }
+    let next = kernest_core::batch::path_operation(&doc.font, &glyphs, &master_id, &operation)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(BatchResult {
+        status: status(doc),
+    })
+}
+
+/// Font View › Batch › Update Metrics: applies metrics keys only to the selected glyphs
+/// (one undoable step); referenced glyphs outside the selection keep their metrics.
+#[tauri::command]
+pub fn update_metrics_for(
+    state: State<AppState>,
+    glyphs: Vec<String>,
+) -> CmdResult<UpdateMetricsResult> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let (next, problems) = kernest_core::metricskeys::apply_some(&doc.font, Some(&glyphs));
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(UpdateMetricsResult {
+        problems,
+        status: status(doc),
+    })
+}
+
+/// Edit › Copy Glyph Names / Paste Special: the named glyphs with every master's layer,
+/// ready to put on the clipboard as JSON.
+#[tauri::command]
+pub fn copy_glyphs(
+    state: State<AppState>,
+    names: Vec<String>,
+) -> CmdResult<Vec<kernest_core::model::Glyph>> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let mut out = Vec::new();
+    for n in &names {
+        out.push(
+            doc.font
+                .glyph(n)
+                .ok_or_else(|| format!("There is no glyph named \"{n}\"."))?
+                .clone(),
+        );
+    }
+    Ok(out)
+}
+
+/// Edit › Paste Special: pastes copied glyphs into same-named glyphs, onto the selection
+/// in order, or as components of the selection — one undoable step.
+#[tauri::command]
+pub fn paste_special(
+    state: State<AppState>,
+    mode: String,
+    targets: Vec<String>,
+    glyphs: Vec<kernest_core::model::Glyph>,
+) -> CmdResult<BatchResult> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let next = match mode.as_str() {
+        "same-name" => kernest_core::clipboard::paste_same_named(&doc.font, &glyphs)?,
+        "selection" => kernest_core::clipboard::paste_into_selection(&doc.font, &targets, &glyphs)?,
+        "components" => kernest_core::clipboard::paste_as_components(&doc.font, &targets, &glyphs)?,
+        other => return Err(format!("Unknown paste mode \"{other}\"")),
+    };
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(BatchResult {
         status: status(doc),
     })
 }

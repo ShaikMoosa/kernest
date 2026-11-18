@@ -137,6 +137,13 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                 .collect();
             out.left_group = src.left_kern.as_ref().map(|s| s.to_string());
             out.right_group = src.right_kern.as_ref().map(|s| s.to_string());
+            // The reader guesses production names from its glyph database; keep only
+            // ones that differ from the glyph's own name, so ordinary glyphs stay clean.
+            out.production_name = src
+                .production_name
+                .as_deref()
+                .filter(|p| p != name)
+                .map(String::from);
             let owner = |l: &glyphs_reader::Layer| {
                 l.associated_master_id
                     .as_deref()
@@ -347,6 +354,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         notes: String::new(),
         feature_settings: Default::default(),
         palettes: Vec::new(),
+        filters: Vec::new(),
     };
     let master_ids: HashMap<String, String> = ids
         .iter()

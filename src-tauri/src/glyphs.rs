@@ -2,9 +2,14 @@
 
 use kernest_core::glyphdata::{codepoints_for, name_for};
 use kernest_core::glyphset::{
-    add_glyphs as add, parse_glyph_list, remove_glyphs as remove, NewGlyph,
+    add_glyphs as add, missing_glyphs as missing, parse_glyph_list, remove_glyphs as remove,
+    valid_name, NewGlyph,
 };
+use kernest_core::model::Font;
+use kernest_core::rename;
+use kernest_core::smartfilter::{self, Filter};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use tauri::State;
 
 use crate::commands::{
@@ -59,6 +64,81 @@ pub fn add_glyphs(
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageCoverage {
+    language: &'static str,
+    present: usize,
+    total: usize,
+}
+
+/// Per-language coverage for the Font View sidebar; read-only.
+#[tauri::command]
+pub fn language_coverage(state: State<AppState>) -> CmdResult<Vec<LanguageCoverage>> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    Ok(kernest_core::glyphset::coverage(&doc.font)
+        .into_iter()
+        .map(|c| LanguageCoverage {
+            language: c.language,
+            present: c.present,
+            total: c.total,
+        })
+        .collect())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MissingGlyph {
+    name: String,
+    unicode: String,
+}
+
+/// The glyphs a language still needs; read-only, loaded when its row is opened.
+#[tauri::command]
+pub fn missing_glyphs(state: State<AppState>, language: String) -> CmdResult<Vec<MissingGlyph>> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    Ok(missing(&doc.font, &language)?
+        .into_iter()
+        .map(|g| MissingGlyph {
+            name: g.name,
+            unicode: g
+                .codepoint
+                .map(|cp| format!("{cp:04X}"))
+                .unwrap_or_default(),
+        })
+        .collect())
+}
+
+/// Adds every glyph a language is missing, as one undoable step.
+#[tauri::command]
+pub fn add_missing(state: State<AppState>, language: String) -> CmdResult<AddGlyphsResult> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let list = missing(&doc.font, &language)?;
+    if list.is_empty() {
+        return Ok(AddGlyphsResult {
+            added: Vec::new(),
+            skipped: Vec::new(),
+            status: status(doc),
+        });
+    }
+    let r = add(&doc.font, &list)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, r.font)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(AddGlyphsResult {
+        added: r.added,
+        skipped: r.skipped,
+        status: status(doc),
+    })
+}
+
 /// Sets whether glyphs are exported (unexported glyphs, such as parts used only as
 /// components, are left out of compiled fonts). One undoable step.
 #[tauri::command]
@@ -85,6 +165,94 @@ pub fn set_glyph_export(
     Ok(status(doc))
 }
 
+/// Sets a glyph's tags, as typed comma-separated in the info box or the list view.
+/// One undoable step.
+#[tauri::command]
+pub fn set_glyph_tags(
+    state: State<AppState>,
+    glyph: String,
+    tags: Vec<String>,
+) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let next = with_tags(&doc.font, &glyph, &tags)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
+/// Tags are trimmed; empty ones and repeats (first spelling wins) are dropped.
+fn with_tags(font: &Font, name: &str, tags: &[String]) -> Result<Font, String> {
+    let mut next = font.clone();
+    let g = next
+        .glyph_mut(name)
+        .ok_or_else(|| format!("There is no glyph named \"{name}\"."))?;
+    let mut clean: Vec<String> = Vec::new();
+    for tag in tags {
+        let tag = tag.trim();
+        if !tag.is_empty() && !clean.iter().any(|c| c == tag) {
+            clean.push(tag.to_string());
+        }
+    }
+    g.tags = clean;
+    Ok(next)
+}
+
+/// Sets a glyph's production name, as typed in the info box (empty clears it).
+/// One undoable step.
+#[tauri::command]
+pub fn set_production_name(
+    state: State<AppState>,
+    glyph: String,
+    name: String,
+) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, &glyph)?;
+    let next = with_production_name(&doc.font, &glyph, &name)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
+/// Production names follow the glyph-name rules and must not clash with the name
+/// any other glyph exports under (its production name, or its own name).
+fn with_production_name(font: &Font, name: &str, production: &str) -> Result<Font, String> {
+    let production = production.trim();
+    if font.glyph(name).is_none() {
+        return Err(format!("There is no glyph named \"{name}\"."));
+    }
+    if !production.is_empty() {
+        if !valid_name(production) {
+            return Err(format!(
+                "\"{production}\" can't be used as a production name."
+            ));
+        }
+        if font.glyphs.iter().any(|o| {
+            o.name != name && o.production_name.as_deref().unwrap_or(&o.name) == production
+        }) {
+            return Err(format!(
+                "\"{production}\" is already used as a glyph name or production name."
+            ));
+        }
+    }
+    let mut next = font.clone();
+    if let Some(g) = next.glyph_mut(name) {
+        g.production_name = (!production.is_empty()).then(|| production.to_string());
+    }
+    Ok(next)
+}
+
 /// Removes glyphs; components using them are decomposed in the glyphs that remain.
 #[tauri::command]
 pub fn remove_glyphs(state: State<AppState>, names: Vec<String>) -> CmdResult<DocStatus> {
@@ -105,4 +273,105 @@ pub fn remove_glyphs(state: State<AppState>, names: Vec<String>) -> CmdResult<Do
         doc.revision += 1;
     }
     Ok(status(doc))
+}
+
+/// Replaces the font's saved smart and list filters. One undoable step.
+#[tauri::command]
+pub fn set_filters(state: State<AppState>, filters: Vec<Filter>) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let next = smartfilter::set_filters(&doc.font, filters)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
+/// The glyph names a filter matches, for the rule builder's live count. Read-only:
+/// the filter being edited is passed in, not taken from the font.
+#[tauri::command]
+pub fn evaluate_filter(state: State<AppState>, filter: Filter) -> CmdResult<Vec<String>> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    Ok(smartfilter::evaluate(&doc.font, &filter))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameResult {
+    status: DocStatus,
+    /// Feature-code lines the rename rewrote, shown as a warning so the designer
+    /// can check them.
+    changed_feature_lines: Vec<String>,
+}
+
+/// Renames glyphs from an old→new map (the find/replace pattern runs in the
+/// frontend) and updates every reference. One undoable step.
+#[tauri::command]
+pub fn rename_glyphs(
+    state: State<AppState>,
+    renames: BTreeMap<String, String>,
+) -> CmdResult<RenameResult> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    for old in renames.keys() {
+        ensure_glyph_unlocked(&doc.font, old)?;
+    }
+    let (next, changed) = rename::rename_glyphs(&doc.font, &renames)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(RenameResult {
+        status: status(doc),
+        changed_feature_lines: changed,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kernest_core::sample::sample_font;
+
+    #[test]
+    fn tags_are_trimmed_deduped_and_clearable() {
+        let font = sample_font();
+        let next = with_tags(
+            &font,
+            "H",
+            &["  red ".into(), "red".into(), " ".into(), "blue".into()],
+        )
+        .unwrap();
+        assert_eq!(next.glyph("H").unwrap().tags, ["red", "blue"]);
+        assert!(with_tags(&font, "nope", &["x".into()]).is_err());
+        let cleared = with_tags(&next, "H", &[]).unwrap();
+        assert!(cleared.glyph("H").unwrap().tags.is_empty());
+    }
+
+    #[test]
+    fn production_names_validate_and_clear() {
+        let font = sample_font();
+        let next = with_production_name(&font, "H", " Hprod ").unwrap();
+        assert_eq!(
+            next.glyph("H").unwrap().production_name.as_deref(),
+            Some("Hprod")
+        );
+        assert!(with_production_name(&font, "H", "9bad").is_err());
+        assert!(with_production_name(&font, "nope", "x").is_err());
+        // Clashes with another glyph's name or production name are refused.
+        assert!(with_production_name(&font, "H", "O").is_err());
+        assert!(with_production_name(&next, "I", "Hprod").is_err());
+        // A name another glyph exports under a different production name is free.
+        let moved = with_production_name(&font, "O", "Oh").unwrap();
+        assert!(with_production_name(&moved, "H", "O").is_ok());
+        let cleared = with_production_name(&next, "H", "  ").unwrap();
+        assert!(cleared.glyph("H").unwrap().production_name.is_none());
+    }
 }

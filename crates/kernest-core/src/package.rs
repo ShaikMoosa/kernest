@@ -33,11 +33,12 @@ use crate::model::{
 /// align flag (older versions would silently re-align hand-placed components);
 /// version 4 adds the naming fields, instance classes/style links, notes and
 /// automatic-feature settings; version 5 adds guides, the background layer and the
-/// snap grid (older versions would drop them on save).
+/// snap grid; version 6 adds locks; version 7 adds saved filters (older versions
+/// would drop them on save).
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = 7;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -58,6 +59,8 @@ struct FontFile {
     notes: String,
     #[serde(default, skip_serializing_if = "FeatureSettings::is_empty")]
     feature_settings: FeatureSettings,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    filters: Vec<crate::smartfilter::Filter>,
     glyph_order: Vec<String>,
 }
 
@@ -204,9 +207,16 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
                         .is_some_and(|b| b.shapes.iter().any(locked_path))
             })
     });
+    let has_phase8 = !font.filters.is_empty()
+        || font
+            .glyphs
+            .iter()
+            .any(|g| g.production_name.is_some() || !g.tags.is_empty());
     let file = FontFile {
-        format_version: if has_phase5 {
+        format_version: if has_phase8 {
             FORMAT_VERSION
+        } else if has_phase5 {
+            6
         } else if has_phase4 {
             5
         } else if has_phase3 {
@@ -226,6 +236,7 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
         palettes: font.palettes.clone(),
         notes: font.notes.clone(),
         feature_settings: font.feature_settings.clone(),
+        filters: font.filters.clone(),
         glyph_order: font.glyphs.iter().map(|g| g.name.clone()).collect(),
     };
     write_atomic(&font_path, &to_json(&file, &font_path)?)
@@ -303,6 +314,7 @@ pub fn open(dir: &Path) -> Result<Font> {
         palettes: file.palettes,
         notes: file.notes,
         feature_settings: file.feature_settings,
+        filters: file.filters,
     };
     font.validate()?;
     Ok(font)
@@ -563,6 +575,77 @@ mod tests {
         save(&font, &path).unwrap();
         let fj = fs::read_to_string(path.join("font.json")).unwrap();
         assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
+    }
+
+    #[test]
+    fn phase8_filters_round_trip_and_gate_version() {
+        use crate::smartfilter::{Filter, FilterKind, Rule, RuleGroup};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        // Without filters the package stays at version 1 and writes no filters.
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
+        assert!(!fj.contains("filters"), "{fj}");
+
+        font.filters = vec![
+            Filter {
+                name: "Capitals".into(),
+                kind: FilterKind::Smart,
+                rules: RuleGroup {
+                    rules: vec![Rule::Category {
+                        value: "Uppercase".into(),
+                    }],
+                    ..Default::default()
+                },
+                glyphs: Vec::new(),
+            },
+            Filter {
+                name: "Picked".into(),
+                kind: FilterKind::List,
+                rules: RuleGroup::default(),
+                glyphs: vec!["H".into(), "I".into()],
+            },
+        ];
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 7"), "{fj}");
+        assert_eq!(open(&path).unwrap(), font);
+
+        // Removing the filters returns the package to version 1.
+        font.filters.clear();
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
+        assert!(!fj.contains("filters"), "{fj}");
+    }
+
+    #[test]
+    fn phase8_production_names_and_tags_gate_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        font.glyph_mut("H").unwrap().production_name = Some("H.prod".into());
+        font.glyph_mut("o").unwrap().tags = vec!["round".into()];
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 7"), "{fj}");
+        assert_eq!(open(&path).unwrap(), font);
+        // Glyphs without the fields don't write them.
+        let hj = fs::read_to_string(path.join("glyphs").join("H_.json")).unwrap();
+        assert!(hj.contains("\"productionName\": \"H.prod\""), "{hj}");
+        let oj = fs::read_to_string(path.join("glyphs").join("o.json")).unwrap();
+        assert!(!oj.contains("productionName"), "{oj}");
+
+        for g in &mut font.glyphs {
+            g.production_name = None;
+            g.tags.clear();
+        }
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
+        assert_eq!(open(&path).unwrap(), font);
     }
 
     #[test]
