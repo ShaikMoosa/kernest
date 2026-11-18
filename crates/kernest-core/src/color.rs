@@ -298,6 +298,120 @@ pub fn set_paint(font: &Font, glyph: &str, key: &str, paint: Paint) -> R<Font> {
     Ok(f)
 }
 
+/// The palettes a master uses: its override when set, otherwise the font's.
+pub fn effective_palettes<'a>(font: &'a Font, master_id: &str) -> &'a [Vec<Color>] {
+    font.master_palettes
+        .get(master_id)
+        .map(Vec::as_slice)
+        .unwrap_or(&font.palettes)
+}
+
+/// Sets (`Some`) or clears (`None`) one master's palette override. An override needs
+/// the same palettes and colour count as the font, and must keep every colour this
+/// master's colour layers use.
+pub fn set_master_palettes(
+    font: &Font,
+    master_id: &str,
+    palettes: Option<Vec<Vec<Color>>>,
+) -> R<Font> {
+    if font.master(master_id).is_none() {
+        return Err("That master doesn't exist.".into());
+    }
+    let mut f = font.clone();
+    let Some(palettes) = palettes else {
+        f.master_palettes.remove(master_id);
+        return Ok(f);
+    };
+    let size = font.palette_size();
+    if palettes.len() != font.palettes.len() || palettes.iter().any(|p| p.len() != size) {
+        return Err("A master's palettes need the same colours as the font's.".into());
+    }
+    let used = f
+        .glyphs
+        .iter()
+        .flat_map(|g| g.color_layers(master_id))
+        .filter_map(|l| l.color.as_ref())
+        .flat_map(|c| c.paint.colors())
+        .max();
+    if let Some(i) = used.filter(|i| *i as usize >= size) {
+        return Err(format!(
+            "Colour {} is used by this master's colour layers, so it can't be removed.",
+            i + 1
+        ));
+    }
+    f.master_palettes.insert(master_id.to_string(), palettes);
+    Ok(f)
+}
+
+/// Sets a colour layer's paint in ONE master, leaving the others alone. This is how
+/// gradient points (and palette colours) come to differ between masters.
+pub fn set_master_paint(
+    font: &Font,
+    glyph: &str,
+    key: &str,
+    master_id: &str,
+    paint: Paint,
+) -> R<Font> {
+    let size = effective_palettes(font, master_id)
+        .first()
+        .map_or(0, Vec::len);
+    paint.check(size)?;
+    let mut f = font.clone();
+    let g = f
+        .glyph(glyph)
+        .ok_or_else(|| format!("There is no glyph named \"{glyph}\"."))?;
+    let (_, i) = position(g, key)?;
+    let target = g
+        .color_layers(master_id)
+        .nth(i)
+        .map(|l| l.key().to_string())
+        .ok_or_else(|| format!("\"{glyph}\" has no colour layer {} in that master.", i + 1))?;
+    let g = f.glyph_mut(glyph).expect("glyph exists");
+    g.layer_mut(&target).expect("layer exists").color = Some(ColorInfo { paint });
+    Ok(f)
+}
+
+/// The paint of the colour layer at `key`'s stack position in `master_id`, so the UI can
+/// edit one master's colour without disturbing the others.
+pub fn master_paint(font: &Font, glyph: &str, key: &str, master_id: &str) -> R<Paint> {
+    let g = font
+        .glyph(glyph)
+        .ok_or_else(|| format!("There is no glyph named \"{glyph}\"."))?;
+    let (_, i) = position(g, key)?;
+    g.color_layers(master_id)
+        .nth(i)
+        .and_then(|l| l.color.as_ref().map(|c| c.paint.clone()))
+        .ok_or_else(|| format!("\"{glyph}\" has no colour layer {} in that master.", i + 1))
+}
+
+/// Whether colour differs between masters: a palette override, or a colour layer whose
+/// paint is not identical in every master. Gates the file format version so older
+/// Kernest versions refuse the file instead of silently dropping the variation.
+pub fn varies_between_masters(font: &Font) -> bool {
+    if !font.master_palettes.is_empty() {
+        return true;
+    }
+    let default = font
+        .masters
+        .first()
+        .map(|m| m.id.clone())
+        .unwrap_or_default();
+    font.glyphs.iter().any(|g| {
+        if !g.is_color() {
+            return false;
+        }
+        (0..g.color_layers(&default).count()).any(|i| {
+            let paints: Vec<&Paint> = font
+                .masters
+                .iter()
+                .filter_map(|m| g.color_layers(&m.id).nth(i))
+                .filter_map(|l| l.color.as_ref().map(|c| &c.paint))
+                .collect();
+            paints.windows(2).any(|w| w[0] != w[1])
+        })
+    })
+}
+
 /// Moves a colour layer up (`up`) or down the stack, in every master.
 pub fn move_color_layer(font: &Font, glyph: &str, key: &str, up: bool) -> R<Font> {
     let mut f = font.clone();
@@ -345,11 +459,34 @@ pub fn layer_glyph_name(glyph: &str, i: usize) -> String {
     format!("{glyph}.color{i}")
 }
 
-/// One colour glyph as exported: its colour layers' glyphs and paints, bottom to top.
+/// One colour layer as exported: its glyph and its paint in each master.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColorLayer {
+    pub glyph: String,
+    /// One paint per master, in master order: (master id, paint).
+    pub paints: Vec<(String, Paint)>,
+}
+
+impl ColorLayer {
+    /// This master's paint, if it has a layer here.
+    pub fn paint(&self, master_id: &str) -> Option<&Paint> {
+        self.paints
+            .iter()
+            .find(|(m, _)| m == master_id)
+            .map(|(_, p)| p)
+    }
+
+    /// The default (first) master's paint.
+    pub fn default_paint(&self) -> Option<&Paint> {
+        self.paints.first().map(|(_, p)| p)
+    }
+}
+
+/// One colour glyph as exported: its colour layers, bottom to top.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColorGlyph {
     pub glyph: String,
-    pub layers: Vec<(String, Paint)>,
+    pub layers: Vec<ColorLayer>,
 }
 
 /// For export: turns every colour layer into an ordinary glyph (`A.color0`, …) with
@@ -369,17 +506,18 @@ pub fn split_color_layers(font: &Font) -> (Font, Vec<ColorGlyph>) {
         if !g.is_color() {
             continue;
         }
-        let stack: Vec<Paint> = g
-            .color_layers(&default)
-            .filter_map(|l| l.color.as_ref().map(|c| c.paint.clone()))
-            .collect();
+        let count = g.color_layers(&default).count();
         let mut layers = Vec::new();
-        for (i, paint) in stack.into_iter().enumerate() {
+        for i in 0..count {
             let name = layer_glyph_name(&g.name, i);
             let mut lg = Glyph::new(&name, Vec::new());
             lg.export = g.export;
+            let mut paints = Vec::new();
             for m in &font.masters {
                 if let Some(cl) = g.color_layers(&m.id).nth(i) {
+                    if let Some(c) = &cl.color {
+                        paints.push((m.id.clone(), c.paint.clone()));
+                    }
                     let mut l = cl.clone();
                     l.id = None;
                     l.color = None;
@@ -387,7 +525,10 @@ pub fn split_color_layers(font: &Font) -> (Font, Vec<ColorGlyph>) {
                 }
             }
             extra.push(lg);
-            layers.push((name, paint));
+            layers.push(ColorLayer {
+                glyph: name,
+                paints,
+            });
         }
         g.layers.retain(|l| l.color.is_none());
         if g.export {
@@ -547,8 +688,10 @@ mod tests {
         let (out, colored) = split_color_layers(&f);
         assert_eq!(colored.len(), 1);
         assert_eq!(colored[0].glyph, "O");
-        let names: Vec<&str> = colored[0].layers.iter().map(|(n, _)| n.as_str()).collect();
+        let names: Vec<&str> = colored[0].layers.iter().map(|l| l.glyph.as_str()).collect();
         assert_eq!(names, ["O.color0", "O.color1"]);
+        assert_eq!(colored[0].layers[0].paints.len(), 1);
+        assert_eq!(colored[0].layers[0].paints[0].0, "m01");
         assert!(!out.glyph("O").unwrap().is_color());
         assert_eq!(
             out.glyph("O.color0").unwrap().layer("m01").unwrap().shapes,
@@ -605,6 +748,8 @@ mod more_tests {
             default: 400.0,
             max: 700.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         };
         let f = structure::set_axes(&sample_font(), vec![wght.clone()]).unwrap();
         let (f, bold) =
@@ -631,5 +776,149 @@ mod more_tests {
         // Re-applying the axes keeps colour layers (and smart poles).
         let again = structure::set_axes(&f, vec![wght]).unwrap();
         assert_eq!(again.glyph("O").unwrap().color_layers("m01").count(), 1);
+    }
+
+    fn two_master_color() -> (Font, String) {
+        let wght = crate::Axis {
+            name: "Weight".into(),
+            tag: "wght".into(),
+            min: 400.0,
+            default: 400.0,
+            max: 700.0,
+            hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
+        };
+        let f = structure::set_axes(&sample_font(), vec![wght]).unwrap();
+        let (f, bold) =
+            structure::add_master(&f, "m01", "Bold", &BTreeMap::from([("wght".into(), 700.0)]))
+                .unwrap();
+        let f = set_palettes(
+            &f,
+            vec![vec![
+                Color::parse("#ff0000").unwrap(),
+                Color::parse("#0000ffcc").unwrap(),
+            ]],
+        )
+        .unwrap();
+        let (f, _) = add_color_layer(&f, "O", "m01").unwrap();
+        (f, bold)
+    }
+
+    fn first_color_key(f: &Font, master: &str) -> String {
+        f.glyph("O")
+            .unwrap()
+            .color_layers(master)
+            .next()
+            .unwrap()
+            .key()
+            .to_string()
+    }
+
+    #[test]
+    fn master_paint_varies_and_round_trips() {
+        let (f, bold) = two_master_color();
+        let key = first_color_key(&f, "m01");
+        assert!(!varies_between_masters(&f));
+        let grad = Paint::Linear {
+            start: [0.0, 0.0],
+            end: [100.0, 0.0],
+            stops: vec![
+                ColorStop {
+                    offset: 0.0,
+                    color: 0,
+                    alpha: 1.0,
+                },
+                ColorStop {
+                    offset: 1.0,
+                    color: 1,
+                    alpha: 1.0,
+                },
+            ],
+        };
+        let f = set_master_paint(&f, "O", &key, &bold, grad.clone()).unwrap();
+        assert!(varies_between_masters(&f));
+        // Only the bold master changed; the default keeps its solid paint.
+        assert_eq!(
+            f.glyph("O")
+                .unwrap()
+                .color_layers("m01")
+                .next()
+                .unwrap()
+                .color
+                .as_ref()
+                .unwrap()
+                .paint,
+            Paint::Solid {
+                color: 0,
+                alpha: 1.0
+            }
+        );
+        assert_eq!(
+            f.glyph("O")
+                .unwrap()
+                .color_layers(&bold)
+                .next()
+                .unwrap()
+                .color
+                .as_ref()
+                .unwrap()
+                .paint,
+            grad
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("V.kernest");
+        crate::package::save(&f, &path).unwrap();
+        assert!(std::fs::read_to_string(path.join("font.json"))
+            .unwrap()
+            .contains("\"formatVersion\": 9"));
+        let back = crate::package::open(&path).unwrap();
+        assert_eq!(back, f);
+        assert!(varies_between_masters(&back));
+        // A palette index the master's palette doesn't have is refused.
+        assert!(set_master_paint(
+            &f,
+            "O",
+            &key,
+            &bold,
+            Paint::Solid {
+                color: 5,
+                alpha: 1.0
+            }
+        )
+        .unwrap_err()
+        .contains("no colour 6"));
+    }
+
+    #[test]
+    fn master_palette_override_round_trips_and_validates() {
+        let (f, bold) = two_master_color();
+        let override_palettes = vec![vec![
+            Color::parse("#00ff00").unwrap(),
+            Color::parse("#0000ffcc").unwrap(),
+        ]];
+        let f = set_master_palettes(&f, &bold, Some(override_palettes.clone())).unwrap();
+        assert_eq!(effective_palettes(&f, &bold), override_palettes.as_slice());
+        assert_eq!(effective_palettes(&f, "m01"), f.palettes.as_slice());
+        assert!(varies_between_masters(&f));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("P.kernest");
+        crate::package::save(&f, &path).unwrap();
+        assert!(std::fs::read_to_string(path.join("font.json"))
+            .unwrap()
+            .contains("\"formatVersion\": 9"));
+        let back = crate::package::open(&path).unwrap();
+        assert_eq!(back.master_palettes, f.master_palettes);
+        // Wrong shape is refused; an unknown master is refused.
+        assert!(
+            set_master_palettes(&f, &bold, Some(vec![vec![Color::BLACK]]))
+                .unwrap_err()
+                .contains("same colours")
+        );
+        assert!(set_master_palettes(&f, "nope", Some(override_palettes.clone())).is_err());
+        // Clearing the override removes the variation (paints are still identical).
+        let cleared = set_master_palettes(&f, &bold, None).unwrap();
+        assert!(cleared.master_palettes.is_empty());
+        assert!(!varies_between_masters(&cleared));
     }
 }

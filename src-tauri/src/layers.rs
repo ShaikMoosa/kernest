@@ -9,7 +9,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::commands::{
-    doc_mut, ensure_glyph_unlocked, lock, status, AppState, CmdResult, DocStatus,
+    css_palette_at, doc_mut, ensure_glyph_unlocked, lock, status, AppState, CmdResult, DocStatus,
 };
 
 #[derive(Serialize)]
@@ -215,6 +215,48 @@ pub fn set_color_paint(
 ) -> CmdResult<LayerAdded> {
     apply(&state, &glyph, |f| {
         Ok((color::set_paint(f, &glyph, &key, paint)?, key.clone()))
+    })
+}
+
+/// Sets a colour layer's paint in one master only, so colours can differ between masters.
+#[tauri::command]
+pub fn set_master_paint(
+    state: State<AppState>,
+    glyph: String,
+    key: String,
+    master_id: String,
+    paint: Paint,
+) -> CmdResult<LayerAdded> {
+    apply(&state, &glyph, |f| {
+        Ok((
+            color::set_master_paint(f, &glyph, &key, &master_id, paint)?,
+            key.clone(),
+        ))
+    })
+}
+
+/// A colour layer's paint in one master, with that master's effective palette.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MasterPaint {
+    paint: Paint,
+    palette: Vec<String>,
+}
+
+/// Reads one master's paint for the colour layer at `key`'s stack position.
+#[tauri::command]
+pub fn master_color_paint(
+    state: State<AppState>,
+    glyph: String,
+    key: String,
+    master_id: String,
+) -> CmdResult<MasterPaint> {
+    let mut guard = lock(&state)?;
+    let font = &doc_mut(&mut guard)?.font;
+    let paint = color::master_paint(font, &glyph, &key, &master_id)?;
+    Ok(MasterPaint {
+        paint,
+        palette: css_palette_at(font, &master_id),
     })
 }
 

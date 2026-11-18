@@ -120,7 +120,12 @@ pub struct UfoSource<'a> {
 /// axis, otherwise from the style name (Thin 100 … Black 900), otherwise 400.
 pub fn weight_class(font: &Font, location: &BTreeMap<String, f64>, style: &str) -> u32 {
     if let Some(a) = font.axes.iter().find(|a| a.tag == "wght") {
-        let v = location.get("wght").copied().unwrap_or(a.default);
+        // OS/2 classes are user-space; master locations are design-space.
+        let d = location
+            .get("wght")
+            .copied()
+            .unwrap_or_else(|| kernest_core::designspace::design_bounds(a).1);
+        let v = kernest_core::designspace::design_to_user(a, d);
         return v.round().clamp(1.0, 1000.0) as u32;
     }
     let s: String = style
@@ -155,7 +160,11 @@ pub fn weight_class(font: &Font, location: &BTreeMap<String, f64>, style: &str) 
 /// has that axis.
 pub fn width_class(font: &Font, location: &BTreeMap<String, f64>) -> Option<u8> {
     let a = font.axes.iter().find(|a| a.tag == "wdth")?;
-    let v = location.get("wdth").copied().unwrap_or(a.default);
+    let d = location
+        .get("wdth")
+        .copied()
+        .unwrap_or_else(|| kernest_core::designspace::design_bounds(a).1);
+    let v = kernest_core::designspace::design_to_user(a, d);
     const STEPS: [(f64, u8); 9] = [
         (50.0, 1),
         (62.5, 2),
@@ -418,16 +427,50 @@ pub fn designspace(font: &Font, sources: &[DsSource], rules: &[DsRule]) -> Strin
         "<?xml version='1.0' encoding='UTF-8'?>\n<designspace format=\"5.0\">\n  <axes>\n",
     );
     for a in &font.axes {
-        let _ = writeln!(
+        let hidden = if a.hidden { " hidden=\"1\"" } else { "" };
+        let _ = write!(
             x,
-            "    <axis tag=\"{}\" name=\"{}\" minimum=\"{}\" default=\"{}\" maximum=\"{}\"{}/>",
+            "    <axis tag=\"{}\" name=\"{}\" minimum=\"{}\" default=\"{}\" maximum=\"{}\"{hidden}",
             xml_escape(&a.tag),
             xml_escape(&a.name),
             a.min,
             a.default,
             a.max,
-            if a.hidden { " hidden=\"1\"" } else { "" }
         );
+        if a.map.is_empty() && a.labels.is_empty() {
+            x.push_str("/>\n");
+        } else {
+            x.push_str(">\n");
+            for (u, d) in &a.map {
+                let _ = writeln!(x, "      <map input=\"{u}\" output=\"{d}\"/>");
+            }
+            if !a.labels.is_empty() {
+                x.push_str("      <labels>\n");
+                for l in &a.labels {
+                    let _ = write!(
+                        x,
+                        "        <label uservalue=\"{}\" name=\"{}\"",
+                        l.value,
+                        xml_escape(&l.name)
+                    );
+                    if let Some(lo) = l.min {
+                        let _ = write!(x, " userminimum=\"{lo}\"");
+                    }
+                    if let Some(hi) = l.max {
+                        let _ = write!(x, " usermaximum=\"{hi}\"");
+                    }
+                    if l.elidable {
+                        x.push_str(" elidable=\"true\"");
+                    }
+                    if let Some(linked) = l.linked_value {
+                        let _ = write!(x, " linkeduservalue=\"{linked}\"");
+                    }
+                    x.push_str("/>\n");
+                }
+                x.push_str("      </labels>\n");
+            }
+            x.push_str("    </axis>\n");
+        }
     }
     x.push_str("  </axes>\n");
     if !rules.is_empty() {
@@ -443,8 +486,13 @@ pub fn designspace(font: &Font, sources: &[DsSource], rules: &[DsRule]) -> Strin
                     continue;
                 };
                 // Open ends are left out (an open range keeps going past the axis).
+                // Conditions are user-space; bracket ranges are stored in design units.
                 let bound = |attr: &str, v: Option<f64>| {
-                    v.map(|v| format!(" {attr}=\"{v}\"")).unwrap_or_default()
+                    v.map(|v| {
+                        let u = kernest_core::designspace::design_to_user(a, v);
+                        format!(" {attr}=\"{u}\"")
+                    })
+                    .unwrap_or_default()
                 };
                 let _ = write!(
                     x,
@@ -479,11 +527,22 @@ pub fn designspace(font: &Font, sources: &[DsSource], rules: &[DsRule]) -> Strin
             xml_escape(style)
         );
         for a in &font.axes {
+            let d = loc
+                .get(&a.tag)
+                .copied()
+                .unwrap_or_else(|| kernest_core::designspace::design_bounds(a).1);
+            let user = if a.map.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " uservalue=\"{}\"",
+                    kernest_core::designspace::design_to_user(a, d)
+                )
+            };
             let _ = write!(
                 x,
-                "<dimension name=\"{}\" xvalue=\"{}\"/>",
+                "<dimension name=\"{}\" xvalue=\"{d}\"{user}/>",
                 xml_escape(&a.name),
-                loc.get(&a.tag).copied().unwrap_or(a.default)
             );
         }
         x.push_str("</location></source>\n");
@@ -497,15 +556,54 @@ pub fn designspace(font: &Font, sources: &[DsSource], rules: &[DsRule]) -> Strin
             xml_escape(&i.name)
         );
         for a in &font.axes {
+            let d = i
+                .location
+                .get(&a.tag)
+                .copied()
+                .unwrap_or_else(|| kernest_core::designspace::design_bounds(a).1);
+            let user = if a.map.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " uservalue=\"{}\"",
+                    kernest_core::designspace::design_to_user(a, d)
+                )
+            };
             let _ = write!(
                 x,
-                "<dimension name=\"{}\" xvalue=\"{}\"/>",
+                "<dimension name=\"{}\" xvalue=\"{d}\"{user}/>",
                 xml_escape(&a.name),
-                i.location.get(&a.tag).copied().unwrap_or(a.default)
             );
         }
         x.push_str("</location></instance>\n");
     }
-    x.push_str("  </instances>\n</designspace>\n");
+    x.push_str("  </instances>\n");
+    if !font.variable_fonts.is_empty() {
+        x.push_str("  <variable-fonts>\n");
+        for vf in &font.variable_fonts {
+            let _ = write!(
+                x,
+                "    <variable-font name=\"{}\" filename=\"{}\"><axis-subsets>",
+                xml_escape(&vf.name),
+                xml_escape(&vf.file_name)
+            );
+            for sub in &vf.axes {
+                let Some(a) = font.axes.iter().find(|a| a.tag == sub.tag) else {
+                    continue;
+                };
+                let _ = write!(x, "<axis-subset name=\"{}\"", xml_escape(&a.name));
+                if let Some(lo) = sub.min {
+                    let _ = write!(x, " userminimum=\"{lo}\"");
+                }
+                if let Some(hi) = sub.max {
+                    let _ = write!(x, " usermaximum=\"{hi}\"");
+                }
+                x.push_str("/>");
+            }
+            x.push_str("</axis-subsets></variable-font>\n");
+        }
+        x.push_str("  </variable-fonts>\n");
+    }
+    x.push_str("</designspace>\n");
     x
 }

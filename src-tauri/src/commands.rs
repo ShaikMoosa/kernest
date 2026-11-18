@@ -167,6 +167,14 @@ pub(crate) fn css_palette(font: &Font) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Palette 0 as CSS colours for one master, honouring its palette override.
+pub(crate) fn css_palette_at(font: &Font, master_id: &str) -> Vec<String> {
+    kernest_core::color::effective_palettes(font, master_id)
+        .first()
+        .map(|p| p.iter().map(|c| c.to_string()).collect())
+        .unwrap_or_default()
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocStatus {
@@ -462,7 +470,7 @@ fn layer_view_font(
         issues: check_glyph(font, glyph),
         glyph_locked: g.locked,
         color_layers: color_views(font, g, &layer.master_id),
-        palette: css_palette(font),
+        palette: css_palette_at(font, &layer.master_id),
         paint: layer.color.as_ref().map(|c| c.paint.clone()),
         guides: layer.guides.clone(),
         master_guides: master.guides.clone(),

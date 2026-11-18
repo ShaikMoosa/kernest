@@ -25,19 +25,18 @@ fn full_location(font: &Font, loc: &BTreeMap<String, f64>) -> R<BTreeMap<String,
     }
     let mut out = BTreeMap::new();
     for a in &font.axes {
-        let v = loc.get(&a.tag).copied().unwrap_or(a.default);
-        if !v.is_finite() || v < a.min || v > a.max {
-            return Err(format!(
-                "{} must be between {} and {}.",
-                a.name, a.min, a.max
-            ));
+        let (min, dflt, max) = crate::designspace::design_bounds(a);
+        let v = loc.get(&a.tag).copied().unwrap_or(dflt);
+        if !v.is_finite() || v < min || v > max {
+            return Err(format!("{} must be between {} and {}.", a.name, min, max));
         }
         out.insert(a.tag.clone(), v);
     }
     if let Some(m) = font.masters.iter().find(|m| {
-        font.axes
-            .iter()
-            .all(|a| m.location.get(&a.tag).copied().unwrap_or(a.default) == out[&a.tag])
+        font.axes.iter().all(|a| {
+            let dflt = crate::designspace::design_bounds(a).1;
+            m.location.get(&a.tag).copied().unwrap_or(dflt) == out[&a.tag]
+        })
     }) {
         return Err(format!("{} is already at that location.", m.name));
     }
@@ -224,6 +223,8 @@ mod tests {
             default: 400.0,
             max: 700.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         });
         f.masters[0].location = BTreeMap::from([("wght".into(), 400.0)]);
         f.masters.push(Master {

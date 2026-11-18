@@ -98,6 +98,38 @@ export async function pickMetricsSource(): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
+/** Picks another font to copy masters from (Font Info › Masters › Add from font…). */
+export async function pickMasterSource(): Promise<string | null> {
+  if (!isTauri) return null;
+  const picked = await open({
+    multiple: false,
+    title: t("Add masters from"),
+    filters: [
+      { name: t("Kernest font"), extensions: ["kernest"] },
+      { name: t("Font sources"), extensions: ["glyphs", "designspace", "plist"] },
+      { name: t("Compiled fonts"), extensions: ["otf", "ttf", "woff2"] },
+      { name: t("All files"), extensions: ["*"] },
+    ],
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
+/** Picks another font to compare against the open one (File › Compare with Font…). */
+export async function pickCompareSource(): Promise<string | null> {
+  if (!isTauri) return null;
+  const picked = await open({
+    multiple: false,
+    title: t("Compare with font"),
+    filters: [
+      { name: t("Kernest font"), extensions: ["kernest"] },
+      { name: t("Font sources"), extensions: ["glyphs", "designspace", "plist"] },
+      { name: t("Compiled fonts"), extensions: ["otf", "ttf", "woff2"] },
+      { name: t("All files"), extensions: ["*"] },
+    ],
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
 /** Picks a .fea file to merge into the feature code (File › Import Features…). */
 export async function pickFeaFile(): Promise<string | null> {
   if (!isTauri) return null;

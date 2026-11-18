@@ -288,8 +288,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       onError(e);
     }
   }, [glyph, masterId, onCommitted, onError]);
-  const savePaint = useCallback(async (paint: Paint) => {
-    const r = await backend.setColorPaint(glyph, masterId, paint);
+  const savePaint = useCallback(async (paint: Paint, scope: string) => {
+    const r = scope === "all"
+      ? await backend.setColorPaint(glyph, masterId, paint)
+      : await backend.setMasterPaint(glyph, masterId, scope, paint);
     setPainting(false);
     onCommitted(r.status);
     setLayersVersion((n) => n + 1);
@@ -1867,7 +1869,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}
       {painting && layer?.paint && (
         <PaintDialog glyph={glyph} paint={layer.paint} palette={layer.palette ?? []} width={layer.width}
-          height={layer.metrics.capHeight} onCancel={() => setPainting(false)} onSave={savePaint} />
+          height={layer.metrics.capHeight}
+          masters={layerList.filter((l) => l.kind === "master").map((l) => ({ id: l.masterId, name: l.masterName }))}
+          onLoadMaster={(mid) => backend.masterColorPaint(glyph, masterId, mid)}
+          onCancel={() => setPainting(false)} onSave={savePaint} />
       )}
       {smartDialog && <SmartDialog glyph={glyph} mode={smartDialog} onCancel={() => setSmartDialog(null)} onSave={saveSmartDialog} />}
       {layerDialog && <LayerDialog glyph={glyph} axes={layerDialog.axes} mode={layerDialog.mode} onCancel={() => setLayerDialog(null)} onSave={saveLayerDialog} />}

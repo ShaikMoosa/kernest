@@ -106,7 +106,9 @@ fn interpolated_font(
         notes: String::new(),
         feature_settings: Default::default(),
         palettes: Vec::new(),
+        master_palettes: Default::default(),
         filters: Vec::new(),
+        variable_fonts: Vec::new(),
     };
     (scratch, bad)
 }
@@ -470,6 +472,8 @@ mod interpolation_tests {
             default: 400.0,
             max: 700.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         };
         let f = structure::set_axes(&doc.font, vec![wght]).unwrap();
         let (mut f, bold) =

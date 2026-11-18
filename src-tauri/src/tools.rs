@@ -421,6 +421,8 @@ mod tests {
             default: 400.0,
             max: 700.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         };
         let next = structure::set_axes(&doc.font, vec![wght]).unwrap();
         doc.history.apply_font(&mut doc.font, next).unwrap();

@@ -5,8 +5,10 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use crate::designspace::normalize;
-use crate::model::{Axis, Font, Instance, Metrics};
+use serde::Serialize;
+
+use crate::designspace::{normalize, Location};
+use crate::model::{Axis, Font, Instance, KernPair, Layer, Master, Metrics, VariableFontSetting};
 
 type R<T> = Result<T, String>;
 
@@ -158,6 +160,60 @@ fn check_axes(axes: &[Axis]) -> R<()> {
                 a.name
             ));
         }
+        let mut prev: Option<(f64, f64)> = None;
+        for &(u, d) in &a.map {
+            if !(u.is_finite() && d.is_finite()) || u < a.min || u > a.max {
+                return Err(format!(
+                    "Axis \"{}\" mapping points must be finite user values inside the axis range.",
+                    a.name
+                ));
+            }
+            if let Some((pu, pd)) = prev {
+                if u <= pu || d < pd {
+                    return Err(format!(
+                        "Axis \"{}\" mapping must rise: user values strictly up, design values never down.",
+                        a.name
+                    ));
+                }
+            }
+            prev = Some((u, d));
+        }
+        for l in &a.labels {
+            if l.name.trim().is_empty() {
+                return Err(format!(
+                    "Every value label on axis \"{}\" needs a name.",
+                    a.name
+                ));
+            }
+            let in_range = |v: f64| v.is_finite() && v >= a.min && v <= a.max;
+            if !in_range(l.value) {
+                return Err(format!(
+                    "Axis \"{}\" value label \"{}\" must sit inside the axis range.",
+                    a.name, l.name
+                ));
+            }
+            if let (Some(lo), Some(hi)) = (l.min, l.max) {
+                if !in_range(lo) || !in_range(hi) || lo > l.value || l.value > hi {
+                    return Err(format!(
+                        "Axis \"{}\" value label \"{}\" needs a range around its value.",
+                        a.name, l.name
+                    ));
+                }
+            } else if l.min.is_some() != l.max.is_some() {
+                return Err(format!(
+                    "Axis \"{}\" value label \"{}\" needs both ends of a range, or neither.",
+                    a.name, l.name
+                ));
+            }
+            if let Some(linked) = l.linked_value {
+                if !in_range(linked) {
+                    return Err(format!(
+                        "Axis \"{}\" value label \"{}\" links to a value outside the axis range.",
+                        a.name, l.name
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -170,7 +226,9 @@ pub fn set_axes(font: &Font, axes: Vec<Axis>) -> R<Font> {
     let fix = |loc: &mut BTreeMap<String, f64>| {
         loc.retain(|tag, _| axes.iter().any(|a| &a.tag == tag));
         for a in &axes {
-            loc.entry(a.tag.clone()).or_insert(a.default);
+            // Locations are design-space; the default a new axis gets is the mapped one.
+            let dflt = crate::designspace::design_bounds(a).1;
+            loc.entry(a.tag.clone()).or_insert(dflt);
         }
     };
     f.masters.iter_mut().for_each(|m| fix(&mut m.location));
@@ -199,12 +257,10 @@ pub fn set_axes(font: &Font, axes: Vec<Axis>) -> R<Font> {
 fn check_location(font: &Font, loc: &BTreeMap<String, f64>) -> R<BTreeMap<String, f64>> {
     let mut out = BTreeMap::new();
     for a in &font.axes {
-        let v = loc.get(&a.tag).copied().unwrap_or(a.default);
-        if !v.is_finite() || v < a.min || v > a.max {
-            return Err(format!(
-                "{} must be between {} and {}.",
-                a.name, a.min, a.max
-            ));
+        let (min, dflt, max) = crate::designspace::design_bounds(a);
+        let v = loc.get(&a.tag).copied().unwrap_or(dflt);
+        if !v.is_finite() || v < min || v > max {
+            return Err(format!("{} must be between {} and {}.", a.name, min, max));
         }
         out.insert(a.tag.clone(), v);
     }
@@ -255,6 +311,152 @@ pub fn add_master(
         guides: src.guides.clone(),
     });
     Ok((f, id))
+}
+
+/// A glyph in the current font whose incoming layer can't interpolate with the default.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignGlyphIssue {
+    pub glyph: String,
+    pub issues: Vec<String>,
+}
+
+/// What adding one master from another font would do, shown before the user commits:
+/// how many glyphs the source master carries, how many line up with this font, which
+/// glyphs are missing (they become empty layers) and which won't interpolate.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignMasterPreview {
+    pub master_id: String,
+    pub name: String,
+    pub location: Location,
+    /// Glyphs the source master has a layer for.
+    pub glyph_count: usize,
+    /// Current glyphs that also exist in the source master.
+    pub matched: usize,
+    /// Current glyphs the source master lacks; they are added as empty layers.
+    pub missing: Vec<String>,
+    pub incompatible: Vec<ForeignGlyphIssue>,
+}
+
+/// Reports compatibility of one `source` master against the current font's default master,
+/// without changing anything. The reference is the current default layer of each glyph.
+pub fn preview_foreign_master(
+    current: &Font,
+    source: &Font,
+    master_id: &str,
+) -> R<ForeignMasterPreview> {
+    let src = source
+        .master(master_id)
+        .ok_or_else(|| format!("No master with id \"{master_id}\" in the source font."))?;
+    let def = crate::interpolate::default_master(current);
+    let glyph_count = source
+        .glyphs
+        .iter()
+        .filter(|g| g.layer(master_id).is_some())
+        .count();
+    let mut matched = 0;
+    let mut missing = Vec::new();
+    let mut incompatible = Vec::new();
+    for g in &current.glyphs {
+        let Some(reference) = g.layer(&def.id) else {
+            continue;
+        };
+        match source.glyph(&g.name).and_then(|sg| sg.layer(master_id)) {
+            None => missing.push(g.name.clone()),
+            Some(layer) => {
+                matched += 1;
+                let issues = crate::interpolate::compare(&src.name, reference, &def.name, layer);
+                if !issues.is_empty() {
+                    incompatible.push(ForeignGlyphIssue {
+                        glyph: g.name.clone(),
+                        issues,
+                    });
+                }
+            }
+        }
+    }
+    Ok(ForeignMasterPreview {
+        master_id: master_id.into(),
+        name: src.name.clone(),
+        location: src.location.clone(),
+        glyph_count,
+        matched,
+        missing,
+        incompatible,
+    })
+}
+
+/// Adds a master copied from another font's `master_id`, placed at `location` in this
+/// font's design space. Glyphs the source lacks become empty layers (returned as the
+/// warning list); kerning is kept only for pairs whose sides exist in this font.
+/// Returns the new font and the names of the glyphs filled as empty layers.
+pub fn add_master_from(
+    current: &Font,
+    source: &Font,
+    master_id: &str,
+    name: &str,
+    location: &Location,
+) -> R<(Font, Vec<String>)> {
+    let src = source
+        .master(master_id)
+        .ok_or_else(|| format!("No master with id \"{master_id}\" in the source font."))?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Enter a master name.".into());
+    }
+    let location = check_location(current, location)?;
+    let def = crate::interpolate::default_master(current);
+    let mut f = current.clone();
+    let id = new_master_id(&f);
+    let mut missing = Vec::new();
+    for g in &mut f.glyphs {
+        match source.glyph(&g.name).and_then(|sg| sg.layer(master_id)) {
+            Some(layer) => {
+                let mut l = layer.clone();
+                l.master_id = id.clone();
+                g.layers.push(l);
+            }
+            None => {
+                let width = g.layer(&def.id).map_or(0.0, |l| l.width);
+                g.layers.push(Layer::new(id.clone(), width));
+                missing.push(g.name.clone());
+            }
+        }
+    }
+    // Keep kerning only for sides this font knows: a glyph name, or a group some glyph uses.
+    let glyphs: HashSet<&str> = current.glyphs.iter().map(|g| g.name.as_str()).collect();
+    let mut groups: HashSet<&str> = HashSet::new();
+    for g in &current.glyphs {
+        if let Some(l) = &g.left_group {
+            groups.insert(l);
+        }
+        if let Some(r) = &g.right_group {
+            groups.insert(r);
+        }
+    }
+    let resolves = |side: &str| match side.strip_prefix('@') {
+        Some(g) => groups.contains(g),
+        None => glyphs.contains(side),
+    };
+    if let Some(pairs) = source.kerning.get(master_id) {
+        let kept: Vec<KernPair> = pairs
+            .iter()
+            .filter(|p| resolves(&p.left) && resolves(&p.right))
+            .cloned()
+            .collect();
+        if !kept.is_empty() {
+            f.kerning.insert(id.clone(), kept);
+        }
+    }
+    f.masters.push(Master {
+        id,
+        name: name.into(),
+        location,
+        metrics: src.metrics,
+        guides: src.guides.clone(),
+    });
+    Ok((f, missing))
 }
 
 pub fn update_master(
@@ -324,6 +526,70 @@ pub fn set_instances(font: &Font, instances: Vec<Instance>) -> R<Font> {
     }
     let mut f = font.clone();
     f.instances = out;
+    Ok(f)
+}
+
+/// Replaces the family's variable fonts. Empty means one variable font at full range.
+pub fn set_variable_fonts(font: &Font, list: Vec<VariableFontSetting>) -> R<Font> {
+    let mut names = HashSet::new();
+    let mut files = HashSet::new();
+    let mut out = Vec::with_capacity(list.len());
+    for mut s in list {
+        s.name = s.name.trim().to_string();
+        s.file_name = s.file_name.trim().to_string();
+        if s.name.is_empty() {
+            return Err("Every variable font needs a name.".into());
+        }
+        if !names.insert(s.name.clone()) {
+            return Err(format!("Variable font name \"{}\" is used twice.", s.name));
+        }
+        if s.file_name.is_empty() {
+            return Err(format!("Variable font \"{}\" needs a file name.", s.name));
+        }
+        if s.file_name.contains(['/', '\\', ':']) {
+            return Err(format!(
+                "File name \"{}\" must not contain a path.",
+                s.file_name
+            ));
+        }
+        if !files.insert(s.file_name.clone()) {
+            return Err(format!("File name \"{}\" is used twice.", s.file_name));
+        }
+        let mut tags = HashSet::new();
+        for sub in &s.axes {
+            let Some(a) = font.axes.iter().find(|a| a.tag == sub.tag) else {
+                return Err(format!(
+                    "Variable font \"{}\" subsets unknown axis \"{}\".",
+                    s.name, sub.tag
+                ));
+            };
+            if !tags.insert(sub.tag.clone()) {
+                return Err(format!(
+                    "Variable font \"{}\" lists axis \"{}\" twice.",
+                    s.name, sub.tag
+                ));
+            }
+            let lo = sub.min.unwrap_or(a.min);
+            let hi = sub.max.unwrap_or(a.max);
+            if !(lo.is_finite() && hi.is_finite()) || lo > hi || lo < a.min || hi > a.max {
+                return Err(format!(
+                    "Variable font \"{}\" range on \"{}\" must sit inside the axis range, minimum ≤ maximum.",
+                    s.name, a.name
+                ));
+            }
+        }
+        for g in &s.glyphs {
+            if font.glyph(g).is_none() {
+                return Err(format!(
+                    "Variable font \"{}\" keeps unknown glyph \"{}\".",
+                    s.name, g
+                ));
+            }
+        }
+        out.push(s);
+    }
+    let mut f = font.clone();
+    f.variable_fonts = out;
     Ok(f)
 }
 
@@ -405,6 +671,8 @@ mod tests {
             default: 400.0,
             max: 900.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         }
     }
 
@@ -421,6 +689,142 @@ mod tests {
         bad.min = 500.0;
         assert!(set_axes(&f, vec![bad]).is_err());
         assert!(set_axes(&f, vec![wght(), wght()]).is_err());
+    }
+
+    #[test]
+    fn axis_map_validation_and_default_fill() {
+        let mut a = wght();
+        a.map = vec![(100.0, 20.0), (400.0, 300.0), (900.0, 950.0)];
+        // A new axis fills missing master locations with the design default (300).
+        let f = set_axes(&sample_font(), vec![a.clone()]).unwrap();
+        assert_eq!(f.masters[0].location.get("wght"), Some(&300.0));
+
+        a.map = vec![(400.0, 300.0), (100.0, 20.0)];
+        assert!(set_axes(&sample_font(), vec![a.clone()]).is_err());
+        a.map = vec![(100.0, 300.0), (900.0, 20.0)];
+        assert!(set_axes(&sample_font(), vec![a.clone()]).is_err());
+        a.map = vec![(50.0, 20.0)];
+        assert!(set_axes(&sample_font(), vec![a.clone()]).is_err());
+        a.map = vec![(100.0, 20.0), (100.0, 30.0)];
+        assert!(set_axes(&sample_font(), vec![a]).is_err());
+    }
+
+    #[test]
+    fn axis_label_validation() {
+        use crate::AxisValue;
+        let label = |name: &str, value: f64| AxisValue {
+            name: name.into(),
+            value,
+            min: None,
+            max: None,
+            elidable: false,
+            linked_value: None,
+        };
+        let mut a = wght();
+        a.labels = vec![label("Regular", 400.0), label("Bold", 700.0)];
+        set_axes(&sample_font(), vec![a]).unwrap();
+
+        let mut bad = wght();
+        bad.labels = vec![label("", 400.0)];
+        assert!(set_axes(&sample_font(), vec![bad])
+            .unwrap_err()
+            .contains("needs a name"));
+
+        let mut bad = wght();
+        bad.labels = vec![label("Too heavy", 950.0)];
+        assert!(set_axes(&sample_font(), vec![bad])
+            .unwrap_err()
+            .contains("inside the axis range"));
+
+        let mut bad = wght();
+        bad.labels = vec![AxisValue {
+            min: Some(500.0),
+            ..label("Range", 600.0)
+        }];
+        assert!(set_axes(&sample_font(), vec![bad])
+            .unwrap_err()
+            .contains("both ends"));
+
+        let mut bad = wght();
+        bad.labels = vec![AxisValue {
+            min: Some(700.0),
+            max: Some(800.0),
+            ..label("Range", 600.0)
+        }];
+        assert!(set_axes(&sample_font(), vec![bad])
+            .unwrap_err()
+            .contains("range around its value"));
+
+        let mut bad = wght();
+        bad.labels = vec![AxisValue {
+            linked_value: Some(950.0),
+            ..label("Bold", 700.0)
+        }];
+        assert!(set_axes(&sample_font(), vec![bad])
+            .unwrap_err()
+            .contains("outside the axis range"));
+    }
+
+    #[test]
+    fn variable_font_validation() {
+        use crate::model::{VariableAxisSubset, VariableFontSetting};
+        let f = set_axes(&sample_font(), vec![wght()]).unwrap();
+        let vf = |name: &str, file: &str| VariableFontSetting {
+            name: name.into(),
+            file_name: file.into(),
+            axes: vec![VariableAxisSubset {
+                tag: "wght".into(),
+                min: Some(400.0),
+                max: Some(700.0),
+            }],
+            glyphs: Vec::new(),
+        };
+        let ok =
+            set_variable_fonts(&f, vec![vf("Light", "F-Light"), vf("Bold", "F-Bold")]).unwrap();
+        assert_eq!(ok.variable_fonts.len(), 2);
+        assert!(set_variable_fonts(&f, vec![])
+            .unwrap()
+            .variable_fonts
+            .is_empty());
+
+        assert!(set_variable_fonts(&f, vec![vf("", "F")])
+            .unwrap_err()
+            .contains("needs a name"));
+        assert!(set_variable_fonts(&f, vec![vf("A", "F"), vf("A", "G")])
+            .unwrap_err()
+            .contains("used twice"));
+        assert!(set_variable_fonts(&f, vec![vf("A", "")])
+            .unwrap_err()
+            .contains("needs a file name"));
+        assert!(set_variable_fonts(&f, vec![vf("A", "dir/F")])
+            .unwrap_err()
+            .contains("must not contain a path"));
+        assert!(set_variable_fonts(&f, vec![vf("A", "F"), vf("B", "F")])
+            .unwrap_err()
+            .contains("used twice"));
+
+        let mut bad = vf("A", "F");
+        bad.axes[0].tag = "wdth".into();
+        assert!(set_variable_fonts(&f, vec![bad])
+            .unwrap_err()
+            .contains("unknown axis"));
+
+        let mut bad = vf("A", "F");
+        bad.axes[0].max = Some(950.0);
+        assert!(set_variable_fonts(&f, vec![bad])
+            .unwrap_err()
+            .contains("inside the axis range"));
+
+        let mut bad = vf("A", "F");
+        bad.axes[0].min = Some(800.0);
+        bad.axes[0].max = Some(500.0);
+        assert!(set_variable_fonts(&f, vec![bad]).is_err());
+
+        let mut bad = vf("A", "F");
+        bad.glyphs = vec!["nope".into()];
+        assert!(set_variable_fonts(&f, vec![bad])
+            .unwrap_err()
+            .contains("unknown glyph"));
     }
 
     #[test]
@@ -499,5 +903,77 @@ mod tests {
         );
         assert!(set_info(&f, "", 1000, 1, 0).is_err());
         assert!(set_info(&f, "X", 8, 1, 0).is_err());
+    }
+
+    #[test]
+    fn add_master_from_other_font_reports_compatibility() {
+        use crate::model::{Node, NodeKind, Shape};
+        let current = set_axes(&sample_font(), vec![wght()]).unwrap();
+        // A source font with a Bold master, one incompatible glyph and one glyph removed.
+        let (mut source, _) = add_master(
+            &set_axes(&sample_font(), vec![wght()]).unwrap(),
+            "m01",
+            "Bold",
+            &BTreeMap::from([("wght".into(), 700.0)]),
+        )
+        .unwrap();
+        if let Shape::Path(p) = &mut source
+            .glyph_mut("H")
+            .unwrap()
+            .layer_mut("m02")
+            .unwrap()
+            .shapes[0]
+        {
+            p.nodes.push(Node::new(0.0, 0.0, NodeKind::Line));
+        }
+        source.glyphs.retain(|g| g.name != "I");
+
+        let p = preview_foreign_master(&current, &source, "m02").unwrap();
+        assert_eq!(p.name, "Bold");
+        assert_eq!(p.location.get("wght"), Some(&700.0));
+        assert_eq!(p.missing, vec!["I".to_string()]);
+        assert_eq!(p.matched, current.glyphs.len() - 1);
+        assert_eq!(p.glyph_count, source.glyphs.len());
+        assert!(p.incompatible.iter().any(|i| i.glyph == "H"));
+        assert!(preview_foreign_master(&current, &source, "nope").is_err());
+
+        let (f, missing) = add_master_from(
+            &current,
+            &source,
+            "m02",
+            "Bold",
+            &BTreeMap::from([("wght".into(), 700.0)]),
+        )
+        .unwrap();
+        assert_eq!(missing, vec!["I".to_string()]);
+        f.validate().unwrap();
+        assert_eq!(f.master("m02").unwrap().name, "Bold");
+        // The missing glyph becomes an empty layer keeping the current advance.
+        let i = f.glyph("I").unwrap().layer("m02").unwrap();
+        assert!(i.shapes.is_empty());
+        assert_eq!(
+            i.width,
+            current.glyph("I").unwrap().layer("m01").unwrap().width
+        );
+        // The incompatible glyph is still copied; the report warned about it.
+        assert!(f.glyph("H").unwrap().layer("m02").is_some());
+        // Kerning keeps the pairs whose sides exist in this font.
+        assert_eq!(f.kerning.get("m02").map(Vec::len), Some(2));
+        assert!(add_master_from(
+            &current,
+            &source,
+            "m02",
+            " ",
+            &BTreeMap::from([("wght".into(), 700.0)])
+        )
+        .is_err());
+        assert!(add_master_from(
+            &current,
+            &source,
+            "m02",
+            "X",
+            &BTreeMap::from([("wght".into(), 2000.0)])
+        )
+        .is_err());
     }
 }

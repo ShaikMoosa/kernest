@@ -3,8 +3,8 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
-import { backend, errorMessage, isTauri, type BatchOperation, type ClipGlyph, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PasteMode, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement } from "./lib/backend";
-import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, loadRecents, openExternal, pickFeaFile, pickFontToOpen, pickGlyphsSavePath, pickMetricsSource, pickSavePath, pickScript, pickSourceToImport, pickSvgFiles, rememberRecent, type RecentFont } from "./lib/desktop";
+import { backend, errorMessage, isTauri, type BatchOperation, type ClipGlyph, type CompareView, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PasteMode, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement } from "./lib/backend";
+import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, loadRecents, openExternal, pickCompareSource, pickFeaFile, pickFontToOpen, pickGlyphsSavePath, pickMetricsSource, pickSavePath, pickScript, pickSourceToImport, pickSvgFiles, rememberRecent, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu, type MenuItem } from "./components/TitleBar";
 import { SHORTCUT_ACTIONS, effectiveShortcut, matchShortcut, parseShortcut } from "./lib/shortcuts";
 import { loadTheme, saveTheme, type ThemePref } from "./lib/theme";
@@ -32,6 +32,7 @@ import { AboutDialog } from "./components/AboutDialog";
 import { ScriptDialog } from "./components/ScriptDialog";
 import { PluginFilterDialog } from "./components/PluginFilterDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { CompareDialog } from "./components/CompareDialog";
 import { language, LANGUAGES, saveLanguage, t, tn, translateMessage, type Lang } from "./lib/i18n";
 import { copyGlyphsToClipboard } from "./lib/glyphClipboard";
 import { formatGlyphNames, NAME_FORMATS, type NameFormat } from "./lib/glyphNames";
@@ -114,6 +115,7 @@ export default function App() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [settings, setSettings] = useState<Settings>({ pluginEnabled: {}, shortcuts: {}, pythonPath: null });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [compare, setCompare] = useState<CompareView | null>(null);
   const [scriptDialog, setScriptDialog] = useState<{ mode: "macro" | "script"; name?: string } | null>(null);
   const [scriptOutput, setScriptOutput] = useState<OutputLine[]>([]);
   const [scriptRunning, setScriptRunning] = useState(false);
@@ -489,6 +491,31 @@ export default function App() {
     }
   }, [font, fail]);
 
+  // S42 · Compare the open font with another one; the report changes nothing.
+  const compareFont = useCallback(async () => {
+    if (!font) return;
+    const path = await pickCompareSource();
+    if (!path) return;
+    try {
+      setCompare(await backend.compareFonts(path));
+    } catch (e) {
+      fail(e);
+    }
+  }, [font, fail]);
+
+  // S43 · Expand the instances into interpolated masters in a new unsaved document.
+  const generateInstances = useCallback(async () => {
+    if (!font) return;
+    if (!(await confirmDiscard())) return;
+    try {
+      const view = await backend.generateInstances();
+      loadDocument(view);
+      setToast({ kind: "info", text: t("Generated {n} masters as a new font.", { n: view.masters.length }) });
+    } catch (e) {
+      fail(e);
+    }
+  }, [font, confirmDiscard, loadDocument, fail]);
+
   const applyFeatureImport = useCallback(async () => {
     if (!font || !featureDialog) return;
     const r = await backend.importFeatures(featureDialog.path);
@@ -860,6 +887,7 @@ export default function App() {
           { label: t("UFO…"), onSelect: font ? () => setExportingUfo(true) : undefined },
         ] },
         { label: t("Font Info…"), shortcut: shortcutText("font-info"), onSelect: font ? openInfo : undefined },
+        { label: t("Compare with Font…"), onSelect: font ? compareFont : undefined },
       ],
     },
     {
@@ -1007,7 +1035,7 @@ export default function App() {
               {id.startsWith("g:") ? (
                 <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showBoundingBox={showBoundingBox} reporters={enabledReporters} />
               ) : id === "info" ? (
-                <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} />
+                <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} onGenerateInstances={generateInstances} />
               ) : id === "kerning" ? (
                 <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={onCommitted} onError={fail} />
               ) : (
@@ -1150,6 +1178,9 @@ export default function App() {
           onOpenPluginsFolder={openPluginsFolder}
           onReloadPlugins={reloadPlugins}
         />
+      )}
+      {compare && (
+        <CompareDialog report={compare} currentFamily={font?.familyName ?? ""} onClose={() => setCompare(null)} />
       )}
       {toast && (
         <div className={`toast toast-${toast.kind} k-label`} role="status" onClick={() => setToast(null)}>

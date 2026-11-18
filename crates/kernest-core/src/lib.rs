@@ -12,6 +12,7 @@ pub mod background;
 pub mod batch;
 pub mod clipboard;
 pub mod color;
+pub mod compare;
 pub mod decompose;
 pub mod designspace;
 pub mod edit;

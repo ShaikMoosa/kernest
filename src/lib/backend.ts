@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { clonePaths, pathsToSvg, pointBounds, rectPath, transformPaths, type EditPath } from "./outline";
 import { translateMessage } from "./i18n";
+import { designBounds } from "./axisMap";
 
 export interface GlyphSetInfo {
   id: string;
@@ -270,6 +271,23 @@ export interface Axis {
   default: number;
   max: number;
   hidden?: boolean;
+  /** avar: user → design points, sorted by user value. Empty = user == design. */
+  map?: [number, number][];
+  /** STAT: the named values on this axis, in user coordinates. Empty = no names. */
+  labels?: AxisValue[];
+}
+
+/** One STAT axis value label. Values are in user coordinates, as in the exported font. */
+export interface AxisValue {
+  name: string;
+  value: number;
+  /** Optional range of user values this label covers (a format 2 axis value). */
+  min?: number | null;
+  max?: number | null;
+  /** Whether apps may leave this name out of a style name (e.g. "Regular"). */
+  elidable?: boolean;
+  /** A linked user value (a format 3 axis value), e.g. Bold linking to Regular. */
+  linkedValue?: number | null;
 }
 
 export interface MasterView {
@@ -277,6 +295,73 @@ export interface MasterView {
   name: string;
   location: Location;
   metrics: Metrics;
+}
+
+/** A current glyph whose incoming layer from another font can't interpolate. */
+export interface ForeignGlyphIssue {
+  glyph: string;
+  issues: string[];
+}
+
+/** What adding one master from another font would do, shown before committing. */
+export interface ForeignMasterPreview {
+  masterId: string;
+  name: string;
+  location: Location;
+  /** Glyphs the source master has a layer for. */
+  glyphCount: number;
+  /** Current glyphs that also exist in the source master. */
+  matched: number;
+  /** Current glyphs the source lacks; they become empty layers. */
+  missing: string[];
+  incompatible: ForeignGlyphIssue[];
+}
+
+/** The result of adding a master from another font: the new info and the empty-layer glyphs. */
+export interface AddMasterFromResult {
+  info: FontInfo;
+  missing: string[];
+}
+
+/** One differing Font Info or metrics field; `field` is a stable label key. */
+export interface FieldDiff {
+  field: string;
+  current: string;
+  other: string;
+}
+
+/** A master present on one side only, or whose metrics differ. */
+export interface MasterDiff {
+  name: string;
+  onlyIn?: "current" | "other";
+  metrics: FieldDiff[];
+}
+
+/** A glyph present on one side only, or whose default-master outline/width differs. */
+export interface GlyphDiff {
+  name: string;
+  onlyIn?: "current" | "other";
+  paths?: [number, number];
+  nodes?: [number, number];
+  width?: [number, number];
+}
+
+/** A kerning pair with differing values, or present on one side only. */
+export interface KernDiff {
+  left: string;
+  right: string;
+  current?: number;
+  other?: number;
+}
+
+/** S42 · The compare-fonts report window payload. */
+export interface CompareView {
+  fileName: string;
+  familyName: string;
+  info: FieldDiff[];
+  masters: MasterDiff[];
+  glyphs: GlyphDiff[];
+  kerning: KernDiff[];
 }
 
 export interface Instance {
@@ -296,6 +381,22 @@ export interface StyleLink {
   italic: boolean;
   /** The instance this one is the bold/italic of (empty for a regular family). */
   base: string;
+}
+
+/** One named variable font built from a subset of the family's axes and glyphs. */
+export interface VariableFontSetting {
+  name: string;
+  fileName: string;
+  /** Per-axis user-range restrictions; an absent bound uses the full axis range. Omitted when empty. */
+  axes?: VariableAxisSubset[];
+  /** Glyphs to include (empty = all); components are pulled in automatically. Omitted when empty. */
+  glyphs?: string[];
+}
+
+export interface VariableAxisSubset {
+  tag: string;
+  min?: number | null;
+  max?: number | null;
 }
 
 /** The naming fields on Font Info › General. Empty strings clear a field. */
@@ -342,12 +443,16 @@ export interface FontInfo {
   axes: Axis[];
   masters: MasterView[];
   instances: Instance[];
+  /** Extra variable fonts to export from this family, beyond the full one. */
+  variableFonts: VariableFontSetting[];
   /** TrueType autohinting settings. */
   hinting: Hinting;
   /** The edit view's snap grid, if set. */
   grid: Grid | null;
   /** Colour palettes (CSS colours #rrggbbaa); every palette has the same length. */
   palettes: string[][];
+  /** Per-master palette overrides keyed by master id; empty means none. */
+  masterPalettes: Record<string, string[][]>;
   defaultMasterId: string;
   /** The working glyph order; export follows it (.notdef always first). */
   glyphOrder: string[];
@@ -585,17 +690,33 @@ export interface Backend {
   measure(glyph: string, masterId: string, p0: [number, number], p1: [number, number], onBackground?: boolean): Promise<Measurement>;
   /** Sets the colour palettes (#rrggbb or #rrggbbaa). */
   setPalettes(palettes: string[][]): Promise<FontInfo>;
+  /** Sets or clears one master's palette override (null clears it). */
+  setMasterPalettes(masterId: string, palettes: string[][] | null): Promise<FontInfo>;
   /** Adds a colour layer on top of the glyph's others, in every master. */
   addColorLayer(glyph: string, masterId: string): Promise<{ key: string; status: DocStatus }>;
   /** Sets a colour layer's paint (in every master). */
   setColorPaint(glyph: string, key: string, paint: Paint): Promise<{ key: string; status: DocStatus }>;
+  /** Sets a colour layer's paint in one master only. */
+  setMasterPaint(glyph: string, key: string, masterId: string, paint: Paint): Promise<{ key: string; status: DocStatus }>;
+  /** Reads one master's paint and effective palette for a colour layer. */
+  masterColorPaint(glyph: string, key: string, masterId: string): Promise<{ paint: Paint; palette: string[] }>;
   /** Moves a colour layer up or down the stack. */
   moveColorLayer(glyph: string, key: string, up: boolean): Promise<{ key: string; status: DocStatus }>;
   /** Adds a master copied from `copyFrom` (outlines, metrics, kerning). */
   addMaster(copyFrom: string, name: string, location: Location): Promise<FontInfo>;
+  /** Reports compatibility of every master in another font against this one, before adding. */
+  previewForeignMasters(path: string): Promise<ForeignMasterPreview[]>;
+  /** Adds a master copied from another font's `masterId`, placed at `location` here. */
+  addMasterFrom(path: string, masterId: string, name: string, location: Location): Promise<AddMasterFromResult>;
+  /** S42 · Read-only report of how another font differs from the open one. */
+  compareFonts(path: string): Promise<CompareView>;
+  /** S43 · One interpolated master per instance, opened as a new unsaved document. */
+  generateInstances(): Promise<FontView>;
   updateMaster(id: string, name: string, location: Location, metrics: Metrics): Promise<FontInfo>;
   removeMaster(id: string): Promise<FontInfo>;
   setInstances(instances: Instance[]): Promise<FontInfo>;
+  /** Replaces the list of extra variable fonts built from this family. */
+  setVariableFonts(variableFonts: VariableFontSetting[]): Promise<FontInfo>;
   /** Reorders the working glyphs; export follows the new order. */
   setGlyphOrder(order: string[]): Promise<FontInfo>;
   compatibility(): Promise<{ glyph: string; issues: string[] }[]>;
@@ -941,14 +1062,22 @@ const tauriBackend: Backend = {
   updateBackground: (glyph, masterId, paths, components, anchors) => invoke("update_background", { glyph, masterId, paths, components, anchors }),
   measure: (glyph, masterId, p0, p1, onBackground) => invoke("measure", { glyph, masterId, p0, p1, onBackground: onBackground ?? false }),
   setPalettes: (palettes) => invoke("set_palettes", { palettes }),
+  setMasterPalettes: (masterId, palettes) => invoke("set_master_palettes", { masterId, palettes }),
   addColorLayer: (glyph, masterId) => invoke("add_color_layer", { glyph, masterId }),
   setColorPaint: (glyph, key, paint) => invoke("set_color_paint", { glyph, key, paint }),
+  setMasterPaint: (glyph, key, masterId, paint) => invoke("set_master_paint", { glyph, key, masterId, paint }),
+  masterColorPaint: (glyph, key, masterId) => invoke("master_color_paint", { glyph, key, masterId }),
   moveColorLayer: (glyph, key, up) => invoke("move_color_layer", { glyph, key, up }),
   setAxes: (axes) => invoke("set_axes", { axes }),
   addMaster: (copyFrom, name, location) => invoke("add_master", { copyFrom, name, location }),
+  previewForeignMasters: (path) => invoke("preview_foreign_masters", { path }),
+  addMasterFrom: (path, masterId, name, location) => invoke("add_master_from", { path, masterId, name, location }),
+  compareFonts: (path) => invoke("compare_fonts", { path }),
+  generateInstances: () => invoke("generate_instances"),
   updateMaster: (id, name, location, metrics) => invoke("update_master", { id, name, location, metrics }),
   removeMaster: (id) => invoke("remove_master", { id }),
   setInstances: (instances) => invoke("set_instances", { instances }),
+  setVariableFonts: (variableFonts) => invoke("set_variable_fonts", { variableFonts }),
   setGlyphOrder: (order) => invoke("set_glyph_order", { order }),
   compatibility: () => invoke("compatibility"),
   exportFont: (variable, statics, outDir, options) => invoke("export_font", { variable, statics, outDir, ...options }),
@@ -1080,6 +1209,7 @@ interface MockMeta {
   axes: Axis[];
   masters: MasterView[];
   instances: Instance[];
+  variableFonts: VariableFontSetting[];
   hinting?: Hinting;
   grid?: Grid | null;
 }
@@ -1117,7 +1247,7 @@ function mockDoc(familyName: string, codepoints: number[], withOutlines: boolean
   });
   const kerning = withOutlines ? [{ left: "T", right: "o", value: -60 }, { left: "L", right: "T", value: -80 }] : [];
   return {
-    familyName, unitsPerEm: 1000, versionMajor: 1, versionMinor: 0, names: { ...EMPTY_NAMES }, notes: "", axes: [], instances: [],
+    familyName, unitsPerEm: 1000, versionMajor: 1, versionMinor: 0, names: { ...EMPTY_NAMES }, notes: "", axes: [], instances: [], variableFonts: [],
     masters: [{ id: "m01", name: "Regular", location: {}, metrics: { ...METRICS } }],
     glyphs, kerning, undo: [], redo: [], revision: 0, savedRevision: 0,
   };
@@ -1261,7 +1391,7 @@ function undoStep(d: MockDoc, c: MockChange, forward: boolean): UndoResult {
 
 const metaCopy = (m: MockMeta): MockMeta => JSON.parse(JSON.stringify({
   familyName: m.familyName, unitsPerEm: m.unitsPerEm, versionMajor: m.versionMajor, versionMinor: m.versionMinor,
-  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, hinting: m.hinting, grid: m.grid,
+  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, variableFonts: m.variableFonts, hinting: m.hinting, grid: m.grid,
 }));
 
 function mockInfo(d: MockDoc): FontInfo {
@@ -1270,7 +1400,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, grid: d.grid ?? null, palettes: [], defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, grid: d.grid ?? null, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -1440,7 +1570,7 @@ const mockBackend: Backend = {
     return editMeta(need(), (m) => {
       const fix = (loc: Location) => {
         for (const k of Object.keys(loc)) if (!tags.has(k)) delete loc[k];
-        for (const a of axes) loc[a.tag] ??= a.default;
+        for (const a of axes) loc[a.tag] ??= designBounds(a)[1];
       };
       m.masters.forEach((x) => fix(x.location));
       m.instances.forEach((x) => fix(x.location));
@@ -1456,6 +1586,18 @@ const mockBackend: Backend = {
     let n = 1;
     while (d.masters.some((m) => m.id === `m${String(n).padStart(2, "0")}`)) n++;
     return editMeta(d, (m) => m.masters.push({ id: `m${String(n).padStart(2, "0")}`, name: name.trim(), location: loc, metrics: { ...src.metrics } }));
+  },
+  async previewForeignMasters() {
+    throw "Adding masters from another font needs the desktop app (npm run tauri dev).";
+  },
+  async addMasterFrom() {
+    throw "Adding masters from another font needs the desktop app (npm run tauri dev).";
+  },
+  async compareFonts() {
+    throw "Comparing fonts needs the desktop app (npm run tauri dev).";
+  },
+  async generateInstances() {
+    throw "Generating instances needs the desktop app (npm run tauri dev).";
   },
   async updateMaster(id, name, location, metrics) {
     const d = need();
@@ -1483,6 +1625,39 @@ const mockBackend: Backend = {
       return { name, location: checkLocation(d, i.location), export: i.export ?? true, weightClass: i.weightClass, widthClass: i.widthClass, styleLink: i.styleLink };
     });
     return editMeta(d, (m) => { m.instances = clean; });
+  },
+  async setVariableFonts(variableFonts) {
+    const d = need();
+    const names = new Set<string>();
+    const files = new Set<string>();
+    const clean = variableFonts.map((s) => {
+      const name = s.name.trim();
+      const fileName = s.fileName.trim();
+      if (!name) throw "Every variable font needs a name.";
+      if (names.has(name)) throw `Variable font name "${name}" is used twice.`;
+      names.add(name);
+      if (!fileName) throw `Variable font "${name}" needs a file name.`;
+      if (/[\\/:]/.test(fileName)) throw `File name "${fileName}" must not contain a path.`;
+      if (files.has(fileName)) throw `File name "${fileName}" is used twice.`;
+      files.add(fileName);
+      const tags = new Set<string>();
+      const axes = (s.axes ?? []).map((sub) => {
+        const a = d.axes.find((x) => x.tag === sub.tag);
+        if (!a) throw `Variable font "${name}" subsets unknown axis "${sub.tag}".`;
+        if (tags.has(sub.tag)) throw `Variable font "${name}" lists axis "${sub.tag}" twice.`;
+        tags.add(sub.tag);
+        const lo = sub.min ?? a.min;
+        const hi = sub.max ?? a.max;
+        if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo > hi || lo < a.min || hi > a.max)
+          throw `Variable font "${name}" range on "${a.name}" must sit inside the axis range, minimum ≤ maximum.`;
+        return { tag: sub.tag, min: sub.min ?? null, max: sub.max ?? null };
+      });
+      const glyphs = s.glyphs ?? [];
+      for (const g of glyphs)
+        if (!d.glyphs.some((x) => x.name === g)) throw `Variable font "${name}" keeps unknown glyph "${g}".`;
+      return { name, fileName, axes, glyphs: [...glyphs] };
+    });
+    return editMeta(d, (m) => { m.variableFonts = clean; });
   },
   async setGlyphOrder() {
     throw "Glyph order needs the desktop app (npm run tauri dev).";
@@ -1612,10 +1787,19 @@ const mockBackend: Backend = {
   async setPalettes() {
     throw "Colour fonts need the desktop app (npm run tauri dev).";
   },
+  async setMasterPalettes() {
+    throw "Colour fonts need the desktop app (npm run tauri dev).";
+  },
   async addColorLayer() {
     throw "Colour fonts need the desktop app (npm run tauri dev).";
   },
   async setColorPaint() {
+    throw "Colour fonts need the desktop app (npm run tauri dev).";
+  },
+  async setMasterPaint() {
+    throw "Colour fonts need the desktop app (npm run tauri dev).";
+  },
+  async masterColorPaint() {
     throw "Colour fonts need the desktop app (npm run tauri dev).";
   },
   async moveColorLayer() {

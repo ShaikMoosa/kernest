@@ -1,13 +1,18 @@
 //! Commands for Font Info (family, axes, masters, instances) and compatibility.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use kernest_core::interpolate::{check_glyph, default_master};
-use kernest_core::{structure, Axis, Font, Grid, Guide, Hinting, Instance, Metrics};
+use kernest_core::{
+    structure, Axis, Font, Grid, Guide, Hinting, Instance, Metrics, VariableFontSetting,
+};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::commands::{doc_mut, lock, status, AppState, CmdResult, DocStatus, Document};
+use crate::commands::{
+    doc_mut, lock, replace_dirty, status, AppState, CmdResult, DocStatus, Document, FontView,
+};
 
 /// The naming fields edited on the General tab. Empty strings clear a field.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -86,12 +91,16 @@ pub struct FontInfoView {
     axes: Vec<Axis>,
     masters: Vec<MasterView>,
     instances: Vec<Instance>,
+    /// Several variable fonts cut from this family; empty means one at full range.
+    variable_fonts: Vec<VariableFontSetting>,
     /// TrueType autohinting settings (the defaults if the font has none).
     hinting: Hinting,
     /// The edit view's snap grid, if set.
     grid: Option<Grid>,
     /// Colour palettes (CSS colours `#rrggbbaa`), all the same length.
     palettes: Vec<Vec<kernest_core::color::Color>>,
+    /// Per-master palette overrides, keyed by master id; empty means none.
+    master_palettes: BTreeMap<String, Vec<Vec<kernest_core::color::Color>>>,
     default_master_id: String,
     /// The working glyph order; export follows it (`.notdef` always first).
     glyph_order: Vec<String>,
@@ -123,9 +132,11 @@ fn info_view(doc: &Document) -> FontInfoView {
             })
             .collect(),
         instances: f.instances.clone(),
+        variable_fonts: f.variable_fonts.clone(),
         hinting: f.info.hinting.unwrap_or_default(),
         grid: f.info.grid,
         palettes: f.palettes.clone(),
+        master_palettes: f.master_palettes.clone(),
         default_master_id: default_master(f).id.clone(),
         glyph_order: f.glyphs.iter().map(|g| g.name.clone()).collect(),
         warnings: structure::warnings(f),
@@ -224,6 +235,18 @@ pub fn set_palettes(
     edit(&state, |f| kernest_core::color::set_palettes(f, palettes))
 }
 
+/// Sets or clears one master's palette override (`None` clears it).
+#[tauri::command]
+pub fn set_master_palettes(
+    state: State<AppState>,
+    master_id: String,
+    palettes: Option<Vec<Vec<kernest_core::color::Color>>>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| {
+        kernest_core::color::set_master_palettes(f, &master_id, palettes)
+    })
+}
+
 #[tauri::command]
 pub fn set_axes(state: State<AppState>, axes: Vec<Axis>) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_axes(f, axes))
@@ -239,6 +262,93 @@ pub fn add_master(
     edit(&state, |f| {
         structure::add_master(f, &copy_from, &name, &location).map(|(f, _)| f)
     })
+}
+
+/// Compatibility of every master in another font against this one, before adding any.
+#[tauri::command]
+pub fn preview_foreign_masters(
+    state: State<AppState>,
+    path: String,
+) -> CmdResult<Vec<structure::ForeignMasterPreview>> {
+    let source = crate::import::load_source_font(Path::new(path.trim()))?;
+    let mut guard = lock(&state)?;
+    let f = &doc_mut(&mut guard)?.font;
+    source
+        .masters
+        .iter()
+        .map(|m| structure::preview_foreign_master(f, &source, &m.id))
+        .collect()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddMasterFromView {
+    info: FontInfoView,
+    /// Glyphs the source lacked, added as empty layers.
+    missing: Vec<String>,
+}
+
+/// Adds a master copied from another font, returning the new Font Info and the glyphs
+/// that had to be filled as empty layers.
+#[tauri::command]
+pub fn add_master_from(
+    state: State<AppState>,
+    path: String,
+    master_id: String,
+    name: String,
+    location: BTreeMap<String, f64>,
+) -> CmdResult<AddMasterFromView> {
+    let source = crate::import::load_source_font(Path::new(path.trim()))?;
+    let mut missing = Vec::new();
+    let info = edit(&state, |f| {
+        let (next, filled) = structure::add_master_from(f, &source, &master_id, &name, &location)?;
+        missing = filled;
+        Ok(next)
+    })?;
+    Ok(AddMasterFromView { info, missing })
+}
+
+/// S42 · The compare report plus the other font's identity for the window header.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompareView {
+    file_name: String,
+    family_name: String,
+    #[serde(flatten)]
+    comparison: kernest_core::compare::FontComparison,
+}
+
+/// Reads another font and reports how it differs from the open one. Read-only:
+/// neither font is changed, so there is nothing to undo.
+#[tauri::command]
+pub fn compare_fonts(state: State<AppState>, path: String) -> CmdResult<CompareView> {
+    let trimmed = path.trim();
+    let other = crate::import::load_source_font(Path::new(trimmed))?;
+    let mut guard = lock(&state)?;
+    let f = &doc_mut(&mut guard)?.font;
+    let comparison = kernest_core::compare::compare_fonts(f, &other);
+    let file_name = Path::new(trimmed)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| trimmed.to_string());
+    Ok(CompareView {
+        file_name,
+        family_name: other.info.family_name.clone(),
+        comparison,
+    })
+}
+
+/// Generates one interpolated master per instance as a NEW unsaved document. The open
+/// font is only read; the result replaces it in the session and stays dirty until Save As,
+/// so generating writes nothing to disk.
+#[tauri::command]
+pub fn generate_instances(state: State<AppState>) -> CmdResult<FontView> {
+    let generated = {
+        let mut guard = lock(&state)?;
+        let f = &doc_mut(&mut guard)?.font;
+        kernest_core::interpolate::generate_instances(f)?
+    };
+    replace_dirty(&state, generated)
 }
 
 #[tauri::command]
@@ -262,6 +372,14 @@ pub fn remove_master(state: State<AppState>, id: String) -> CmdResult<FontInfoVi
 #[tauri::command]
 pub fn set_instances(state: State<AppState>, instances: Vec<Instance>) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_instances(f, instances))
+}
+
+#[tauri::command]
+pub fn set_variable_fonts(
+    state: State<AppState>,
+    variable_fonts: Vec<VariableFontSetting>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| structure::set_variable_fonts(f, variable_fonts))
 }
 
 /// Sets the working glyph order (Font View drag or the Font Info text); export follows it.
@@ -309,6 +427,8 @@ mod tests {
             default: 400.0,
             max: 700.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         };
         let next = structure::set_axes(&doc.font, vec![wght]).unwrap();
         doc.history.apply_font(&mut doc.font, next).unwrap();
@@ -325,5 +445,53 @@ mod tests {
         assert_eq!(v.default_master_id, "m01");
         assert!(v.warnings.is_empty());
         assert_eq!(v.incompatible, 0);
+    }
+
+    #[test]
+    fn master_palette_override_is_one_undoable_step() {
+        use kernest_core::color::{self, Color};
+        let mut doc = Document::new(sample_font(), None);
+        let wght = Axis {
+            name: "Weight".into(),
+            tag: "wght".into(),
+            min: 400.0,
+            default: 400.0,
+            max: 700.0,
+            hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
+        };
+        let f = structure::set_axes(&doc.font, vec![wght]).unwrap();
+        let (f, bold) =
+            structure::add_master(&f, "m01", "Bold", &BTreeMap::from([("wght".into(), 700.0)]))
+                .unwrap();
+        doc.history.apply_font(&mut doc.font, f).unwrap();
+        let f = color::set_palettes(
+            &doc.font,
+            vec![vec![
+                Color::parse("#e63946").unwrap(),
+                Color::parse("#1d3557").unwrap(),
+            ]],
+        )
+        .unwrap();
+        doc.history.apply_font(&mut doc.font, f).unwrap();
+        assert!(info_view(&doc).master_palettes.is_empty());
+
+        let override_palettes = vec![vec![
+            Color::parse("#00ff00").unwrap(),
+            Color::parse("#1d3557").unwrap(),
+        ]];
+        let f =
+            color::set_master_palettes(&doc.font, &bold, Some(override_palettes.clone())).unwrap();
+        doc.history.apply_font(&mut doc.font, f).unwrap();
+        let v = info_view(&doc);
+        assert_eq!(v.master_palettes.get(&bold), Some(&override_palettes));
+        assert!(v.status.can_undo);
+
+        // One undo removes the override; the shared palettes stay.
+        doc.history.undo(&mut doc.font).unwrap();
+        let v = info_view(&doc);
+        assert!(v.master_palettes.is_empty());
+        assert_eq!(v.palettes.len(), 1);
     }
 }

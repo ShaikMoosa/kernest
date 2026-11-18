@@ -306,7 +306,7 @@ fn kernest_dir(path: &Path) -> Option<PathBuf> {
 
 /// Loads a metrics source font: a `.kernest` package, or any source/compiled font the
 /// importer reads.
-fn load_source_font(path: &Path) -> CmdResult<Font> {
+pub(crate) fn load_source_font(path: &Path) -> CmdResult<Font> {
     if let Some(dir) = kernest_dir(path) {
         return kernest_core::package::open(&dir).map_err(|e| e.to_string());
     }

@@ -3,11 +3,13 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
+use kernest_core::designspace::{design_bounds, user_to_design};
 use kernest_core::{
-    Anchor, Axis, AxisRange, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master,
-    Metrics, Node, NodeKind, Path as KPath, Shape,
+    Anchor, Axis, AxisRange, AxisValue, Codepoint, Font, FontInfo, Glyph, Instance, KernPair,
+    Layer, Master, Metrics, Node, NodeKind, Path as KPath, Shape, VariableAxisSubset,
+    VariableFontSetting,
 };
-use norad::designspace::{AxisMapping, DesignSpaceDocument, Dimension};
+use norad::designspace::{DesignSpaceDocument, Dimension, SubsetValue};
 use norad::PointType;
 
 use crate::{master_id, set_group, sorted_pairs, Imported};
@@ -47,41 +49,52 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
         .axes
         .iter()
         .map(|a| {
-            let to_design = |v: f64| user_to_design(a.map.as_deref(), v);
-            let min = a.minimum.unwrap_or(a.default);
-            let max = a.maximum.unwrap_or(a.default);
+            let mut map: Vec<(f64, f64)> = a
+                .map
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|m| (m.input, m.output))
+                .collect();
+            map.sort_by(|x, y| x.0.total_cmp(&y.0));
+            let labels = a
+                .axis_labels
+                .iter()
+                .map(|l| AxisValue {
+                    name: l.name.clone(),
+                    value: l.user_value,
+                    min: l.user_minimum,
+                    max: l.user_maximum,
+                    elidable: l.elidable,
+                    linked_value: l.linked_user_value,
+                })
+                .collect();
             Axis {
                 name: a.name.clone(),
                 tag: a.tag.clone(),
-                min: to_design(min),
-                default: to_design(a.default),
-                max: to_design(max),
+                min: a.minimum.unwrap_or(a.default),
+                default: a.default,
+                max: a.maximum.unwrap_or(a.default),
                 hidden: a.hidden,
+                map,
+                labels,
             }
         })
         .collect();
     if ds.axes.iter().any(|a| a.values.is_some()) {
         warnings.push("Discrete axes were imported as continuous axes.".into());
     }
-    if ds
-        .axes
-        .iter()
-        .any(|a| a.map.as_ref().is_some_and(|m| m.len() > 2))
-    {
-        warnings
-            .push("Axis mappings (avar) aren't supported yet; axes use design coordinates.".into());
-    }
     let location = |dims: &[Dimension]| -> BTreeMap<String, f64> {
         let mut loc = BTreeMap::new();
-        for (a, src) in axes.iter().zip(&ds.axes) {
+        for a in &axes {
             let v = dims
                 .iter()
                 .find(|d| d.name == a.name)
                 .and_then(|d| {
                     d.xvalue
-                        .or_else(|| d.uservalue.map(|u| user_to_design(src.map.as_deref(), u)))
+                        .or_else(|| d.uservalue.map(|u| user_to_design(a, u)))
                 })
-                .unwrap_or(a.default);
+                .unwrap_or_else(|| design_bounds(a).1);
             loc.insert(a.tag.clone(), v);
         }
         loc
@@ -112,8 +125,10 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
     if sources.is_empty() {
         return Err("the designspace has no full UFO sources.".into());
     }
-    let default_loc: BTreeMap<String, f64> =
-        axes.iter().map(|a| (a.tag.clone(), a.default)).collect();
+    let default_loc: BTreeMap<String, f64> = axes
+        .iter()
+        .map(|a| (a.tag.clone(), design_bounds(a).1))
+        .collect();
     let default_idx = sources
         .iter()
         .position(|(_, loc, _)| *loc == default_loc)
@@ -144,6 +159,29 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
     let mut font = build(&refs, default_idx, axes, instances, &mut warnings);
     add_sparse_sources(&mut font, &ufos, &sparse, &mut warnings);
     add_rules(&mut font, &ds, &mut warnings);
+    font.variable_fonts = ds
+        .variable_fonts
+        .iter()
+        .map(|vf| VariableFontSetting {
+            name: vf.name.clone(),
+            file_name: vf.filename.clone().unwrap_or_else(|| vf.name.clone()),
+            axes: vf
+                .axis_subsets
+                .iter()
+                .filter_map(|s| {
+                    let tag = font.axes.iter().find(|a| a.name == s.name)?.tag.clone();
+                    let (min, max) = match s.value {
+                        SubsetValue::Range {
+                            minimum, maximum, ..
+                        } => (minimum, maximum),
+                        SubsetValue::Discrete(v) => (Some(v), Some(v)),
+                    };
+                    Some(VariableAxisSubset { tag, min, max })
+                })
+                .collect(),
+            glyphs: Vec::new(),
+        })
+        .collect();
     Ok(Imported { font, warnings })
 }
 
@@ -214,8 +252,9 @@ fn add_rules(font: &mut Font, ds: &DesignSpaceDocument, warnings: &mut Vec<Strin
                     .find(|a| a.name == c.name)
                     .map(|a| AxisRange {
                         tag: a.tag.clone(),
-                        min: c.minimum,
-                        max: c.maximum,
+                        // Conditions are user-space; bracket ranges are design units.
+                        min: c.minimum.map(|v| user_to_design(a, v)),
+                        max: c.maximum.map(|v| user_to_design(a, v)),
                     })
             })
             .collect();
@@ -273,30 +312,6 @@ fn add_rules(font: &mut Font, ds: &DesignSpaceDocument, warnings: &mut Vec<Strin
         ));
     }
     let _ = converted;
-}
-
-/// Piecewise-linear user → design mapping (identity without a map).
-fn user_to_design(map: Option<&[AxisMapping]>, v: f64) -> f64 {
-    let Some(map) = map.filter(|m| !m.is_empty()) else {
-        return v;
-    };
-    let mut pts: Vec<(f64, f64)> = map.iter().map(|m| (m.input, m.output)).collect();
-    pts.sort_by(|a, b| a.0.total_cmp(&b.0));
-    if v <= pts[0].0 {
-        return pts[0].1 + (v - pts[0].0);
-    }
-    for w in pts.windows(2) {
-        let ((a, oa), (b, ob)) = (w[0], w[1]);
-        if v <= b {
-            return if b == a {
-                ob
-            } else {
-                oa + (v - a) / (b - a) * (ob - oa)
-            };
-        }
-    }
-    let (a, oa) = pts[pts.len() - 1];
-    oa + (v - a)
 }
 
 fn metrics(info: &norad::FontInfo) -> Metrics {
@@ -503,7 +518,9 @@ fn build(
         notes: String::new(),
         feature_settings: Default::default(),
         palettes: Vec::new(),
+        master_palettes: Default::default(),
         filters: Vec::new(),
+        variable_fonts: Vec::new(),
     }
 }
 

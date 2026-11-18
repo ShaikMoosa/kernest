@@ -1,7 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { backend, type Axis, type DocStatus, type FontInfo, type Instance, type Location, type MasterView, type Metrics } from "../lib/backend";
-import { AddIcon, CloseIcon } from "./Icons";
+import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { backend, type Axis, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type VariableFontSetting } from "../lib/backend";
+import { designBounds, designToUser, hasMap, userToDesign } from "../lib/axisMap";
+import { hasLabels, statStyleName } from "../lib/statName";
+import { pickMasterSource } from "../lib/desktop";
+import { AddIcon, CloseIcon, FolderIcon } from "./Icons";
 import { FeaturesSection } from "./FeaturesSection";
+import { ForeignMasterDialog } from "./ForeignMasterDialog";
 import { t, tn, translateMessage } from "../lib/i18n";
 
 const AXIS_PRESETS: Axis[] = [
@@ -12,6 +16,9 @@ const AXIS_PRESETS: Axis[] = [
 ];
 
 const num = (s: string) => Number(s.trim().replace("−", "-"));
+
+/** Design/user readouts round to 2 decimals so interpolated values stay readable. */
+const fmtCoord = (v: number) => String(Math.round(v * 100) / 100);
 
 /** One palette colour: a swatch that opens the colour picker, and the #rrggbbaa text. */
 function ColorCell({ value, label, onCommit }: { value: string; label: string; onCommit: (v: string) => unknown }) {
@@ -88,21 +95,30 @@ interface Props {
   version: number;
   onChanged: (status: DocStatus) => void;
   onError: (e: unknown) => void;
+  onGenerateInstances: () => void;
 }
 
 /** S10/S11 · Font Info: general info, axes, masters and instances. */
-export function FontInfoView({ version, onChanged, onError }: Props) {
+export function FontInfoView({ version, onChanged, onError, onGenerateInstances }: Props) {
   const [info, setInfo] = useState<FontInfo | null>(null);
   // Drafts while editing axes or instances. A ref mirrors them so commits that land
   // in the same instant (blur, then click Apply) always build on the latest draft.
   const [axes, setAxesState] = useState<Axis[] | null>(null);
   const [instances, setInstState] = useState<Instance[] | null>(null);
-  const drafts = useRef<{ axes: Axis[] | null; instances: Instance[] | null }>({ axes: null, instances: null });
+  const [variableFonts, setVfState] = useState<VariableFontSetting[] | null>(null);
+  const drafts = useRef<{ axes: Axis[] | null; instances: Instance[] | null; variableFonts: VariableFontSetting[] | null }>({ axes: null, instances: null, variableFonts: null });
   const setAxes = (v: Axis[] | null) => { drafts.current.axes = v; setAxesState(v); };
   const setInstances = (v: Instance[] | null) => { drafts.current.instances = v; setInstState(v); };
+  const setVariableFonts = (v: VariableFontSetting[] | null) => { drafts.current.variableFonts = v; setVfState(v); };
   const [adding, setAdding] = useState<{ name: string; copyFrom: string; location: Location } | null>(null);
+  // The "Add from font…" dialog: a picked source and its per-master compatibility report.
+  const [foreign, setForeign] = useState<{ path: string; previews: ForeignMasterPreview[] } | null>(null);
   // A draft of the glyph-order text; null means "show the saved order, not editing".
   const [orderText, setOrderText] = useState<string | null>(null);
+  // The axis tag whose avar map editor is expanded (one at a time); null = none.
+  const [mapOpen, setMapOpen] = useState<string | null>(null);
+  // The axis tag whose STAT value-label editor is expanded (one at a time); null = none.
+  const [labelsOpen, setLabelsOpen] = useState<string | null>(null);
 
   const reload = useCallback(() => backend.fontInfo().then((i) => { setInfo(i); }, onError), [onError]);
   useEffect(() => { reload(); }, [reload, version]);
@@ -126,15 +142,47 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
   const curAxes = () => drafts.current.axes ?? info.axes;
   const curInst = () => drafts.current.instances ?? info.instances;
   const instDraft = instances ?? info.instances;
+  const curVf = () => drafts.current.variableFonts ?? info.variableFonts;
+  const vfDraft = variableFonts ?? info.variableFonts;
   const locFields = (loc: Location, onChange: (loc: Location) => void, prefix: string) =>
-    info.axes.map((a) => (
-      <label key={a.tag} className="info-field">
-        <span className="k-caption muted">{a.tag}</span>
-        <Field label={`${prefix} ${a.name}`} value={loc[a.tag] ?? a.default} onCommit={(v) => onChange({ ...loc, [a.tag]: num(v) })} />
-      </label>
-    ));
+    info.axes.map((a) => {
+      // Locations are design-space; the fallback is the mapped design default, not the user one.
+      const design = loc[a.tag] ?? designBounds(a)[1];
+      return (
+        <label key={a.tag} className="info-field">
+          <span className="k-caption muted">{a.tag}</span>
+          <Field label={`${prefix} ${a.name}`} value={design} onCommit={(v) => onChange({ ...loc, [a.tag]: num(v) })} />
+          {hasMap(a) && <span className="k-caption muted axis-user">{t("user {value}", { value: fmtCoord(designToUser(a, design)) })}</span>}
+        </label>
+      );
+    });
   const updateMaster = (m: MasterView, patch: Partial<{ name: string; location: Location; metrics: Metrics }>) =>
     apply(() => backend.updateMaster(m.id, patch.name ?? m.name, patch.location ?? m.location, patch.metrics ?? m.metrics));
+
+  const openForeign = async () => {
+    const path = await pickMasterSource();
+    if (!path) return;
+    try {
+      const previews = await backend.previewForeignMasters(path);
+      setForeign({ path, previews });
+    } catch (e) { onError(e); }
+  };
+  // Each master is its own undoable step. Show progress as they land; if one fails,
+  // refresh so the masters already added are visible, then let the dialog report it.
+  const addForeign = async (selection: { masterId: string; name: string; location: Location }[]) => {
+    if (!foreign) return;
+    try {
+      for (const s of selection) {
+        const r = await backend.addMasterFrom(foreign.path, s.masterId, s.name, s.location);
+        setInfo(r.info);
+        onChanged(r.info.status);
+      }
+      setForeign(null);
+    } catch (e) {
+      reload();
+      throw e;
+    }
+  };
 
   return (
     <FieldError.Provider value={onError}>
@@ -216,15 +264,120 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
               <tbody>
                 {axesDraft.map((a, i) => {
                   const set = (patch: Partial<Axis>) => setAxes(curAxes().map((x, j) => (j === i ? { ...x, ...patch } : x)));
+                  const pts = a.map ?? [];
+                  // Points stay sorted by user value; an empty list clears the map (user == design).
+                  const setMap = (next: [number, number][]) => {
+                    const sorted = [...next].sort((p, q) => p[0] - q[0]);
+                    set({ map: sorted.length ? sorted : undefined });
+                  };
+                  const addPoint = () => {
+                    if (pts.length === 0) {
+                      // Seed the identity extremes so the axis can be bent at the default right away.
+                      const seed: [number, number][] = [[a.min, a.min], [a.default, a.default], [a.max, a.max]];
+                      setMap(seed.filter((p, k) => k === 0 || p[0] !== seed[k - 1][0]));
+                      return;
+                    }
+                    // Insert on the current curve at the midpoint of the widest user gap, so no duplicate.
+                    let at = 0;
+                    let gap = 0;
+                    for (let k = 0; k < pts.length - 1; k++) {
+                      const g = pts[k + 1][0] - pts[k][0];
+                      if (g > gap) { gap = g; at = k; }
+                    }
+                    if (gap <= 0) return;
+                    const u = (pts[at][0] + pts[at + 1][0]) / 2;
+                    const next = [...pts];
+                    next.splice(at + 1, 0, [u, userToDesign(a, u)]);
+                    setMap(next);
+                  };
+                  const labels = a.labels ?? [];
+                  // An empty list clears the labels (the axis has no named values).
+                  const setLabels = (next: AxisValue[]) => set({ labels: next.length ? next : undefined });
+                  const patchLabel = (j: number, p: Partial<AxisValue>) => setLabels(labels.map((l, k) => (k === j ? { ...l, ...p } : l)));
+                  const addLabel = () => setLabels([...labels, { name: "", value: a.default }]);
+                  const optNum = (v: string) => (v.trim() === "" ? undefined : num(v));
+                  const open = mapOpen === a.tag;
+                  const labelsExpanded = labelsOpen === a.tag;
                   return (
-                    <tr key={i}>
-                      <td><Field label={t("Axis name")} value={a.name} width={160} mono={false} numeric={false} onCommit={(v) => set({ name: v })} /></td>
-                      <td><Field label={t("Axis tag")} value={a.tag} width={64} numeric={false} onCommit={(v) => set({ tag: v.trim() })} /></td>
-                      <td className="num"><Field label={t("Minimum")} value={a.min} onCommit={(v) => set({ min: num(v) })} /></td>
-                      <td className="num"><Field label={t("Default")} value={a.default} onCommit={(v) => set({ default: num(v) })} /></td>
-                      <td className="num"><Field label={t("Maximum")} value={a.max} onCommit={(v) => set({ max: num(v) })} /></td>
-                      <td><button className="icon-btn" aria-label={t("Remove {name}", { name: a.name })} title={t("Remove axis")} onClick={() => setAxes(curAxes().filter((_, j) => j !== i))}><CloseIcon size={14} /></button></td>
-                    </tr>
+                    <Fragment key={i}>
+                      <tr>
+                        <td><Field label={t("Axis name")} value={a.name} width={160} mono={false} numeric={false} onCommit={(v) => set({ name: v })} /></td>
+                        <td><Field label={t("Axis tag")} value={a.tag} width={64} numeric={false} onCommit={(v) => set({ tag: v.trim() })} /></td>
+                        <td className="num"><Field label={t("Minimum")} value={a.min} onCommit={(v) => set({ min: num(v) })} /></td>
+                        <td className="num"><Field label={t("Default")} value={a.default} onCommit={(v) => set({ default: num(v) })} /></td>
+                        <td className="num"><Field label={t("Maximum")} value={a.max} onCommit={(v) => set({ max: num(v) })} /></td>
+                        <td className="fi-axis-actions">
+                          <button className={`btn btn-sm ${hasMap(a) ? "btn-primary" : "btn-secondary"}`} aria-expanded={open}
+                            title={t("Map user values to design values")} onClick={() => setMapOpen(open ? null : a.tag)}>
+                            {hasMap(a) ? tn(pts.length, "{n} point", "{n} points") : t("Mapping")}
+                          </button>
+                          <button className={`btn btn-sm ${labels.length ? "btn-primary" : "btn-secondary"}`} aria-expanded={labelsExpanded}
+                            title={t("Name the values on this axis")} onClick={() => setLabelsOpen(labelsExpanded ? null : a.tag)}>
+                            {labels.length ? tn(labels.length, "{n} value", "{n} values") : t("Values")}
+                          </button>
+                          <button className="icon-btn" aria-label={t("Remove {name}", { name: a.name })} title={t("Remove axis")} onClick={() => setAxes(curAxes().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="fi-axis-map">
+                          <td colSpan={6}>
+                            <div className="axis-map">
+                              <p className="k-caption muted">{t("Apps use user values; masters use design values. Add points to map one to the other.")}</p>
+                              <div className="axis-map-points">
+                                {pts.map(([u, d], j) => (
+                                  <div key={j} className="axis-map-point">
+                                    <label className="info-field"><span className="k-caption muted">{t("User")}</span>
+                                      <Field label={t("User value")} value={u} onCommit={(v) => setMap(pts.map((p, k): [number, number] => (k === j ? [num(v), p[1]] : p)))} />
+                                    </label>
+                                    <label className="info-field"><span className="k-caption muted">{t("Design")}</span>
+                                      <Field label={t("Design value")} value={d} onCommit={(v) => setMap(pts.map((p, k): [number, number] => (k === j ? [p[0], num(v)] : p)))} />
+                                    </label>
+                                    <button className="icon-btn" aria-label={t("Remove point")} title={t("Remove point")} onClick={() => setMap(pts.filter((_, k) => k !== j))}><CloseIcon size={14} /></button>
+                                  </div>
+                                ))}
+                              </div>
+                              <button className="btn btn-secondary btn-sm" onClick={addPoint}><AddIcon size={14} /> {t("Add point")}</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      {labelsExpanded && (
+                        <tr className="fi-axis-map">
+                          <td colSpan={6}>
+                            <div className="axis-map">
+                              <p className="k-caption muted">{t("Apps show these names for the styles at each position on the axis. Values are user values.")}</p>
+                              <div className="axis-labels">
+                                {labels.map((l, j) => (
+                                  <div key={j} className="axis-label">
+                                    <label className="info-field"><span className="k-caption muted">{t("Name")}</span>
+                                      <Field label={t("Value name")} value={l.name} width={120} mono={false} numeric={false} onCommit={(v) => patchLabel(j, { name: v })} />
+                                    </label>
+                                    <label className="info-field"><span className="k-caption muted">{t("Value")}</span>
+                                      <Field label={t("User value")} value={l.value} onCommit={(v) => patchLabel(j, { value: num(v) })} />
+                                    </label>
+                                    <label className="info-field"><span className="k-caption muted">{t("Range from")}</span>
+                                      <Field label={t("Range from")} value={l.min ?? ""} placeholder={t("none")} onCommit={(v) => patchLabel(j, { min: optNum(v) })} />
+                                    </label>
+                                    <label className="info-field"><span className="k-caption muted">{t("Range to")}</span>
+                                      <Field label={t("Range to")} value={l.max ?? ""} placeholder={t("none")} onCommit={(v) => patchLabel(j, { max: optNum(v) })} />
+                                    </label>
+                                    <label className="info-field"><span className="k-caption muted">{t("Linked value")}</span>
+                                      <Field label={t("Linked value")} value={l.linkedValue ?? ""} placeholder={t("none")} onCommit={(v) => patchLabel(j, { linkedValue: optNum(v) })} />
+                                    </label>
+                                    <label className="check-row" title={t("Apps may leave this name out of a style name, like Regular.")}>
+                                      <input type="checkbox" checked={l.elidable === true} aria-label={t("Elidable")} onChange={(e) => patchLabel(j, { elidable: e.target.checked })} />
+                                      <span className="k-caption">{t("Elidable")}</span>
+                                    </label>
+                                    <button className="icon-btn" aria-label={t("Remove value")} title={t("Remove value")} onClick={() => setLabels(labels.filter((_, k) => k !== j))}><CloseIcon size={14} /></button>
+                                  </div>
+                                ))}
+                              </div>
+                              <button className="btn btn-secondary btn-sm" onClick={addLabel}><AddIcon size={14} /> {t("Add value")}</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -259,8 +412,11 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
           <div className="fi-head">
             <h2 id="fi-masters" className="k-subtitle">{t("Masters")}</h2>
             <span className="spacer" />
-            <button className="btn btn-secondary btn-sm" onClick={() => setAdding({ name: t("Master {n}", { n: info.masters.length + 1 }), copyFrom: info.defaultMasterId, location: Object.fromEntries(info.axes.map((a) => [a.tag, a.max])) })}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setAdding({ name: t("Master {n}", { n: info.masters.length + 1 }), copyFrom: info.defaultMasterId, location: Object.fromEntries(info.axes.map((a) => [a.tag, designBounds(a)[2]])) })}>
               <AddIcon size={14} /> {t("Add master")}
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={openForeign}>
+              <FolderIcon size={14} /> {t("Add from font…")}
             </button>
           </div>
           {info.masters.map((m) => (
@@ -311,8 +467,13 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
           <div className="fi-head">
             <h2 id="fi-instances" className="k-subtitle">{t("Instances")}</h2>
             <span className="spacer" />
+            <button className="btn btn-secondary btn-sm" disabled={curInst().length === 0}
+              title={t("Interpolate one master per instance and open them as a new unsaved font.")}
+              onClick={onGenerateInstances}>
+              {t("Generate as New Font")}
+            </button>
             <button className="btn btn-secondary btn-sm" disabled={info.axes.length === 0} title={info.axes.length === 0 ? t("Add an axis first") : undefined}
-              onClick={() => setInstances([...curInst(), { name: t("Instance {n}", { n: curInst().length + 1 }), location: Object.fromEntries(info.axes.map((a) => [a.tag, a.default])), export: true }])}>
+              onClick={() => setInstances([...curInst(), { name: t("Instance {n}", { n: curInst().length + 1 }), location: Object.fromEntries(info.axes.map((a) => [a.tag, designBounds(a)[1]])), export: true }])}>
               <AddIcon size={14} /> {t("Add instance")}
             </button>
           </div>
@@ -330,6 +491,11 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
               <label className="info-field"><span className="k-caption muted">{t("Name")}</span>
                 <Field label={t("Instance name")} value={it.name} width={160} mono={false} numeric={false} onCommit={(v) => patch({ name: v })} />
               </label>
+              {hasLabels(axesDraft) && (
+                <span className="k-caption muted axis-user" title={t("The style name apps show for this instance, from the axis value names.")}>
+                  {t("STAT name: {name}", { name: statStyleName(axesDraft, it) })}
+                </span>
+              )}
               {locFields(it.location, (loc) => patch({ location: loc }), it.name)}
               <label className="info-field" title={t("OS/2 weight class, 100 (Thin) to 900 (Black). Empty picks it from the weight axis.")}><span className="k-caption muted">{t("Weight class")}</span>
                 <Field label={t("Weight class")} value={it.weightClass ?? ""} width={88} placeholder={t("Automatic")} onCommit={(v) => {
@@ -378,6 +544,73 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
               <span className="spacer" />
               <button className="btn btn-secondary btn-sm" onClick={() => setInstances(null)}>{t("Discard")}</button>
               <button className="btn btn-primary btn-sm" onClick={async () => { const list = drafts.current.instances; if (list && await apply(() => backend.setInstances(list))) setInstances(null); }}>{t("Apply instances")}</button>
+            </div>
+          )}
+        </section>
+
+        <section className="fi-section" aria-labelledby="fi-variable">
+          <div className="fi-head">
+            <h2 id="fi-variable" className="k-subtitle">{t("Variable fonts")}</h2>
+            <span className="spacer" />
+            <button className="btn btn-secondary btn-sm" disabled={info.axes.length === 0} title={info.axes.length === 0 ? t("Add an axis first") : undefined}
+              onClick={() => { const n = curVf().length + 1; setVariableFonts([...curVf(), { name: t("Variable font {n}", { n }), fileName: `${info.familyName.replace(/\s+/g, "")}-${n}`, axes: [], glyphs: [] }]); }}>
+              <AddIcon size={14} /> {t("Add variable font")}
+            </button>
+          </div>
+          <p className="k-caption muted">{t("Extra variable fonts built from this family. Each keeps a range of the axes and a set of glyphs; export writes one file per entry.")}</p>
+          {vfDraft.length === 0 ? (
+            <p className="k-caption muted">{t("No extra variable fonts. Export builds one variable font covering every axis.")}</p>
+          ) : vfDraft.map((vf, i) => {
+            const patch = (p: Partial<VariableFontSetting>) => setVariableFonts(curVf().map((x, j) => (j === i ? { ...x, ...p } : x)));
+            const setRange = (tag: string, field: "min" | "max", v: string) => {
+              const val = v.trim() === "" ? null : num(v);
+              const axes = [...(vf.axes ?? [])];
+              const idx = axes.findIndex((s) => s.tag === tag);
+              const next = { ...(idx >= 0 ? axes[idx] : { tag, min: null, max: null }), [field]: val };
+              if (next.min == null && next.max == null) { if (idx >= 0) axes.splice(idx, 1); }
+              else if (idx >= 0) axes[idx] = next; else axes.push(next);
+              patch({ axes });
+            };
+            return (
+            <div key={i} className="fi-vf">
+              <div className="fi-row">
+                <label className="info-field"><span className="k-caption muted">{t("Name")}</span>
+                  <Field label={t("Variable font name")} value={vf.name} width={160} mono={false} numeric={false} onCommit={(v) => patch({ name: v })} />
+                </label>
+                <label className="info-field" title={t("The file name without extension, e.g. MyFont-Light.")}><span className="k-caption muted">{t("File name")}</span>
+                  <Field label={t("File name")} value={vf.fileName} width={200} mono={false} numeric={false} onCommit={(v) => patch({ fileName: v })} />
+                </label>
+                <span className="spacer" />
+                <button className="icon-btn" aria-label={t("Remove {name}", { name: vf.name })} title={t("Remove variable font")} onClick={() => setVariableFonts(curVf().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
+              </div>
+              <div className="fi-row">
+                {info.axes.map((a) => {
+                  const sub = (vf.axes ?? []).find((s) => s.tag === a.tag);
+                  return (
+                    <div key={a.tag} className="info-field fi-vf-axis">
+                      <span className="k-caption muted">{a.name} ({a.tag})</span>
+                      <span className="fi-vf-range">
+                        <Field label={t("{name} minimum", { name: a.name })} value={sub?.min ?? ""} width={72} placeholder={String(a.min)} onCommit={(v) => setRange(a.tag, "min", v)} />
+                        <span className="k-caption muted">–</span>
+                        <Field label={t("{name} maximum", { name: a.name })} value={sub?.max ?? ""} width={72} placeholder={String(a.max)} onCommit={(v) => setRange(a.tag, "max", v)} />
+                      </span>
+                    </div>
+                  );
+                })}
+                <label className="info-field"><span className="k-caption muted">{t("Glyphs")}</span>
+                  <Field label={t("Glyphs")} value={(vf.glyphs ?? []).join(", ")} width={240} mono={false} numeric={false}
+                    onCommit={(v) => patch({ glyphs: v.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean) })} />
+                </label>
+                <span className="k-caption muted fi-vf-glyphs-hint">{t("Empty keeps every glyph.")}</span>
+              </div>
+            </div>
+            );
+          })}
+          {variableFonts && (
+            <div className="fi-actions">
+              <span className="spacer" />
+              <button className="btn btn-secondary btn-sm" onClick={() => setVariableFonts(null)}>{t("Discard")}</button>
+              <button className="btn btn-primary btn-sm" onClick={async () => { const list = drafts.current.variableFonts; if (list && await apply(() => backend.setVariableFonts(list))) setVariableFonts(null); }}>{t("Apply variable fonts")}</button>
             </div>
           )}
         </section>
@@ -529,9 +762,52 @@ export function FontInfoView({ version, onChanged, onError }: Props) {
               </tbody>
             </table>
           )}
+          {info.palettes.length > 0 && info.masters.length > 1 && (
+            <div className="fi-master-palettes">
+              <h3 className="k-label">{t("Per-master colours")}</h3>
+              <p className="k-caption muted">{t("Give a master its own palette to make colour vary between masters in a variable font.")}</p>
+              {info.masters.map((m) => {
+                const override = info.masterPalettes[m.id];
+                return (
+                  <div key={m.id} className="fi-master-palette">
+                    <label className="check-row">
+                      <input type="checkbox" checked={!!override}
+                        onChange={(e) => apply(() => backend.setMasterPalettes(m.id, e.target.checked ? info.palettes.map((p) => [...p]) : null))} />
+                      <span className="k-body">{m.name}</span>
+                    </label>
+                    {override && (
+                      <table className="fi-table">
+                        <thead><tr>
+                          <th>{t("Colour")}</th>
+                          {override.map((_, p) => <th key={p}>{t("Palette {n}", { n: p + 1 })}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {override[0].map((_, c) => (
+                            <tr key={c}>
+                              <td className="k-caption muted">{c + 1}</td>
+                              {override.map((pal, p) => (
+                                <td key={p}>
+                                  <ColorCell value={pal[c]} label={t("{master}, palette {p}, colour {c}", { master: m.name, p: p + 1, c: c + 1 })}
+                                    onCommit={(v) => apply(() => backend.setMasterPalettes(m.id, override.map((q, j) => (j === p ? q.map((x, k) => (k === c ? v : x)) : q))))} />
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </section>
       </div>
     </div>
+    {foreign && (
+      <ForeignMasterDialog path={foreign.path} previews={foreign.previews} axes={info.axes}
+        onCancel={() => setForeign(null)} onAdd={addForeign} />
+    )}
     </FieldError.Provider>
   );
 }

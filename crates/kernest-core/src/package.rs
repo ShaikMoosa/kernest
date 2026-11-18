@@ -34,11 +34,14 @@ use crate::model::{
 /// version 4 adds the naming fields, instance classes/style links, notes and
 /// automatic-feature settings; version 5 adds guides, the background layer and the
 /// snap grid; version 6 adds locks; version 7 adds saved filters (older versions
-/// would drop them on save).
+/// would drop them on save); version 8 adds axis mappings (older versions would
+/// misplace masters, which live in design coordinates); version 9 adds per-master
+/// palette overrides and per-master colour paints (older versions would drop the
+/// variation and export every master with the default colour).
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 9;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -55,12 +58,16 @@ struct FontFile {
     instances: Vec<Instance>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     palettes: Vec<Vec<crate::color::Color>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    master_palettes: BTreeMap<String, Vec<Vec<crate::color::Color>>>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     notes: String,
     #[serde(default, skip_serializing_if = "FeatureSettings::is_empty")]
     feature_settings: FeatureSettings,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     filters: Vec<crate::smartfilter::Filter>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    variable_fonts: Vec<crate::model::VariableFontSetting>,
     glyph_order: Vec<String>,
 }
 
@@ -212,9 +219,19 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
             .glyphs
             .iter()
             .any(|g| g.production_name.is_some() || !g.tags.is_empty());
+    let has_phase9 = !font.variable_fonts.is_empty()
+        || font
+            .axes
+            .iter()
+            .any(|a| !a.map.is_empty() || !a.labels.is_empty());
+    let has_var_color = crate::color::varies_between_masters(font);
     let file = FontFile {
-        format_version: if has_phase8 {
+        format_version: if has_var_color {
             FORMAT_VERSION
+        } else if has_phase9 {
+            8
+        } else if has_phase8 {
+            7
         } else if has_phase5 {
             6
         } else if has_phase4 {
@@ -234,9 +251,11 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
         masters: font.masters.clone(),
         instances: font.instances.clone(),
         palettes: font.palettes.clone(),
+        master_palettes: font.master_palettes.clone(),
         notes: font.notes.clone(),
         feature_settings: font.feature_settings.clone(),
         filters: font.filters.clone(),
+        variable_fonts: font.variable_fonts.clone(),
         glyph_order: font.glyphs.iter().map(|g| g.name.clone()).collect(),
     };
     write_atomic(&font_path, &to_json(&file, &font_path)?)
@@ -312,9 +331,11 @@ pub fn open(dir: &Path) -> Result<Font> {
         kerning,
         features,
         palettes: file.palettes,
+        master_palettes: file.master_palettes,
         notes: file.notes,
         feature_settings: file.feature_settings,
         filters: file.filters,
+        variable_fonts: file.variable_fonts,
     };
     font.validate()?;
     Ok(font)
@@ -392,6 +413,8 @@ mod tests {
             default: 400.0,
             max: 700.0,
             hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
         });
         let g = font.glyph_mut("H").unwrap();
         let mut brace = g.layers[0].clone();
@@ -646,6 +669,41 @@ mod tests {
         let fj = fs::read_to_string(path.join("font.json")).unwrap();
         assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
         assert_eq!(open(&path).unwrap(), font);
+    }
+
+    #[test]
+    fn phase9_axis_map_round_trip_and_gate_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        font.axes.push(Axis {
+            name: "Weight".into(),
+            tag: "wght".into(),
+            min: 100.0,
+            default: 400.0,
+            max: 900.0,
+            hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
+        });
+        // An axis without a map writes no map and stays at version 1.
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
+        assert!(!fj.contains("\"map\""), "{fj}");
+
+        font.axes[0].map = vec![(100.0, 100.0), (400.0, 300.0), (900.0, 900.0)];
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 8"), "{fj}");
+        assert_eq!(open(&path).unwrap(), font);
+
+        // Removing the map returns the package to version 1.
+        font.axes[0].map.clear();
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 1"), "{fj}");
+        assert!(!fj.contains("\"map\""), "{fj}");
     }
 
     #[test]
