@@ -306,6 +306,12 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .filter-dialog .origin-picker { margin-block: var(--k-space-8); }
 .picker-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; }
 .picker-list .list-item { font-family: var(--k-font-code); font-size: 12px; }
+.svg-paste { flex: 1 1 auto; width: 100%; height: auto; min-height: 140px; padding: var(--k-space-8); font-family: var(--k-font-code); font-size: 12px; line-height: 1.5; resize: vertical; user-select: text; }
+.svg-placements { display: flex; flex-direction: column; gap: var(--k-space-4); margin-block: var(--k-space-8); }
+.svg-placements .check-row { height: auto; align-items: flex-start; }
+.svg-placements .check-row input { margin-block-start: 2px; }
+.svg-placements .k-caption { display: block; }
+.fea-import-problems { margin: var(--k-space-4) 0 0; padding-inline-start: var(--k-space-12); list-style: disc; }
 
 /* ---------- Text view (S06) & kerning window (S07) ---------- */
 .doc-tab.is-tool .k-label { color: var(--k-text-accent); }

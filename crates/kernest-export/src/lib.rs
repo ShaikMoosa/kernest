@@ -636,6 +636,181 @@ pub fn write_sources(font: &Font, dir: &Path) -> Result<PathBuf, String> {
     Ok(ds)
 }
 
+/// Options for exporting editable UFO sources (File › Export › UFO…).
+#[derive(Debug, Clone)]
+pub struct UfoExportOptions {
+    /// Master ids to include; empty means every master.
+    pub masters: Vec<String>,
+    /// Flatten smart components to outlines; otherwise they stay plain components.
+    pub decompose_smart: bool,
+    /// Write colour layers as named UFO layers instead of leaving them out.
+    pub color_layers: bool,
+}
+
+/// The UFO folders and designspace written, with anything the format can't carry.
+#[derive(Debug, Default, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UfoExportReport {
+    pub files: Vec<String>,
+    pub problems: Vec<String>,
+}
+
+/// Writes the chosen masters as UFOs plus a designspace, for editing in other tools.
+/// Unlike [`write_sources`] this honours the user's master selection and can keep
+/// colour layers as UFO layers; smart components either stay components or flatten.
+pub fn export_ufo(
+    font: &Font,
+    dir: &Path,
+    opts: &UfoExportOptions,
+) -> Result<UfoExportReport, String> {
+    use std::collections::HashSet;
+    let mut work = if opts.decompose_smart {
+        kernest_core::smart::flatten_font(font)
+    } else {
+        font.clone()
+    };
+    let selected: Vec<Master> = if opts.masters.is_empty() {
+        work.masters.clone()
+    } else {
+        work.masters
+            .iter()
+            .filter(|m| opts.masters.contains(&m.id))
+            .cloned()
+            .collect()
+    };
+    if selected.is_empty() {
+        return Err("Choose at least one master to export.".into());
+    }
+    let ids: HashSet<String> = selected.iter().map(|m| m.id.clone()).collect();
+    work.masters = selected;
+    for g in &mut work.glyphs {
+        g.layers.retain(|l| ids.contains(l.master_id.as_str()));
+    }
+    work.kerning.retain(|k, _| ids.contains(k.as_str()));
+
+    let mut report = UfoExportReport::default();
+    if !opts.decompose_smart && work.glyphs.iter().any(|g| g.is_smart()) {
+        report.problems.push(
+            "Smart components export as plain components; UFO doesn't store smart interpolation."
+                .into(),
+        );
+    }
+    if !opts.color_layers
+        && work
+            .glyphs
+            .iter()
+            .any(|g| g.layers.iter().any(|l| l.color.is_some()))
+    {
+        report
+            .problems
+            .push("Colour layers were left out. Turn on \"Colour layers\" to keep them.".into());
+    }
+
+    let mut rules = Vec::new();
+    for g in &work.glyphs {
+        for (n, ranges) in g.bracket_groups().into_iter().enumerate() {
+            rules.push(DsRule {
+                glyph: g.name.clone(),
+                with: alternate_name(&g.name, n),
+                ranges,
+            });
+        }
+    }
+    let mut braces: Vec<(Location, Vec<(String, Layer)>)> = Vec::new();
+    for g in &work.glyphs {
+        for l in g.brace_layers() {
+            let loc = l.location.clone().unwrap_or_default();
+            let mut plain = l.clone();
+            plain.id = None;
+            plain.location = None;
+            match braces.iter_mut().find(|(b, _)| *b == loc) {
+                Some((_, list)) => list.push((g.name.clone(), plain)),
+                None => braces.push((loc, vec![(g.name.clone(), plain)])),
+            }
+        }
+    }
+    let default_id = kernest_core::interpolate::default_master(&work).id.clone();
+    let mut sources = Vec::new();
+    for (i, m) in work.masters.iter().enumerate() {
+        let file = format!("master{i}.ufo");
+        let mut src = master_source(&work, m, &m.name, false);
+        for r in &rules {
+            let g = work.glyph(&r.glyph).expect("rule glyphs exist");
+            let layer = g
+                .bracket_layers()
+                .find(|l| l.master_id == m.id && l.bracket == r.ranges)
+                .or_else(|| g.layer(&m.id))
+                .cloned()
+                .ok_or_else(|| format!("\"{}\" has no layer for {}", g.name, m.name))?;
+            src.layers.push((r.with.clone(), layer));
+            src.alternates.push((r.with.clone(), r.glyph.clone()));
+        }
+        let mut ufo = to_ufo(&src)?;
+        if opts.color_layers {
+            let colored: Vec<(&kernest_core::Glyph, Vec<&Layer>)> = work
+                .glyphs
+                .iter()
+                .map(|g| {
+                    (
+                        g,
+                        g.layers
+                            .iter()
+                            .filter(|l| l.master_id == m.id && l.color.is_some())
+                            .collect::<Vec<&Layer>>(),
+                    )
+                })
+                .filter(|(_, cls)| !cls.is_empty())
+                .collect();
+            let max = colored.iter().map(|(_, cls)| cls.len()).max().unwrap_or(0);
+            for k in 0..max {
+                let layer_name = format!("color{}", k + 1);
+                let layer = ufo
+                    .layers
+                    .new_layer(&layer_name)
+                    .map_err(|e| format!("could not add a UFO layer: {e}"))?;
+                for (g, cls) in &colored {
+                    if let Some(l) = cls.get(k) {
+                        layer.insert_glyph(ufo::glyph(&work, &g.name, l)?);
+                    }
+                }
+            }
+        }
+        if m.id == default_id {
+            for (k, (loc, glyphs)) in braces.iter().enumerate() {
+                let layer_name = format!("brace{}", k + 1);
+                let layer = ufo
+                    .layers
+                    .new_layer(&layer_name)
+                    .map_err(|e| format!("could not add a UFO layer: {e}"))?;
+                for (gname, l) in glyphs {
+                    layer.insert_glyph(ufo::glyph(&work, gname, l)?);
+                }
+                sources.push(DsSource {
+                    file: file.clone(),
+                    style: format!("{} {{{}}}", m.name, k + 1),
+                    location: loc.clone(),
+                    layer: Some(layer_name),
+                });
+            }
+        }
+        let path = dir.join(&file);
+        ufo.save(&path)
+            .map_err(|e| format!("could not write a UFO: {e}"))?;
+        report.files.push(path.display().to_string());
+        sources.push(DsSource {
+            file,
+            style: m.name.clone(),
+            location: m.location.clone(),
+            layer: None,
+        });
+    }
+    let ds = dir.join("font.designspace");
+    std::fs::write(&ds, designspace(&work, &sources, &rules))
+        .map_err(|e| format!("could not write the designspace: {e}"))?;
+    report.files.push(ds.display().to_string());
+    Ok(report)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -665,6 +840,76 @@ pub(crate) mod tests {
         let h = f.glyph_mut("H").unwrap().layer_mut(&bold).unwrap();
         h.width += 100.0;
         f
+    }
+
+    #[test]
+    fn ufo_export_writes_masters_and_designspace() {
+        let f = two_masters();
+        let dir = tempfile::tempdir().unwrap();
+        let opts = UfoExportOptions {
+            masters: vec![],
+            decompose_smart: false,
+            color_layers: false,
+        };
+        let all = export_ufo(&f, dir.path(), &opts).unwrap();
+        assert_eq!(all.files.len(), 3);
+        assert!(dir.path().join("master0.ufo").is_dir());
+        assert!(dir.path().join("master1.ufo").is_dir());
+        assert!(dir.path().join("font.designspace").is_file());
+        let one = export_ufo(
+            &f,
+            dir.path(),
+            &UfoExportOptions {
+                masters: vec!["m01".into()],
+                ..opts.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(one.files.len(), 2);
+        let ufo = norad::Font::load(dir.path().join("master0.ufo")).unwrap();
+        assert!(ufo.get_glyph("H").is_some());
+    }
+
+    #[test]
+    fn ufo_export_keeps_colour_layers() {
+        use kernest_core::color::{ColorInfo, Paint};
+        let mut f = sample_font();
+        let h = f.glyph_mut("H").unwrap();
+        let mut cl = Layer::new("m01", 600.0);
+        cl.id = Some("m01~1".into());
+        cl.color = Some(ColorInfo {
+            paint: Paint::Solid {
+                color: 0,
+                alpha: 1.0,
+            },
+        });
+        h.layers.push(cl);
+        let dir = tempfile::tempdir().unwrap();
+        let with = export_ufo(
+            &f,
+            dir.path(),
+            &UfoExportOptions {
+                masters: vec![],
+                decompose_smart: false,
+                color_layers: true,
+            },
+        )
+        .unwrap();
+        assert!(with.problems.is_empty());
+        let ufo = norad::Font::load(dir.path().join("master0.ufo")).unwrap();
+        let color1 = ufo.layers.get("color1").expect("colour layer written");
+        assert!(color1.get_glyph("H").is_some());
+        let without = export_ufo(
+            &f,
+            dir.path(),
+            &UfoExportOptions {
+                masters: vec![],
+                decompose_smart: false,
+                color_layers: false,
+            },
+        )
+        .unwrap();
+        assert!(!without.problems.is_empty());
     }
 
     #[test]
@@ -879,6 +1124,16 @@ pub(crate) mod tests {
             })
             .collect();
         tables.sort_by_key(|(t, _)| *t);
+        // The WOFF2 directory places loca immediately after glyf, so the compressed
+        // stream follows that order rather than pure tag order.
+        if let Some(g) = tables.iter().position(|(t, _)| *t == Tag::new(b"glyf")) {
+            if let Some(l) = tables.iter().position(|(t, _)| *t == Tag::new(b"loca")) {
+                if l != g + 1 {
+                    let loca = tables.remove(l);
+                    tables.insert(g + 1, loca);
+                }
+            }
+        }
         let expected: Vec<u8> = tables.into_iter().flat_map(|(_, d)| d).collect();
         assert_eq!(stream, expected);
         let vf = find("Variable", "woff2");

@@ -14,6 +14,7 @@ pub mod decompose;
 pub mod designspace;
 pub mod edit;
 pub mod error;
+pub mod fea_import;
 pub mod features;
 pub mod filters;
 pub mod geometry;

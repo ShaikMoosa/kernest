@@ -389,6 +389,13 @@ export interface FeaturesView {
   status: DocStatus;
 }
 
+/** What importing a .fea file would change, shown before applying. */
+export interface FeatureImportPreview {
+  added: string[];
+  replaced: string[];
+  diagnostics: FeatureDiagnostic[];
+}
+
 /** One shaped glyph in the text view's feature preview. */
 export interface ShapedGlyph {
   name: string;
@@ -491,6 +498,8 @@ export interface Backend {
   features(): Promise<FeaturesView>;
   setFeatures(text: string): Promise<FeaturesView>;
   setAutomaticFeatures(automatic: string[]): Promise<FeaturesView>;
+  previewFeatureImport(path: string): Promise<FeatureImportPreview>;
+  importFeatures(path: string): Promise<FeaturesView>;
   /** Shapes text with feature settings like "ss01=1" against a compiled preview. */
   shapeText(text: string, masterId: string, location?: Location, features?: string[]): Promise<ShapedView>;
   setAxes(axes: Axis[]): Promise<FontInfo>;
@@ -528,12 +537,24 @@ export interface Backend {
   compatibility(): Promise<{ glyph: string; issues: string[] }[]>;
   /** Compiles a variable font and/or static fonts (TrueType) into `outDir`. */
   exportFont(variable: boolean, statics: boolean, outDir: string, options?: ExportFormats): Promise<ExportReport>;
+  /** Writes editable UFO sources and a designspace into `outDir`. */
+  exportUfo(outDir: string, options?: UfoExportOptions): Promise<UfoExportReport>;
   /** Sets (or clears, with null) a metrics key such as "=n" and applies it. */
   setMetricsKey(glyph: string, masterId: string, metric: MetricName, key: string | null): Promise<LayerView>;
   /** Glyph › Update Metrics: applies every metrics key in the font. */
   updateMetrics(): Promise<{ problems: string[]; status: DocStatus }>;
   /** Opens a .glyphs, .glyphspackage, .ufo or .designspace source as a new, unsaved font. */
   importFont(path: string): Promise<ImportResult>;
+  /** Writes the open font as a Glyphs 3 .glyphs source (a copy out). Returns the path written. */
+  saveGlyphs(path: string): Promise<string>;
+  /** Pastes SVG text into one glyph's layer as one undo step. */
+  importSvgText(glyph: string, masterId: string, svg: string, placement: SvgPlacement): Promise<SvgTextResult>;
+  /** Imports one SVG file per glyph, matched by file name, as one undo step. */
+  importSvgFiles(paths: string[], masterId: string, placement: SvgPlacement): Promise<SvgFilesResult>;
+  /** Reads a metrics source (AFM or another font) without changing the open font. */
+  readMetricsSource(path: string): Promise<MetricsSourceInfo>;
+  /** Imports widths/sidebearings/kerning from a source into one master, as one undo step. */
+  importMetrics(path: string, masterId: string, sourceMasterId: string, keep: KeepSide, widths: boolean, kerning: boolean): Promise<MetricsResult>;
   /** Adds glyphs typed as names/characters/code points plus whole glyph sets. */
   addGlyphs(text: string, glyphSets: string[]): Promise<AddGlyphsResult>;
   /** Removes glyphs; components using them are decomposed. */
@@ -635,6 +656,36 @@ export interface FilterResult {
   layer: LayerView;
 }
 
+/** How imported SVG outlines are placed in font units (S23). */
+export type SvgPlacement = "fit-cap-height" | "keep-size" | "keep-as-is";
+
+export interface SvgTextResult {
+  warnings: string[];
+  status: DocStatus;
+}
+
+export interface SvgFilesResult {
+  changed: string[];
+  warnings: string[];
+  status: DocStatus;
+}
+
+/** Which sidebearing stays fixed when an imported width is applied (S24). */
+export type KeepSide = "left" | "right";
+
+export interface MetricsSourceInfo {
+  kind: "afm" | "font";
+  masters: { id: string; name: string }[];
+  glyphs: number;
+  kerningPairs: number;
+}
+
+export interface MetricsResult {
+  changed: string[];
+  warnings: string[];
+  status: DocStatus;
+}
+
 export interface ExportFormats {
   ttf: boolean;
   otf: boolean;
@@ -645,6 +696,23 @@ export interface ExportFormats {
   applyMetricsKeys: boolean;
   /** Add TrueType hinting to TTF and WOFF2 files. */
   autohint: boolean;
+}
+
+/** Choices for exporting editable UFO sources (File › Export › UFO…). */
+export interface UfoExportOptions {
+  /** Master ids to include; empty means every master. */
+  masters: string[];
+  /** Flatten smart components to outlines instead of keeping them as components. */
+  decomposeSmart: boolean;
+  /** Write colour layers as named UFO layers. */
+  colorLayers: boolean;
+}
+
+export interface UfoExportReport {
+  /** The UFO folders and designspace written. */
+  files: string[];
+  /** Anything the UFO format can't carry. */
+  problems: string[];
 }
 
 // ---------- Scripts, plug-ins and settings (phase 6) ----------
@@ -755,6 +823,8 @@ const tauriBackend: Backend = {
   features: () => invoke("features"),
   setFeatures: (text) => invoke("set_features", { text }),
   setAutomaticFeatures: (automatic) => invoke("set_automatic_features", { automatic }),
+  previewFeatureImport: (path) => invoke("preview_feature_import", { path }),
+  importFeatures: (path) => invoke("import_features", { path }),
   shapeText: (text, masterId, location, features) => invoke("shape_text", { text, masterId, location: location ?? null, features: features ?? [] }),
   setHinting: (hinting) => invoke("set_hinting", { hinting }),
   setGrid: (grid) => invoke("set_grid", { grid }),
@@ -777,9 +847,15 @@ const tauriBackend: Backend = {
   setInstances: (instances) => invoke("set_instances", { instances }),
   compatibility: () => invoke("compatibility"),
   exportFont: (variable, statics, outDir, options) => invoke("export_font", { variable, statics, outDir, ...options }),
+  exportUfo: (outDir, options) => invoke("export_ufo", { outDir, ...options }),
   setMetricsKey: (glyph, masterId, metric, key) => invoke("set_metrics_key", { glyph, masterId, metric, key }),
   updateMetrics: () => invoke("update_metrics"),
   importFont: (path) => invoke("import_font", { path }),
+  saveGlyphs: (path) => invoke("save_glyphs", { path }),
+  importSvgText: (glyph, masterId, svg, placement) => invoke("import_svg_text", { glyph, masterId, svg, placement }),
+  importSvgFiles: (paths, masterId, placement) => invoke("import_svg_files", { paths, masterId, placement }),
+  readMetricsSource: (path) => invoke("read_metrics_source", { path }),
+  importMetrics: (path, masterId, sourceMasterId, keep, widths, kerning) => invoke("import_metrics", { path, masterId, sourceMasterId, keep, widths, kerning }),
   addGlyphs: (text, glyphSets) => invoke("add_glyphs", { text, glyphSets }),
   removeGlyphs: (names) => invoke("remove_glyphs", { names }),
   setGlyphExport: (names, exportGlyph) => invoke("set_glyph_export", { names, export: exportGlyph }),
@@ -1163,6 +1239,12 @@ const mockBackend: Backend = {
   async setAutomaticFeatures() {
     throw "The Features editor needs the desktop app (npm run tauri dev).";
   },
+  async previewFeatureImport() {
+    throw "Importing features needs the desktop app (npm run tauri dev).";
+  },
+  async importFeatures() {
+    throw "Importing features needs the desktop app (npm run tauri dev).";
+  },
   async shapeText() {
     throw "The feature preview needs the desktop app (npm run tauri dev).";
   },
@@ -1258,6 +1340,9 @@ const mockBackend: Backend = {
   async exportFont() {
     throw "Exporting fonts needs the desktop app (npm run tauri dev).";
   },
+  async exportUfo() {
+    throw "Exporting UFO sources needs the desktop app (npm run tauri dev).";
+  },
   async setMetricsKey() {
     throw "Metrics keys need the desktop app (npm run tauri dev).";
   },
@@ -1266,6 +1351,21 @@ const mockBackend: Backend = {
   },
   async importFont() {
     throw "Importing fonts needs the desktop app (npm run tauri dev).";
+  },
+  async saveGlyphs() {
+    throw "Saving .glyphs needs the desktop app (npm run tauri dev).";
+  },
+  async importSvgText() {
+    throw "Importing SVG needs the desktop app (npm run tauri dev).";
+  },
+  async importSvgFiles() {
+    throw "Importing SVG needs the desktop app (npm run tauri dev).";
+  },
+  async readMetricsSource() {
+    throw "Importing metrics needs the desktop app (npm run tauri dev).";
+  },
+  async importMetrics() {
+    throw "Importing metrics needs the desktop app (npm run tauri dev).";
   },
   async addGlyphs() {
     throw "Adding glyphs needs the desktop app (npm run tauri dev).";

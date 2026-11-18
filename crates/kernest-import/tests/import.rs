@@ -3,7 +3,9 @@ use std::fs;
 use std::path::Path;
 
 use kernest_core::sample::sample_font;
-use kernest_core::{layers, structure, Axis, AxisRange, Font, Instance, KernPair, NodeKind, Shape};
+use kernest_core::{
+    geometry, layers, structure, Axis, AxisRange, Font, Instance, KernPair, NodeKind, Shape,
+};
 use kernest_import::import;
 
 /// The sample font with a Bold master, kerning groups and an instance.
@@ -109,6 +111,37 @@ fn designspace_round_trip() {
 }
 
 #[test]
+fn ufo_export_round_trip() {
+    let src = two_masters();
+    let dir = tempfile::tempdir().unwrap();
+    let opts = kernest_export::UfoExportOptions {
+        masters: vec![],
+        decompose_smart: false,
+        color_layers: false,
+    };
+    let report = kernest_export::export_ufo(&src, dir.path(), &opts).unwrap();
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+    assert_eq!(report.files.len(), 3);
+    let imp = import(&dir.path().join("font.designspace")).unwrap();
+    let f = &imp.font;
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    assert_eq!(f.axes, src.axes);
+    assert_eq!(f.masters.len(), 2);
+    assert_eq!(f.instances, src.instances);
+    assert_eq!(f.features, src.features);
+    for g in &src.glyphs {
+        let got = f.glyph(&g.name).unwrap();
+        assert_eq!(got.layers, g.layers, "{}", g.name);
+        assert_eq!(got.unicodes, g.unicodes, "{}", g.name);
+    }
+    let mut want = src.kerning.clone();
+    for v in want.values_mut() {
+        v.sort_by(|a, b| (&a.left, &a.right).cmp(&(&b.left, &b.right)));
+    }
+    assert_eq!(f.kerning, want);
+}
+
+#[test]
 fn single_ufo() {
     let src = sample_font();
     let dir = tempfile::tempdir().unwrap();
@@ -125,8 +158,153 @@ fn single_ufo() {
 }
 
 #[test]
+fn glyphs_round_trip() {
+    let mut src = two_masters();
+    src.info.designer = Some("Test Designer".into());
+    src.info.copyright = Some("Copyright 2026".into());
+    src.info.vendor_id = Some("KRNS".into());
+    src.info.license = Some("Open Font License".into());
+    src.info.description = Some("A test font.".into());
+    src.info.hinting = Some(kernest_core::Hinting {
+        range_min: 9,
+        range_max: 45,
+        increase_x_height: 14,
+        hint_composites: true,
+    });
+    src.features = "languagesystem DFLT dflt;\nfeature salt {\nsub A by A.alt;\n} salt;\n".into();
+    src.glyph_mut("H")
+        .unwrap()
+        .layer_mut("m01")
+        .unwrap()
+        .metrics_keys
+        .left = Some("=T".into());
+    src.glyph_mut("H")
+        .unwrap()
+        .layer_mut("m02")
+        .unwrap()
+        .metrics_keys
+        .right = Some("=|T+10".into());
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("RoundTrip.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let imp = import(&path).unwrap();
+    let f = &imp.font;
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+
+    assert_eq!(f.info.family_name, src.info.family_name);
+    assert_eq!(
+        (f.info.version_major, f.info.version_minor),
+        (src.info.version_major, src.info.version_minor)
+    );
+    assert_eq!(f.info.designer, src.info.designer);
+    assert_eq!(f.info.copyright, src.info.copyright);
+    assert_eq!(f.info.vendor_id, src.info.vendor_id);
+    assert_eq!(f.info.license, src.info.license);
+    assert_eq!(f.info.description, src.info.description);
+    assert_eq!(f.info.hinting, src.info.hinting);
+    assert_eq!(f.axes, src.axes);
+    assert_eq!(f.masters, src.masters);
+    assert_eq!(f.instances, src.instances);
+    assert!(f.features.contains("sub A by A.alt;"), "{}", f.features);
+    assert!(
+        f.features.contains("languagesystem DFLT dflt;"),
+        "{}",
+        f.features
+    );
+
+    let names: Vec<&str> = f.glyphs.iter().map(|g| g.name.as_str()).collect();
+    let expected: Vec<&str> = src.glyphs.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(names, expected);
+    for g in &src.glyphs {
+        let got = f.glyph(&g.name).unwrap();
+        assert_eq!(got.unicodes, g.unicodes, "{}", g.name);
+        assert_eq!(got.export, g.export, "{}", g.name);
+        assert_eq!(
+            (&got.left_group, &got.right_group),
+            (&g.left_group, &g.right_group),
+            "{}",
+            g.name
+        );
+        assert_eq!(got.layers, g.layers, "{}", g.name);
+    }
+    let mut want = src.kerning.clone();
+    for v in want.values_mut() {
+        v.sort_by(|a, b| (&a.left, &a.right).cmp(&(&b.left, &b.right)));
+    }
+    assert_eq!(f.kerning, want);
+    assert_eq!(
+        f.glyph("H")
+            .unwrap()
+            .layer("m01")
+            .unwrap()
+            .metrics_keys
+            .left
+            .as_deref(),
+        Some("=T")
+    );
+    assert_eq!(
+        f.glyph("H")
+            .unwrap()
+            .layer("m02")
+            .unwrap()
+            .metrics_keys
+            .right
+            .as_deref(),
+        Some("=|T+10")
+    );
+}
+
+#[test]
+fn glyphs_smart_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let p1 = dir.path().join("Src.glyphs");
+    fs::write(&p1, glyphs_file()).unwrap();
+    let src = import(&p1).unwrap().font;
+    let p2 = dir.path().join("Out.glyphs");
+    kernest_import::write_glyphs(&src, &p2).unwrap();
+    let f = &import(&p2).unwrap().font;
+
+    let stem = f.glyph("_stem").unwrap();
+    assert_eq!(stem.smart_axes.len(), 1);
+    assert_eq!(
+        (
+            stem.smart_axes[0].name.as_str(),
+            stem.smart_axes[0].min,
+            stem.smart_axes[0].max
+        ),
+        ("Height", 0.0, 100.0)
+    );
+    assert_eq!(stem.smart_layers().count(), 2, "one tall pole per master");
+    for pole in stem.smart_layers() {
+        assert_eq!(pole.smart.as_ref().unwrap()["Height"], 100.0);
+        let Shape::Path(p) = &pole.shapes[0] else {
+            panic!("pole is a path")
+        };
+        assert_eq!(p.nodes[2].y, 700.0, "the tall pole");
+    }
+    let il = f.glyph("I").unwrap().layer("m01").unwrap();
+    let Shape::Component {
+        base,
+        transform,
+        smart,
+        ..
+    } = &il.shapes[0]
+    else {
+        panic!(
+            "I should use the smart stem as a component: {:?}",
+            il.shapes
+        )
+    };
+    assert_eq!(
+        (base.as_str(), transform[4], smart.get("Height").copied()),
+        ("_stem", 85.0, Some(50.0))
+    );
+}
+
+#[test]
 fn unknown_extension() {
-    let e = import(Path::new("font.otf")).unwrap_err();
+    let e = import(Path::new("font.xyz")).unwrap_err();
     assert!(e.contains(".glyphs"), "{e}");
 }
 
@@ -657,4 +835,153 @@ fn imported_glyphs_font_exports() {
         .unwrap();
     assert!(r.problems.is_empty(), "{:?}", r.problems);
     assert_eq!(r.files.len(), 1, "one exported instance: SemiBold");
+}
+
+// ---- Compiled fonts --------------------------------------------------------
+
+/// Exports the font as one static file in the given format ("ttf", "otf", "woff2").
+fn export_static(src: &Font, dir: &Path, fmt: &str) -> std::path::PathBuf {
+    let opts = kernest_export::ExportOptions {
+        variable: false,
+        statics: true,
+        ttf: fmt == "ttf",
+        otf: fmt == "otf",
+        woff2: fmt == "woff2",
+        remove_overlaps: false,
+        apply_metrics_keys: true,
+        autohint: false,
+        out_dir: dir.to_path_buf(),
+    };
+    let r = kernest_export::export(src, &opts).unwrap();
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    assert_eq!(r.files.len(), 1, "{fmt}");
+    std::path::PathBuf::from(&r.files[0].path)
+}
+
+/// The effective kerning for a glyph pair, resolving any kerning groups.
+fn kern_value(f: &Font, left: &str, right: &str) -> f64 {
+    let lg = f.glyph(left).and_then(|g| g.right_group.clone());
+    let rg = f.glyph(right).and_then(|g| g.left_group.clone());
+    for pairs in f.kerning.values() {
+        for p in pairs {
+            let l = p.left == left || lg.as_ref().is_some_and(|g| p.left == format!("@{g}"));
+            let r = p.right == right || rg.as_ref().is_some_and(|g| p.right == format!("@{g}"));
+            if l && r {
+                return p.value;
+            }
+        }
+    }
+    0.0
+}
+
+#[test]
+fn compiled_ttf_round_trip() {
+    let src = sample_font();
+    let dir = tempfile::tempdir().unwrap();
+    let path = export_static(&src, dir.path(), "ttf");
+    let imp = import(&path).unwrap();
+    let f = &imp.font;
+    assert_eq!(f.info.family_name, "Kernest Sample");
+    assert_eq!(f.info.units_per_em, 1000);
+    assert_eq!(f.masters.len(), 1);
+    assert!(f.axes.is_empty());
+    let m = f.masters[0].metrics;
+    assert_eq!(
+        (m.ascender, m.cap_height, m.x_height, m.descender),
+        (800.0, 700.0, 500.0, -200.0)
+    );
+    let mid = f.masters[0].id.clone();
+    for g in &src.glyphs {
+        let got = f
+            .glyph(&g.name)
+            .unwrap_or_else(|| panic!("missing {}", g.name));
+        assert_eq!(got.unicodes, g.unicodes, "{}", g.name);
+        assert_eq!(
+            got.layer(&mid).unwrap().width,
+            g.layer("m01").unwrap().width,
+            "{} width",
+            g.name
+        );
+    }
+    // H is three rectangles: the outline comes back as twelve line nodes.
+    let h = f.glyph("H").unwrap().layer(&mid).unwrap();
+    let hb = geometry::bounds(f, h).unwrap();
+    assert_eq!(
+        (hb.min_x, hb.min_y, hb.max_x, hb.max_y),
+        (80.0, 0.0, 600.0, 700.0)
+    );
+    let nodes: Vec<&kernest_core::Node> = h
+        .shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Path(p) => Some(p),
+            _ => None,
+        })
+        .flat_map(|p| &p.nodes)
+        .collect();
+    assert_eq!(nodes.len(), 12);
+    assert!(nodes.iter().all(|n| n.kind == NodeKind::Line));
+    // O keeps its size (the cubic→quadratic approximation stays within a unit).
+    let o = f.glyph("O").unwrap().layer(&mid).unwrap();
+    let ob = geometry::bounds(f, o).unwrap();
+    assert!(
+        (ob.min_x - 60.0).abs() < 2.0 && (ob.max_y - 712.0).abs() < 2.0,
+        "{ob:?}"
+    );
+    assert_eq!(kern_value(f, "T", "o"), -60.0);
+    assert_eq!(kern_value(f, "L", "T"), -80.0);
+}
+
+#[test]
+fn compiled_otf_and_woff2_round_trip() {
+    let src = sample_font();
+    for fmt in ["otf", "woff2"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = export_static(&src, dir.path(), fmt);
+        let imp = import(&path).unwrap();
+        let f = &imp.font;
+        assert_eq!(f.info.family_name, "Kernest Sample", "{fmt}");
+        assert_eq!(f.info.units_per_em, 1000, "{fmt}");
+        let mid = f.masters[0].id.clone();
+        for g in &src.glyphs {
+            let got = f
+                .glyph(&g.name)
+                .unwrap_or_else(|| panic!("{fmt} missing {}", g.name));
+            assert_eq!(got.unicodes, g.unicodes, "{fmt} {}", g.name);
+            assert_eq!(
+                got.layer(&mid).unwrap().width,
+                g.layer("m01").unwrap().width,
+                "{fmt} {} width",
+                g.name
+            );
+        }
+        let h = f.glyph("H").unwrap().layer(&mid).unwrap();
+        let hb = geometry::bounds(f, h).unwrap();
+        assert_eq!(
+            (hb.min_x, hb.min_y, hb.max_x, hb.max_y),
+            (80.0, 0.0, 600.0, 700.0),
+            "{fmt}"
+        );
+        assert_eq!(kern_value(f, "T", "o"), -60.0, "{fmt}");
+        assert_eq!(kern_value(f, "L", "T"), -80.0, "{fmt}");
+    }
+}
+
+#[test]
+fn woff2_transformed_fixture() {
+    // A real web font with the standard glyf transform (not Kernest's null transform).
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/lato.woff2");
+    let imp = import(&path).unwrap();
+    let f = &imp.font;
+    assert!(
+        f.info.family_name.contains("Lato"),
+        "{}",
+        f.info.family_name
+    );
+    assert!(f.glyphs.len() > 100, "{}", f.glyphs.len());
+    let a = f.glyph("A").unwrap();
+    assert!(a.unicodes.iter().any(|c| c.0 == 65));
+    let l = a.layer(&f.masters[0].id).unwrap();
+    assert!(l.width > 0.0);
+    assert!(!l.shapes.is_empty(), "A should have a drawn outline");
 }

@@ -13,12 +13,13 @@ export const windowControls = {
 };
 
 /** What a path dropped on the window or passed by Explorer is. */
-export function classifyPath(path: string): "kernest" | "source" | null {
+export function classifyPath(path: string): "kernest" | "source" | "compiled" | null {
   const parts = path.toLowerCase().split(/[\\/]/).filter(Boolean);
   if (parts.some((p) => p.endsWith(".kernest"))) return "kernest";
   const last = parts[parts.length - 1] ?? "";
   if (last.endsWith(".glyphs") || last.endsWith(".designspace")) return "source";
   if (parts.some((p) => p.endsWith(".ufo") || p.endsWith(".glyphspackage"))) return "source";
+  if (last.endsWith(".otf") || last.endsWith(".ttf") || last.endsWith(".woff2")) return "compiled";
   return null;
 }
 
@@ -46,9 +47,9 @@ export async function pickFontToOpen(): Promise<string | null> {
 }
 
 /**
- * Import picks a file: a .glyphs or .designspace file, or any file inside a
- * .glyphspackage or .ufo folder (such as fontinfo.plist). With `folder`, it picks the
- * .glyphspackage or .ufo folder itself.
+ * Import picks a file: a .glyphs or .designspace file, a compiled .otf/.ttf/.woff2
+ * font, or any file inside a .glyphspackage or .ufo folder (such as fontinfo.plist).
+ * With `folder`, it picks the .glyphspackage or .ufo folder itself.
  */
 export async function pickSourceToImport(folder = false): Promise<string | null> {
   if (!isTauri) return null;
@@ -56,12 +57,58 @@ export async function pickSourceToImport(folder = false): Promise<string | null>
     ? await open({ directory: true, multiple: false, title: t("Import a .glyphspackage or .ufo folder") })
     : await open({
         multiple: false,
-        title: t("Import a font source"),
+        title: t("Import a font"),
         filters: [
           { name: t("Font sources"), extensions: ["glyphs", "designspace", "plist"] },
+          { name: t("Compiled fonts"), extensions: ["otf", "ttf", "woff2"] },
           { name: t("All files"), extensions: ["*"] },
         ],
       });
+  return typeof picked === "string" ? picked : null;
+}
+
+/** Picks one SVG file per glyph to import (File › Import SVG…). */
+export async function pickSvgFiles(): Promise<string[]> {
+  if (!isTauri) return [];
+  const picked = await open({
+    multiple: true,
+    title: t("Import SVG outlines"),
+    filters: [
+      { name: t("SVG drawing"), extensions: ["svg"] },
+      { name: t("All files"), extensions: ["*"] },
+    ],
+  });
+  return Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+}
+
+/** Picks an AFM file or another font to import metrics from (File › Import Metrics…). */
+export async function pickMetricsSource(): Promise<string | null> {
+  if (!isTauri) return null;
+  const picked = await open({
+    multiple: false,
+    title: t("Import metrics from"),
+    filters: [
+      { name: t("AFM metrics"), extensions: ["afm"] },
+      { name: t("Kernest font"), extensions: ["kernest"] },
+      { name: t("Font sources"), extensions: ["glyphs", "designspace", "plist"] },
+      { name: t("Compiled fonts"), extensions: ["otf", "ttf", "woff2"] },
+      { name: t("All files"), extensions: ["*"] },
+    ],
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
+/** Picks a .fea file to merge into the feature code (File › Import Features…). */
+export async function pickFeaFile(): Promise<string | null> {
+  if (!isTauri) return null;
+  const picked = await open({
+    multiple: false,
+    title: t("Import features from"),
+    filters: [
+      { name: t("OpenType features"), extensions: ["fea"] },
+      { name: t("All files"), extensions: ["*"] },
+    ],
+  });
   return typeof picked === "string" ? picked : null;
 }
 
@@ -71,6 +118,16 @@ export async function pickSavePath(familyName: string): Promise<string | null> {
     title: t("Save font as"),
     defaultPath: `${familyName}.kernest`,
     filters: [{ name: t("Kernest font"), extensions: ["kernest"] }],
+  });
+}
+
+/** Picks where to write a Glyphs 3 `.glyphs` copy of the open font. */
+export async function pickGlyphsSavePath(familyName: string): Promise<string | null> {
+  if (!isTauri) return null;
+  return save({
+    title: t("Save as .glyphs"),
+    defaultPath: `${familyName}.glyphs`,
+    filters: [{ name: t("Glyphs font"), extensions: ["glyphs"] }],
   });
 }
 
