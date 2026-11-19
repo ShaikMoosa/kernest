@@ -188,6 +188,9 @@ interface Props {
   showBackground?: boolean;
   /** View › Show Bounding Box: a dashed box around the drawing. */
   showBoundingBox?: boolean;
+  /** View › Show Sidebar: the Transform/Hints/Pixel preview column. */
+  showSidebar?: boolean;
+  onToggleSidebar?: () => void;
   /** The current master's id; `masterId` differs when a brace or bracket layer is open. */
   masterKey?: string;
   /** Switches this tab to another layer (a layer key). */
@@ -197,7 +200,7 @@ interface Props {
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showBoundingBox = false, masterKey, onPickLayer, reporters = [] }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, masterKey, onPickLayer, reporters = [] }: Props) {
   const master = masterKey ?? masterId;
   // ---------- Reporter plug-ins ----------
   const [reporterItems, setReporterItems] = useState<DrawItem[]>([]);
@@ -1502,7 +1505,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         <span className="k-caption muted">{cursor ? `${cursor.x}, ${cursor.y}` : ""}</span>
         <button className="btn btn-secondary btn-sm" onClick={fit} title={t("Fit glyph (Ctrl+0)")}>{t("Fit")}</button>
         <span className="k-caption muted zoom">{Math.round(view.s * 100)}%</span>
+        <button type="button" className="icon-btn sidebar-toggle" aria-pressed={showSidebar} onClick={onToggleSidebar}
+          title={t("Show or hide the sidebar")} aria-label={t("Sidebar")}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
+        </button>
       </div>
+      <div className="editor-columns">
       <div className="canvas-wrap" ref={wrapRef}>
         <svg ref={svgRef} className="canvas" width={size.w} height={size.h} style={{ cursor: cursorStyle }}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={() => setCursor(null)}
@@ -1858,6 +1866,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             <span className="k-caption muted info-count">{selectionLabel(selection.size, compSel.size, anchorSel.size)}</span>
           )}
         </div>
+        </div>
+      </div>
+      {showSidebar && (
+        <aside className="edit-sidebar" aria-label={t("Sidebar")}>
         <div className="transform-panel">
           <button type="button" className="transform-head" aria-expanded={transformOpen} onClick={() => setTransformOpen((o) => !o)}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
@@ -1947,7 +1959,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           )}
         </div>
         <PixelPreviewPanel glyph={glyph} unicode={layer.unicode} master={master} version={version} active={active} />
-        </div>
+        </aside>
+      )}
       </div>
       {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}
       {painting && layer?.paint && (

@@ -108,6 +108,7 @@ export default function App() {
   const [showGuides, toggleGuides] = useViewToggle("kernest.showGuides", true);
   const [showBackground, toggleBackground] = useViewToggle("kernest.showBackground", true);
   const [showBoundingBox, toggleBoundingBox] = useViewToggle("kernest.showBoundingBox", false);
+  const [showSidebar, toggleSidebar] = useViewToggle("kernest.showSidebar", true);
   const [importNotes, setImportNotes] = useState<{ source: string; familyName: string; warnings: string[] } | null>(null);
   const [toast, setToast] = useState<{ kind: "info" | "danger"; text: string } | null>(null);
   // ---------- Scripts, plug-ins and settings (phase 6) ----------
@@ -822,7 +823,7 @@ export default function App() {
     "show-bounding-box": toggleBoundingBox,
     "macro-panel": openMacro,
     "settings": () => setSettingsOpen(true),
-  }), [showNewFont, open, importSource, save, saveAs, active, closeTab, closeFont, openInfo, undoRedo, newTextTab, openKerning, showAddGlyphs, removeGlyphs, glyphTargets, setAnchors, repeatFilter, toggleMetrics, toggleAnchors, toggleGuides, toggleBackground, toggleBoundingBox, openMacro]);
+  }), [showNewFont, open, importSource, save, saveAs, active, closeTab, closeFont, openInfo, undoRedo, newTextTab, openKerning, showAddGlyphs, removeGlyphs, glyphTargets, setAnchors, repeatFilter, toggleMetrics, toggleAnchors, toggleGuides, toggleBackground, toggleBoundingBox, showSidebar, toggleSidebar, openMacro]);
 
   // Windows shortcuts (Ctrl, not Cmd), honouring any rebinding stored in settings.
   useEffect(() => {
@@ -957,6 +958,7 @@ export default function App() {
       { label: t("Show Guides"), shortcut: shortcutText("show-guides"), onSelect: toggleGuides, checked: showGuides },
       { label: t("Show Background"), shortcut: shortcutText("show-background"), onSelect: toggleBackground, checked: showBackground },
       { label: t("Show Bounding Box"), shortcut: shortcutText("show-bounding-box"), onSelect: toggleBoundingBox, checked: showBoundingBox },
+      { label: t("Show Sidebar"), onSelect: toggleSidebar, checked: showSidebar },
       { label: t("Theme: System"), onSelect: () => setTheme("system"), checked: theme === "system", separatorBefore: true },
       { label: t("Theme: Light"), onSelect: () => setTheme("light"), checked: theme === "light" },
       { label: t("Theme: Dark"), onSelect: () => setTheme("dark"), checked: theme === "dark" },
@@ -1033,7 +1035,7 @@ export default function App() {
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showBoundingBox={showBoundingBox} reporters={enabledReporters} />
+                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showBoundingBox={showBoundingBox} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} reporters={enabledReporters} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} onGenerateInstances={generateInstances} />
               ) : id === "kerning" ? (
