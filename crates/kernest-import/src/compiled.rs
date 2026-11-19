@@ -90,6 +90,8 @@ fn build(font: &FontRef) -> Result<Imported, String> {
             location: p.location.clone(),
             metrics: default_metrics,
             guides: Vec::new(),
+            alignment_zones: Vec::new(),
+            stems: Vec::new(),
         })
         .collect();
 
@@ -454,6 +456,8 @@ fn font_info(font: &FontRef, upem: u16) -> FontInfo {
         sample_text: s(StringId::SAMPLE_TEXT),
         hinting: None,
         grid: None,
+        ps_hinting: None,
+        control_instructions: String::new(),
     }
 }
 

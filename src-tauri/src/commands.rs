@@ -15,7 +15,8 @@ use kernest_core::interpolate::check_glyph;
 use kernest_core::{
     filters, package, pathops, sample,
     transform::{self, Selection},
-    Anchor, Font, Grid, Guide, Layer, Metrics, Node, NodeKind, Path as KPath, Shape, SmartAxis,
+    Anchor, Font, Grid, Guide, Hint, Layer, Metrics, Node, NodeKind, Path as KPath, Shape,
+    SmartAxis,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -308,6 +309,10 @@ pub struct LayerView {
     /// All components resolved to outlines, as SVG path data in font units (y up).
     component_svg: String,
     pub(crate) anchors: Vec<Anchor>,
+    /// This layer's manual PostScript hints (empty means auto stems are used).
+    pub(crate) hints: Vec<Hint>,
+    /// The automatic stem hints the master's stems produce for this layer.
+    auto_hints: Vec<Hint>,
     /// Metrics keys of this layer, e.g. `=n` for the left sidebearing.
     metrics_keys: kernest_core::MetricsKeys,
     /// This glyph's smart axes, if it is a smart glyph.
@@ -465,6 +470,23 @@ fn layer_view_font(
         components,
         component_svg,
         anchors: layer.anchors.clone(),
+        hints: layer.hints.clone(),
+        auto_hints: kernest_core::hinting::auto_stems(
+            font,
+            layer,
+            &master
+                .stems
+                .iter()
+                .filter(|s| s.horizontal)
+                .map(|s| s.value)
+                .collect::<Vec<_>>(),
+            &master
+                .stems
+                .iter()
+                .filter(|s| !s.horizontal)
+                .map(|s| s.value)
+                .collect::<Vec<_>>(),
+        ),
         metrics_keys: layer.metrics_keys.clone(),
         smart_axes: g.smart_axes.clone(),
         issues: check_glyph(font, glyph),
@@ -799,6 +821,29 @@ pub fn set_metric(
     if doc
         .history
         .apply(&mut doc.font, &glyph, &master_id, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    layer_view_of(doc, &glyph, &master_id)
+}
+
+/// Replaces a layer's manual PostScript hints (empty restores the auto stems).
+/// One undoable step.
+#[tauri::command]
+pub fn set_glyph_hints(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    hints: Vec<Hint>,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, &glyph)?;
+    let next = kernest_core::hinting::set_glyph_hints(&doc.font, &glyph, &master_id, hints)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
         .map_err(|e| e.to_string())?
     {
         doc.revision += 1;
@@ -1708,6 +1753,48 @@ pub fn redo(state: State<AppState>) -> CmdResult<Option<UndoResult>> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn glyph_hints_replace_auto_stems_and_undo() {
+        let mut doc = Document::new(sample::sample_font(), None);
+        let id = doc.font.masters[0].id.clone();
+        let f = kernest_core::hinting::set_stems(
+            &doc.font,
+            &id,
+            vec![
+                kernest_core::Stem {
+                    name: "h".into(),
+                    horizontal: true,
+                    value: 80.0,
+                },
+                kernest_core::Stem {
+                    name: "v".into(),
+                    horizontal: false,
+                    value: 90.0,
+                },
+            ],
+        )
+        .unwrap();
+        doc.history.apply_font(&mut doc.font, f).unwrap();
+        let v = layer_view_of(&doc, "H", &id).unwrap();
+        assert!(v.hints.is_empty());
+        assert_eq!(v.auto_hints.len(), 3, "crossbar plus two uprights");
+
+        let manual = vec![Hint {
+            horizontal: true,
+            position: 0.0,
+            width: 0.0,
+            ghost_top: false,
+        }];
+        let f =
+            kernest_core::hinting::set_glyph_hints(&doc.font, "H", &id, manual.clone()).unwrap();
+        doc.history.apply_font(&mut doc.font, f).unwrap();
+        let v = layer_view_of(&doc, "H", &id).unwrap();
+        assert_eq!(v.hints, manual);
+        assert!(v.status.can_undo);
+        doc.history.undo(&mut doc.font).unwrap();
+        assert!(layer_view_of(&doc, "H", &id).unwrap().hints.is_empty());
+    }
+
     fn node(x: f64, y: f64, kind: NodeKindDto) -> NodeDto {
         NodeDto {
             x,
@@ -1855,6 +1942,8 @@ mod path_edit_tests {
             location: Default::default(),
             metrics: bold.metrics,
             guides: Vec::new(),
+            alignment_zones: Vec::new(),
+            stems: Vec::new(),
         });
         for g in &mut f.glyphs {
             let mut l = g.layers[0].clone();

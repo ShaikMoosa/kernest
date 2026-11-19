@@ -103,6 +103,14 @@ pub struct FontInfo {
     /// TrueType autohinting settings; `None` means the defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hinting: Option<Hinting>,
+    /// PostScript hinting values written into the CFF Private DICT; `None` means
+    /// the standard defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ps_hinting: Option<PsHinting>,
+    /// TTFAutohint control instructions: per-glyph point deltas applied on top of
+    /// the autohinter. Empty means none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub control_instructions: String,
     /// Snap grid for the edit view; `None` (or spacing 0) means no grid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grid: Option<Grid>,
@@ -152,6 +160,70 @@ impl Default for Hinting {
             increase_x_height: 14,
             hint_composites: false,
         }
+    }
+}
+
+/// PostScript hinting values shared by every CFF export (the Private DICT's
+/// blue zone controls). Defaults follow the CFF specification's recommendations.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PsHinting {
+    /// Point size at which blue zones stop flattening overshoots (in points).
+    pub blue_scale: f64,
+    /// How far a stem may reach past a blue zone and still be flattened (units).
+    pub blue_shift: f64,
+    /// Extra slack around blue zones so nearby edges snap together (units).
+    pub blue_fuzz: f64,
+}
+
+impl Default for PsHinting {
+    fn default() -> Self {
+        Self {
+            blue_scale: 0.039625,
+            blue_shift: 7.0,
+            blue_fuzz: 1.0,
+        }
+    }
+}
+
+/// An alignment zone: a flat edge (`position`) and its overshoot (`size`).
+/// A positive size is a top zone (BlueValues); a negative size is a bottom zone
+/// (OtherBlues). The baseline zone has position 0 and a negative size.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Zone {
+    pub position: f64,
+    pub size: f64,
+}
+
+/// A standard stem width used for hinting. The first horizontal stem becomes
+/// StdHW, the first vertical stem StdVW; all of them become StemSnapH/V.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stem {
+    pub name: String,
+    pub horizontal: bool,
+    pub value: f64,
+}
+
+/// A manual PostScript stem hint on a layer. `width` 0 makes it a ghost hint,
+/// which snaps a single edge; `ghost_top` then picks the edge (top or right when
+/// true, bottom or left when false).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hint {
+    pub horizontal: bool,
+    /// The edge the hint starts at: y for horizontal hints, x for vertical.
+    pub position: f64,
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ghost_top: bool,
+}
+
+impl Hint {
+    pub fn is_ghost(&self) -> bool {
+        self.width == 0.0
     }
 }
 
@@ -241,6 +313,12 @@ pub struct Master {
     /// Global guides: drawn in every glyph of this master.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guides: Vec<Guide>,
+    /// Alignment zones for PostScript hinting (blue values).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alignment_zones: Vec<Zone>,
+    /// Standard stem widths for PostScript hinting.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stems: Vec<Stem>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -414,6 +492,9 @@ pub struct Layer {
     /// Local guides: drawn only in this layer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guides: Vec<Guide>,
+    /// Manual PostScript stem hints, exported with CFF outlines.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hints: Vec<Hint>,
     /// A reference drawing behind the outline (a previous version or a scan).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<Background>,
@@ -464,6 +545,7 @@ impl Layer {
             anchors: Vec::new(),
             metrics_keys: MetricsKeys::default(),
             guides: Vec::new(),
+            hints: Vec::new(),
             background: None,
         }
     }
@@ -815,6 +897,8 @@ impl Font {
             location: BTreeMap::new(),
             metrics: Metrics::default(),
             guides: Vec::new(),
+            alignment_zones: Vec::new(),
+            stems: Vec::new(),
         };
         let glyphs = codepoints
             .into_iter()
@@ -843,6 +927,8 @@ impl Font {
                 trademark: None,
                 sample_text: None,
                 hinting: None,
+                ps_hinting: None,
+                control_instructions: String::new(),
                 grid: None,
             },
             axes: Vec::new(),

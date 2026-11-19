@@ -5,7 +5,8 @@ use std::path::Path;
 
 use kernest_core::interpolate::{check_glyph, default_master};
 use kernest_core::{
-    structure, Axis, Font, Grid, Guide, Hinting, Instance, Metrics, VariableFontSetting,
+    structure, Axis, Font, Grid, Guide, Hinting, Instance, Metrics, PsHinting, Stem,
+    VariableFontSetting, Zone,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -76,6 +77,8 @@ pub struct MasterView {
     name: String,
     location: BTreeMap<String, f64>,
     metrics: Metrics,
+    alignment_zones: Vec<Zone>,
+    stems: Vec<Stem>,
 }
 
 #[derive(Serialize)]
@@ -95,6 +98,10 @@ pub struct FontInfoView {
     variable_fonts: Vec<VariableFontSetting>,
     /// TrueType autohinting settings (the defaults if the font has none).
     hinting: Hinting,
+    /// TTFAutohint control instructions, applied to TrueType exports.
+    control_instructions: String,
+    /// PostScript blue zone controls (the defaults if the font has none).
+    ps_hinting: PsHinting,
     /// The edit view's snap grid, if set.
     grid: Option<Grid>,
     /// Colour palettes (CSS colours `#rrggbbaa`), all the same length.
@@ -129,11 +136,15 @@ fn info_view(doc: &Document) -> FontInfoView {
                 name: m.name.clone(),
                 location: m.location.clone(),
                 metrics: m.metrics,
+                alignment_zones: m.alignment_zones.clone(),
+                stems: m.stems.clone(),
             })
             .collect(),
         instances: f.instances.clone(),
         variable_fonts: f.variable_fonts.clone(),
         hinting: f.info.hinting.unwrap_or_default(),
+        control_instructions: f.info.control_instructions.clone(),
+        ps_hinting: f.info.ps_hinting.unwrap_or_default(),
         grid: f.info.grid,
         palettes: f.palettes.clone(),
         master_palettes: f.master_palettes.clone(),
@@ -207,6 +218,49 @@ pub fn set_notes(state: State<AppState>, text: String) -> CmdResult<FontInfoView
 #[tauri::command]
 pub fn set_hinting(state: State<AppState>, hinting: Hinting) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_hinting(f, hinting))
+}
+
+/// Replaces a master's alignment zones (Font Info › Masters).
+#[tauri::command]
+pub fn set_alignment_zones(
+    state: State<AppState>,
+    master_id: String,
+    zones: Vec<Zone>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| {
+        kernest_core::hinting::set_alignment_zones(f, &master_id, zones)
+    })
+}
+
+/// Replaces a master's standard stems (Font Info › Masters).
+#[tauri::command]
+pub fn set_stems(
+    state: State<AppState>,
+    master_id: String,
+    stems: Vec<Stem>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| {
+        kernest_core::hinting::set_stems(f, &master_id, stems)
+    })
+}
+
+/// Sets the TTFAutohint control instructions (empty clears them).
+#[tauri::command]
+pub fn set_control_instructions(state: State<AppState>, text: String) -> CmdResult<FontInfoView> {
+    edit(&state, |f| {
+        kernest_core::hinting::set_control_instructions(f, text)
+    })
+}
+
+/// Sets or clears the PostScript blue zone controls (`None` restores defaults).
+#[tauri::command]
+pub fn set_ps_hinting(
+    state: State<AppState>,
+    ps_hinting: Option<PsHinting>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| {
+        kernest_core::hinting::set_ps_hinting(f, ps_hinting)
+    })
 }
 
 /// Sets or clears the edit view's snap grid (Font Info › General).
@@ -445,6 +499,39 @@ mod tests {
         assert_eq!(v.default_master_id, "m01");
         assert!(v.warnings.is_empty());
         assert_eq!(v.incompatible, 0);
+    }
+
+    #[test]
+    fn hinting_edits_are_undoable_steps() {
+        let mut doc = Document::new(sample_font(), None);
+        let id = doc.font.masters[0].id.clone();
+        let zones = vec![Zone {
+            position: 700.0,
+            size: 10.0,
+        }];
+        let f = kernest_core::hinting::set_alignment_zones(&doc.font, &id, zones.clone()).unwrap();
+        doc.history.apply_font(&mut doc.font, f).unwrap();
+        let stems = vec![Stem {
+            name: "h".into(),
+            horizontal: true,
+            value: 80.0,
+        }];
+        let f = kernest_core::hinting::set_stems(&doc.font, &id, stems.clone()).unwrap();
+        doc.history.apply_font(&mut doc.font, f).unwrap();
+        let f = kernest_core::hinting::set_control_instructions(&doc.font, "H 10".into()).unwrap();
+        doc.history.apply_font(&mut doc.font, f).unwrap();
+        let v = info_view(&doc);
+        assert_eq!(v.masters[0].alignment_zones, zones);
+        assert_eq!(v.masters[0].stems, stems);
+        assert_eq!(v.control_instructions, "H 10");
+        assert_eq!(v.ps_hinting, PsHinting::default());
+        assert!(v.status.can_undo);
+        doc.history.undo(&mut doc.font).unwrap();
+        assert!(info_view(&doc).control_instructions.is_empty());
+        doc.history.undo(&mut doc.font).unwrap();
+        let v = info_view(&doc);
+        assert!(v.masters[0].stems.is_empty());
+        assert_eq!(v.masters[0].alignment_zones, zones);
     }
 
     #[test]

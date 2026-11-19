@@ -509,6 +509,21 @@ pub fn glyphs_source(font: &Font) -> String {
             q(&hinting_options(h))
         ));
     }
+    if !info.control_instructions.is_empty() {
+        params.push(format!(
+            "{{\nname = \"TTFAutohint control instructions\";\nvalue = {};\n}}",
+            q(&info.control_instructions)
+        ));
+    }
+    if let Some(ps) = &info.ps_hinting {
+        for (name, v) in [
+            ("BlueScale", ps.blue_scale),
+            ("BlueShift", ps.blue_shift),
+            ("BlueFuzz", ps.blue_fuzz),
+        ] {
+            params.push(format!("{{\nname = {name};\nvalue = {};\n}}", num(v)));
+        }
+    }
     let mapped: Vec<&kernest_core::Axis> = font.axes.iter().filter(|a| !a.map.is_empty()).collect();
     if !mapped.is_empty() {
         let entries: Vec<String> = mapped
@@ -533,8 +548,68 @@ pub fn glyphs_source(font: &Font) -> String {
     let _ = writeln!(s, "versionMajor = {};", info.version_major);
     let _ = writeln!(s, "versionMinor = {};", info.version_minor);
 
-    // Metrics: a type list, then each master's values in the same order.
-    s.push_str("metrics = (\n{type = ascender;},\n{type = \"cap height\";},\n{type = \"x-height\";},\n{type = baseline;},\n{type = descender;},\n{type = \"italic angle\";}\n);\n");
+    // Metrics: the six standard types, then a custom entry for every alignment-zone
+    // position that isn't a standard metric. Each master's values run in the same order;
+    // a zone becomes the overshoot (`over`) on its metric, as Glyphs 3 stores them.
+    let std_pos = |m: &kernest_core::Master| -> [f64; 5] {
+        let mv = &m.metrics;
+        [mv.ascender, mv.cap_height, mv.x_height, 0.0, mv.descender]
+    };
+    let zone_at = |m: &kernest_core::Master, pos: f64| -> Option<f64> {
+        m.alignment_zones
+            .iter()
+            .find(|z| z.position == pos)
+            .map(|z| z.size)
+    };
+    let mut custom: Vec<f64> = Vec::new();
+    for m in &font.masters {
+        let std = std_pos(m);
+        for z in &m.alignment_zones {
+            if !std.contains(&z.position) && !custom.contains(&z.position) {
+                custom.push(z.position);
+            }
+        }
+    }
+    custom.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    let mut metric_defs = vec![
+        "{type = ascender;}".to_string(),
+        "{type = \"cap height\";}".to_string(),
+        "{type = \"x-height\";}".to_string(),
+        "{type = baseline;}".to_string(),
+        "{type = descender;}".to_string(),
+        "{type = \"italic angle\";}".to_string(),
+    ];
+    for p in &custom {
+        metric_defs.push(format!("{{name = {};}}", q(&format!("zone {}", num(*p)))));
+    }
+    let _ = writeln!(s, "metrics = (\n{}\n);", metric_defs.join(",\n"));
+
+    // Stems: a font-wide name list, then each master's widths in the same order.
+    let mut stem_defs: Vec<(String, bool)> = Vec::new();
+    for m in &font.masters {
+        for st in &m.stems {
+            if !stem_defs
+                .iter()
+                .any(|(n, h)| *n == st.name && *h == st.horizontal)
+            {
+                stem_defs.push((st.name.clone(), st.horizontal));
+            }
+        }
+    }
+    if !stem_defs.is_empty() {
+        let defs: Vec<String> = stem_defs
+            .iter()
+            .map(|(n, h)| {
+                if *h {
+                    format!("{{name = {}; horizontal = 1;}}", q(n))
+                } else {
+                    format!("{{name = {};}}", q(n))
+                }
+            })
+            .collect();
+        let _ = writeln!(s, "stems = (\n{}\n);", defs.join(",\n"));
+    }
+
     let masters: Vec<String> = font
         .masters
         .iter()
@@ -551,17 +626,52 @@ pub fn glyphs_source(font: &Font) -> String {
                 })
                 .collect();
             let mv = &m.metrics;
-            format!(
-                "{{\naxesValues = (\n{}\n);\nid = {};\nmetricValues = (\n{{pos = {};}},\n{{pos = {};}},\n{{pos = {};}},\n{{}},\n{{pos = {};}},\n{{pos = {};}}\n);\nname = {};\n}}",
+            let mut mvals: Vec<String> = Vec::new();
+            for p in std_pos(m) {
+                let pos_part = if p == 0.0 {
+                    String::new()
+                } else {
+                    format!("pos = {};", num(p))
+                };
+                let over_part = zone_at(m, p)
+                    .map(|o| format!("over = {};", num(o)))
+                    .unwrap_or_default();
+                let body = [pos_part, over_part]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                mvals.push(format!("{{{body}}}"));
+            }
+            mvals.push(format!("{{pos = {};}}", num(mv.italic_angle)));
+            for p in &custom {
+                let over_part = zone_at(m, *p)
+                    .map(|o| format!(" over = {};", num(o)))
+                    .unwrap_or_default();
+                mvals.push(format!("{{pos = {};{over_part}}}", num(*p)));
+            }
+            let mut e = format!(
+                "{{\naxesValues = (\n{}\n);\nid = {};\nmetricValues = (\n{}\n);\n",
                 vals.join(",\n"),
                 q(master_gid(m)),
-                num(mv.ascender),
-                num(mv.cap_height),
-                num(mv.x_height),
-                num(mv.descender),
-                num(mv.italic_angle),
-                q(&m.name)
-            )
+                mvals.join(",\n")
+            );
+            if !stem_defs.is_empty() {
+                let sv: Vec<String> = stem_defs
+                    .iter()
+                    .map(|(n, h)| {
+                        num(m
+                            .stems
+                            .iter()
+                            .find(|s| s.name == *n && s.horizontal == *h)
+                            .map(|s| s.value)
+                            .unwrap_or(0.0))
+                    })
+                    .collect();
+                let _ = writeln!(e, "stemValues = (\n{}\n);", sv.join(",\n"));
+            }
+            let _ = writeln!(e, "name = {};\n}}", q(&m.name));
+            e
         })
         .collect();
     let _ = writeln!(s, "fontMaster = (\n{}\n);", masters.join(",\n"));

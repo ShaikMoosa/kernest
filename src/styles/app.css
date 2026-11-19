@@ -384,6 +384,12 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .fi-head { display: flex; align-items: center; gap: var(--k-space-8); }
 .fi-row { display: flex; align-items: flex-end; gap: var(--k-space-8); flex-wrap: wrap; }
 .fi-master, .fi-instance, .fi-vf { padding: var(--k-space-12); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-lg); background: var(--k-bg-app); }
+.fi-master { display: flex; flex-direction: column; gap: var(--k-space-8); }
+.fi-hint-editor { display: flex; flex-direction: column; gap: var(--k-space-8); padding: var(--k-space-12); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-md); background: var(--k-bg-surface); }
+.fi-hint-rows { display: flex; flex-direction: column; gap: var(--k-space-4); }
+.fi-hint-row { display: flex; align-items: flex-end; gap: var(--k-space-8); }
+.fi-hint-editor > .btn { align-self: flex-start; }
+.fi-sub { margin: 0; }
 .fi-vf { display: flex; flex-direction: column; gap: var(--k-space-8); }
 .fi-vf-axis { gap: var(--k-space-4); }
 .fi-vf-range { display: flex; align-items: center; gap: var(--k-space-4); }
@@ -429,6 +435,7 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .notes-area { width: 100%; min-height: 120px; resize: vertical; padding: var(--k-space-8); border: 1px solid var(--k-border-strong); border-radius: var(--k-radius-md); background: var(--k-bg-app); font: 400 13px/1.5 var(--k-font-ui); color: var(--k-text-default); outline: 0; }
 .notes-area:focus { border-color: var(--k-border-focus); }
 .glyph-order-area { min-height: 96px; max-height: 240px; overflow: auto; font-family: var(--k-font-code); font-size: 12px; line-height: 1.6; }
+.control-area { min-height: 72px; max-height: 240px; overflow: auto; font-family: var(--k-font-code); font-size: 12px; line-height: 1.6; }
 .fea-auto { display: flex; flex-wrap: wrap; gap: var(--k-space-8) var(--k-space-16); }
 .fea-tag { font-family: var(--k-font-code); }
 .fea-generated-wrap summary { cursor: pointer; color: var(--k-text-muted); }
@@ -572,6 +579,26 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .origin-dot.is-active::after { background: var(--k-accent-default); }
 .transform-body .check-row { align-self: center; height: auto; }
 [dir="rtl"] .transform-panel { direction: rtl; }
+.hints-panel { max-width: min(480px, calc(100vw - 32px)); }
+.hints-body { flex-direction: column; align-items: stretch; max-height: 240px; overflow: auto; }
+.hint-row { display: flex; align-items: flex-end; gap: var(--k-space-8); }
+.hint-row .select { height: var(--k-control-md); }
+.hints-add { display: flex; gap: var(--k-space-8); }
+.hints-note { margin: 0; }
+.hint-band { fill: var(--k-accent-default); opacity: 0.16; }
+.hint-band.is-auto { opacity: 0.08; }
+.hint-ghost { stroke: var(--k-accent-default); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.8; }
+.hint-ghost.is-auto { opacity: 0.4; }
+.pixel-panel { max-width: min(680px, calc(100vw - 32px)); }
+.pixel-body { flex-direction: column; align-items: stretch; max-height: 320px; overflow: auto; }
+.pixel-controls { display: flex; align-items: flex-end; gap: var(--k-space-8); }
+.pixel-text { width: 160px; }
+.pixel-sizes { width: 110px; }
+.pixel-row { display: flex; align-items: flex-start; gap: var(--k-space-12); }
+.pixel-size { min-width: 44px; padding-top: 14px; }
+.pixel-col { display: flex; flex-direction: column; gap: 2px; }
+.pixel-canvas { display: block; image-rendering: pixelated; color: var(--k-text-default); }
+.pixel-note { margin: 0; }
 
 /* Colour fonts: palette swatches, the paint dialog and Font Info's palette table. */
 .swatches { display: inline-flex; flex-wrap: wrap; gap: var(--k-space-4); }

@@ -119,6 +119,8 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
   const [mapOpen, setMapOpen] = useState<string | null>(null);
   // The axis tag whose STAT value-label editor is expanded (one at a time); null = none.
   const [labelsOpen, setLabelsOpen] = useState<string | null>(null);
+  // The master hinting editor that is expanded: "<master id>:zones" or ":stems"; null = none.
+  const [hintsOpen, setHintsOpen] = useState<string | null>(null);
 
   const reload = useCallback(() => backend.fontInfo().then((i) => { setInfo(i); }, onError), [onError]);
   useEffect(() => { reload(); }, [reload, version]);
@@ -434,12 +436,71 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                   </label>
                 ))}
                 <span className="spacer" />
+                <button className={`btn btn-sm ${m.alignmentZones.length ? "btn-primary" : "btn-secondary"}`} aria-expanded={hintsOpen === `${m.id}:zones`}
+                  title={t("Edges that line up on one pixel row at small sizes")} onClick={() => setHintsOpen(hintsOpen === `${m.id}:zones` ? null : `${m.id}:zones`)}>
+                  {m.alignmentZones.length ? tn(m.alignmentZones.length, "{n} zone", "{n} zones") : t("Zones")}
+                </button>
+                <button className={`btn btn-sm ${m.stems.length ? "btn-primary" : "btn-secondary"}`} aria-expanded={hintsOpen === `${m.id}:stems`}
+                  title={t("The common stroke widths, used for hinting")} onClick={() => setHintsOpen(hintsOpen === `${m.id}:stems` ? null : `${m.id}:stems`)}>
+                  {m.stems.length ? tn(m.stems.length, "{n} stem", "{n} stems") : t("Stems")}
+                </button>
                 {m.id === info.defaultMasterId && <span className="pill pill-group" title={t("At the default location of every axis")}>{t("Default")}</span>}
                 <button className="icon-btn" aria-label={t("Remove {name}", { name: m.name })} title={info.masters.length === 1 ? t("A font needs at least one master") : t("Remove master")} disabled={info.masters.length === 1}
                   onClick={() => window.confirm(t("Remove the master “{name}” and its outlines and kerning? You can undo this.", { name: m.name })) && apply(() => backend.removeMaster(m.id))}>
                   <CloseIcon size={14} />
                 </button>
               </div>
+              {hintsOpen === `${m.id}:zones` && (
+                <div className="fi-hint-editor">
+                  <p className="k-caption muted">{t("Zones keep edges like the baseline and x-height on one pixel row at small sizes. A positive size marks a top edge, a negative size a bottom edge.")}</p>
+                  <div className="fi-hint-rows">
+                    {m.alignmentZones.map((z, i) => (
+                      <div key={i} className="fi-hint-row">
+                        <label className="info-field"><span className="k-caption muted">{t("Position")}</span>
+                          <Field label={t("Zone position")} value={z.position} onCommit={(v) => apply(() => backend.setAlignmentZones(m.id, m.alignmentZones.map((x, j) => (j === i ? { ...x, position: num(v) } : x))))} />
+                        </label>
+                        <label className="info-field"><span className="k-caption muted">{t("Size")}</span>
+                          <Field label={t("Zone size")} value={z.size} onCommit={(v) => apply(() => backend.setAlignmentZones(m.id, m.alignmentZones.map((x, j) => (j === i ? { ...x, size: num(v) } : x))))} />
+                        </label>
+                        <button className="icon-btn" aria-label={t("Remove zone")} title={t("Remove zone")}
+                          onClick={() => apply(() => backend.setAlignmentZones(m.id, m.alignmentZones.filter((_, j) => j !== i)))}><CloseIcon size={14} /></button>
+                      </div>
+                    ))}
+                  </div>
+                  <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setAlignmentZones(m.id, [...m.alignmentZones, { position: 0, size: 10 }]))}>
+                    <AddIcon size={14} /> {t("Add zone")}
+                  </button>
+                </div>
+              )}
+              {hintsOpen === `${m.id}:stems` && (
+                <div className="fi-hint-editor">
+                  <p className="k-caption muted">{t("Stems are the common stroke widths. PostScript exports use them for hints; TrueType uses the first horizontal stem as its guide width.")}</p>
+                  <div className="fi-hint-rows">
+                    {m.stems.map((s, i) => (
+                      <div key={i} className="fi-hint-row">
+                        <label className="info-field"><span className="k-caption muted">{t("Name")}</span>
+                          <Field label={t("Stem name")} value={s.name} width={120} mono={false} numeric={false} onCommit={(v) => apply(() => backend.setStems(m.id, m.stems.map((x, j) => (j === i ? { ...x, name: v } : x))))} />
+                        </label>
+                        <label className="info-field"><span className="k-caption muted">{t("Direction")}</span>
+                          <select className="select" value={s.horizontal ? "h" : "v"} aria-label={t("Stem direction")}
+                            onChange={(e) => apply(() => backend.setStems(m.id, m.stems.map((x, j) => (j === i ? { ...x, horizontal: e.target.value === "h" } : x))))}>
+                            <option value="h">{t("Horizontal")}</option>
+                            <option value="v">{t("Vertical")}</option>
+                          </select>
+                        </label>
+                        <label className="info-field"><span className="k-caption muted">{t("Width")}</span>
+                          <Field label={t("Stem width")} value={s.value} onCommit={(v) => apply(() => backend.setStems(m.id, m.stems.map((x, j) => (j === i ? { ...x, value: num(v) } : x))))} />
+                        </label>
+                        <button className="icon-btn" aria-label={t("Remove stem")} title={t("Remove stem")}
+                          onClick={() => apply(() => backend.setStems(m.id, m.stems.filter((_, j) => j !== i)))}><CloseIcon size={14} /></button>
+                      </div>
+                    ))}
+                  </div>
+                  <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setStems(m.id, [...m.stems, { name: t("Stem {n}", { n: m.stems.length + 1 }), horizontal: true, value: 80 }]))}>
+                    <AddIcon size={14} /> {t("Add stem")}
+                  </button>
+                </div>
+              )}
             </div>
           ))}
           {adding && (
@@ -683,6 +744,31 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
               <span className="k-body">{t("Hint composites as whole glyphs")}</span>
             </label>
           </div>
+          <h3 className="k-label fi-sub">{t("PostScript hints")}</h3>
+          <div className="fi-row">
+            {([
+              ["blueScale", "Blue scale", "How strongly overshoots are kept at small sizes; 0.039625 is the usual value"],
+              ["blueShift", "Blue shift", "How far an overshoot must reach past a zone to stay visible"],
+              ["blueFuzz", "Blue fuzz", "Extra reach around each zone when matching edges"],
+            ] as const).map(([key, en, hintEn]) => { const label = t(en), hint = t(hintEn); return (
+              <label key={key} className="info-field" title={hint}><span className="k-caption muted">{label}</span>
+                <Field label={label} value={info.psHinting[key]} onCommit={(v) => apply(() => backend.setPsHinting({ ...info.psHinting, [key]: num(v) }))} />
+              </label>
+            ); })}
+          </div>
+          <h3 className="k-label fi-sub">{t("Control instructions")}</h3>
+          <p className="k-caption muted">{t("TTFAutohint control instructions, applied when exporting TrueType. One instruction per line.")}</p>
+          <textarea
+            className="notes-area control-area"
+            aria-label={t("Control instructions")}
+            spellCheck={false}
+            defaultValue={info.controlInstructions}
+            key={info.controlInstructions}
+            placeholder={t("e.g. H point 0 yshift 0.5 @ 12")}
+            onBlur={(e) => { const v = e.currentTarget.value; if (v !== info.controlInstructions) apply(() => backend.setControlInstructions(v)); }}
+            onKeyDown={(e) => { if (e.key === "Escape") { e.currentTarget.value = info.controlInstructions; e.currentTarget.blur(); } }}
+          />
+          <p className="k-caption muted">{t("Zones and stems under Masters guide PostScript hinting. For TrueType, ttfautohint ignores manual zones it can't use.")}</p>
         </section>
 
         <section className="fi-section" aria-labelledby="fi-grid">

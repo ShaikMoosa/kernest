@@ -93,6 +93,8 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                 italic_angle: m.italic_angle().unwrap_or(0.0),
             },
             guides: Vec::new(),
+            alignment_zones: Vec::new(),
+            stems: Vec::new(),
         })
         .collect();
 
@@ -119,6 +121,8 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         trademark: g.get_default_name("trademarks").map(String::from),
         sample_text: g.get_default_name("sampleTexts").map(String::from),
         hinting: None,
+        ps_hinting: None,
+        control_instructions: String::new(),
         grid: None,
     };
 
@@ -386,6 +390,28 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         Err(e) => warnings.push(format!("Metrics keys couldn't be read: {e}")),
     }
     font.info.hinting = read_hinting(path);
+    match read_source_hinting(path) {
+        Ok(h) => {
+            for m in &mut font.masters {
+                let Some(gid) = ids
+                    .iter()
+                    .find(|(_, v)| *v == &m.id)
+                    .map(|(k, _)| k.to_string())
+                else {
+                    continue;
+                };
+                if let Some((zones, stems)) = h.masters.get(&gid) {
+                    m.alignment_zones = zones.clone();
+                    m.stems = stems.clone();
+                }
+            }
+            if let Some(text) = h.control_instructions {
+                font.info.control_instructions = text;
+            }
+            font.info.ps_hinting = h.ps.filter(|p| *p != kernest_core::PsHinting::default());
+        }
+        Err(e) => warnings.push(format!("Alignment zones and stems couldn't be read: {e}")),
+    }
     if font.glyphs.iter().any(|g| g.is_smart()) {
         match read_glyph_dicts(path) {
             Ok(dicts) => restore_smart_components(&mut font, &dicts, &master_ids),
@@ -744,6 +770,172 @@ pub fn parse_ttfautohint_options(text: &str) -> Option<kernest_core::Hinting> {
         }
     }
     found.then_some(h)
+}
+
+/// Alignment zones, stems and hinting settings read straight from the source
+/// (glyphs-reader doesn't keep them). Masters are keyed by Glyphs master id.
+struct SourceHinting {
+    masters: HashMap<String, (Vec<kernest_core::Zone>, Vec<kernest_core::Stem>)>,
+    control_instructions: Option<String>,
+    ps: Option<kernest_core::PsHinting>,
+}
+
+fn read_source_hinting(path: &Path) -> Result<SourceHinting, String> {
+    let file = if path.is_dir() {
+        path.join("fontinfo.plist")
+    } else {
+        path.to_path_buf()
+    };
+    let text = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
+    let root =
+        glyphs_reader::Plist::parse(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+    let num = |p: Option<&glyphs_reader::Plist>| p.and_then(|p| p.as_f64());
+    let v3 = root
+        .get(".formatVersion")
+        .or_else(|| root.get("formatVersion"))
+        .and_then(|p| p.as_i64())
+        .is_some_and(|v| v >= 3);
+    let mut out = SourceHinting {
+        masters: HashMap::new(),
+        control_instructions: None,
+        ps: None,
+    };
+    let empty = Vec::new();
+    let masters = root
+        .get("fontMaster")
+        .and_then(|m| m.as_array())
+        .unwrap_or(&empty);
+    if v3 {
+        // Zones are overshoots on the font's metrics; stems are font-wide names
+        // with per-master widths, both as parallel arrays.
+        let metrics = root
+            .get("metrics")
+            .and_then(|m| m.as_array())
+            .unwrap_or(&empty);
+        let stems = root
+            .get("stems")
+            .and_then(|s| s.as_array())
+            .unwrap_or(&empty);
+        for m in masters {
+            let Some(id) = m.get("id").and_then(|i| i.as_str()) else {
+                continue;
+            };
+            let mut zones = Vec::new();
+            if let Some(values) = m.get("metricValues").and_then(|v| v.as_array()) {
+                for (metric, value) in metrics.iter().zip(values) {
+                    let kind = metric.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    if kind == "italic angle" {
+                        continue;
+                    }
+                    let over = num(value.get("over")).unwrap_or(0.0);
+                    if over != 0.0 {
+                        zones.push(kernest_core::Zone {
+                            position: num(value.get("pos")).unwrap_or(0.0),
+                            size: over,
+                        });
+                    }
+                }
+            }
+            let mut stem_list = Vec::new();
+            if let Some(values) = m.get("stemValues").and_then(|v| v.as_array()) {
+                for (i, (def, value)) in stems.iter().zip(values).enumerate() {
+                    let Some(width) = num(Some(value)) else {
+                        continue;
+                    };
+                    if width <= 0.0 {
+                        continue;
+                    }
+                    let horizontal = def.get("horizontal").and_then(|h| h.as_i64()) == Some(1);
+                    let name = def
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("{}{i}", if horizontal { "h" } else { "v" }));
+                    stem_list.push(kernest_core::Stem {
+                        name,
+                        horizontal,
+                        value: width,
+                    });
+                }
+            }
+            out.masters.insert(id.to_string(), (zones, stem_list));
+        }
+    } else {
+        for m in masters {
+            let Some(id) = m.get("id").and_then(|i| i.as_str()) else {
+                continue;
+            };
+            let mut zones = Vec::new();
+            for z in m
+                .get("alignmentZones")
+                .and_then(|z| z.as_array())
+                .unwrap_or(&empty)
+            {
+                let Some(s) = z.as_str() else { continue };
+                let s = s.trim_matches(['{', '}', ' ']);
+                let Some((p, o)) = s.split_once(',') else {
+                    continue;
+                };
+                if let (Ok(position), Ok(size)) = (p.trim().parse(), o.trim().parse()) {
+                    if size != 0.0 {
+                        zones.push(kernest_core::Zone { position, size });
+                    }
+                }
+            }
+            let mut stem_list = Vec::new();
+            for (key, horizontal) in [("horizontalStems", true), ("verticalStems", false)] {
+                for (i, v) in m
+                    .get(key)
+                    .and_then(|s| s.as_array())
+                    .unwrap_or(&empty)
+                    .iter()
+                    .enumerate()
+                {
+                    if let Some(value) = num(Some(v)) {
+                        if value > 0.0 {
+                            stem_list.push(kernest_core::Stem {
+                                name: format!("{}{i}", if horizontal { "h" } else { "v" }),
+                                horizontal,
+                                value,
+                            });
+                        }
+                    }
+                }
+            }
+            out.masters.insert(id.to_string(), (zones, stem_list));
+        }
+    }
+    // Font-level custom parameters: control instructions and the blue controls.
+    // Values arrive as text or numbers depending on the parameter.
+    let param = |name: &str| -> Option<String> {
+        root.get("customParameters")?
+            .as_array()?
+            .iter()
+            .find_map(|p| {
+                if p.get("name")?.as_str()? != name {
+                    return None;
+                }
+                let v = p.get("value")?;
+                v.as_str()
+                    .map(str::to_string)
+                    .or_else(|| v.as_f64().map(|n| n.to_string()))
+            })
+    };
+    out.control_instructions = param("TTFAutohint control instructions");
+    let mut ps = kernest_core::PsHinting::default();
+    let mut any = false;
+    for (name, slot) in [
+        ("BlueScale", &mut ps.blue_scale),
+        ("BlueShift", &mut ps.blue_shift),
+        ("BlueFuzz", &mut ps.blue_fuzz),
+    ] {
+        if let Some(v) = param(name).and_then(|s| s.trim().parse::<f64>().ok()) {
+            *slot = v;
+            any = true;
+        }
+    }
+    out.ps = any.then_some(ps);
+    Ok(out)
 }
 
 /// Puts metrics keys on the imported layers: glyph-wide keys on every layer, layer keys

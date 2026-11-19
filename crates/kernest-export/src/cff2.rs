@@ -246,7 +246,11 @@ pub(crate) fn build_cff2_with(
             ops.push((*code, operands));
             at += args.len();
         }
-        glyphs.push(GlyphOps { ops, width: None });
+        glyphs.push(GlyphOps {
+            ops,
+            width: None,
+            hints: Vec::new(),
+        });
     }
     let (charstrings, subrs) = charstring::encode(&glyphs, Format::Cff2, regions.len(), optimize);
 
@@ -279,8 +283,10 @@ pub(crate) fn build_cff2_with(
     let mut vstore = (store_bytes.len() as u16).to_be_bytes().to_vec();
     vstore.extend(store_bytes);
 
-    // Private DICT: vsindex 0, and the local subroutines placed right after it.
+    // Private DICT: vsindex 0, the zone and stem entries, and the local
+    // subroutines placed right after it.
     let mut private: Vec<u8> = vec![139, 22];
+    crate::cffhint::font_private_hinting(font, &mut private);
     if !subrs.is_empty() {
         let len = private.len() + 6;
         int5(len as i32, &mut private);

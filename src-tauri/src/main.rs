@@ -10,6 +10,7 @@ mod glyphs;
 mod import;
 mod launch;
 mod layers;
+mod preview;
 mod script;
 mod settings;
 mod spacing;
@@ -41,6 +42,8 @@ fn main() {
             commands::glyph_layer,
             commands::update_layer,
             commands::set_metric,
+            commands::set_glyph_hints,
+            preview::pixel_preview,
             commands::undo,
             commands::redo,
             spacing::text_layout,
@@ -51,6 +54,10 @@ fn main() {
             fontinfo::font_info,
             fontinfo::set_font_info,
             fontinfo::set_hinting,
+            fontinfo::set_alignment_zones,
+            fontinfo::set_stems,
+            fontinfo::set_control_instructions,
+            fontinfo::set_ps_hinting,
             fontinfo::set_grid,
             fontinfo::set_master_guides,
             fontinfo::set_palettes,
