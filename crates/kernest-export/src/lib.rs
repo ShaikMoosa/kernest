@@ -87,6 +87,9 @@ pub struct ExportReport {
     pub files: Vec<ExportedFile>,
     /// Targets that could not be built, with the reason.
     pub problems: Vec<String>,
+    /// Things worth a look in fonts that were built (metrics keys that couldn't be
+    /// applied, glyphs that may not interpolate cleanly).
+    pub warnings: Vec<String>,
 }
 
 pub fn export_preset(
@@ -335,7 +338,9 @@ fn instance_source<'a>(
         .zip(values)
         .filter_map(|((left, right), v)| {
             let value = v.round();
-            (value != 0.0).then_some(KernPair { left, right, value })
+            // A zero exception (a glyph on either side) still cancels group kerning.
+            let exception = !left.starts_with('@') || !right.starts_with('@');
+            (value != 0.0 || exception).then_some(KernPair { left, right, value })
         })
         .collect();
     Ok(UfoSource {
@@ -383,7 +388,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     let font = if opts.apply_metrics_keys {
         let (f, problems) = kernest_core::metricskeys::apply_all(font);
         report
-            .problems
+            .warnings
             .extend(problems.into_iter().map(|p| format!("Metrics keys: {p}")));
         keyed = f;
         &keyed
@@ -489,7 +494,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
             .collect();
         if !warned.is_empty() {
             let shown: Vec<&str> = warned.iter().take(8).copied().collect();
-            report.problems.push(format!(
+            report.warnings.push(format!(
                 "{} glyph{} may not interpolate cleanly ({}{}). See Interpolation warnings in Font View.",
                 warned.len(),
                 if warned.len() == 1 { "" } else { "s" },
@@ -3140,8 +3145,9 @@ pub(crate) mod tests {
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
         assert_eq!(r.files.len(), 1, "the variable font is still built");
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
         assert_eq!(
-            r.problems,
+            r.warnings,
             ["1 glyph may not interpolate cleanly (O). See Interpolation warnings in Font View."]
         );
     }

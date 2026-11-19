@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use glyphs_reader::{Font as GFont, InstanceType, NodeType, Shape as GShape};
+use kernest_core::color::{Color as KColor, Paint};
 use kernest_core::designspace::design_to_user;
 use kernest_core::{
     Anchor, Axis, AxisRange, Codepoint, Font, FontInfo, Glyph, Instance, KernPair, Layer, Master,
@@ -95,6 +96,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             guides: Vec::new(),
             alignment_zones: Vec::new(),
             stems: Vec::new(),
+            vertical: vertical_metrics(&m.custom_parameters, &g.custom_parameters),
         })
         .collect();
 
@@ -124,6 +126,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         ps_hinting: None,
         control_instructions: String::new(),
         grid: None,
+        use_typo_metrics: g.custom_parameters.use_typo_metrics.unwrap_or(false),
     };
 
     // Glyphs in the file's order, then any the order doesn't mention.
@@ -140,6 +143,21 @@ pub fn import(path: &Path) -> Result<Imported, String> {
     let master_locs: Vec<BTreeMap<String, f64>> =
         masters.iter().map(|m| m.location.clone()).collect();
     let (mut extra_layers, mut skipped_braces) = (0, 0);
+    // (glyph, Glyphs layer id) -> Kernest layer key, for what is read from the source later.
+    let mut layer_keys: HashMap<(String, String), String> = HashMap::new();
+    // Colour palettes ("Color Palettes"); colours used by full-colour layers that the
+    // palettes lack are added to them.
+    let mut palettes: Vec<Vec<KColor>> = g
+        .custom_parameters
+        .color_palettes
+        .as_ref()
+        .map(|p| {
+            p.iter()
+                .map(|pal| pal.iter().map(k_color).collect())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut foreground_layers = 0;
     let glyphs: Vec<Glyph> = order
         .iter()
         .map(|name| {
@@ -176,7 +194,10 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             };
             for l in &src.layers {
                 match ids.get(l.layer_id.as_str()) {
-                    Some(id) if out.layer(id).is_none() => out.layers.push(layer(id, l)),
+                    Some(id) if out.layer(id).is_none() => {
+                        out.layers.push(layer(id, l));
+                        layer_keys.insert((name.to_string(), l.layer_id.clone()), id.clone());
+                    }
                     Some(_) => extra_layers += 1,
                     None if !l.smart_component_positions.is_empty()
                         && !out.smart_axes.is_empty() =>
@@ -186,6 +207,8 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                         let mut k = layer(&m, l);
                         k.id = Some(out.new_layer_id(&m));
                         k.smart = Some(pole_position(&out.smart_axes, l));
+                        layer_keys
+                            .insert((name.to_string(), l.layer_id.clone()), k.key().to_string());
                         out.layers.push(k);
                     }
                     None if !l.attributes.coordinates.is_empty() && !tags.is_empty() => {
@@ -207,7 +230,47 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                         let mut k = layer(&m, l);
                         k.id = Some(out.new_layer_id(&m));
                         k.location = Some(loc);
+                        layer_keys
+                            .insert((name.to_string(), l.layer_id.clone()), k.key().to_string());
                         out.layers.push(k);
+                    }
+                    None if l.is_color() => {
+                        let m = owner(l);
+                        let base = layer(&m, l);
+                        let paints: Vec<(Paint, Vec<Shape>)> = match l.attributes.color_palette {
+                            Some(0xFFFF) => {
+                                foreground_layers += 1;
+                                continue;
+                            }
+                            Some(i) => vec![(
+                                Paint::Solid {
+                                    color: i.clamp(0, 0xFFFE) as u16,
+                                    alpha: 1.0,
+                                },
+                                base.shapes.clone(),
+                            )],
+                            None => {
+                                // A full-colour layer: each shape has its own fill;
+                                // neighbouring shapes with the same fill share a layer.
+                                let bbox = crate::glyphs_write::point_box(&base.shapes);
+                                let mut runs: Vec<(Paint, Vec<Shape>)> = Vec::new();
+                                for (gs, ks) in l.shapes.iter().zip(&base.shapes) {
+                                    let p = shape_paint(gs.attributes(), bbox, &mut palettes);
+                                    match runs.last_mut() {
+                                        Some((last, list)) if *last == p => list.push(ks.clone()),
+                                        _ => runs.push((p, vec![ks.clone()])),
+                                    }
+                                }
+                                runs
+                            }
+                        };
+                        for (paint, shapes) in paints {
+                            let mut k = Layer::new(m.clone(), base.width);
+                            k.id = Some(out.new_layer_id(&m));
+                            k.shapes = shapes;
+                            k.color = Some(kernest_core::color::ColorInfo { paint });
+                            out.layers.push(k);
+                        }
                     }
                     None => extra_layers += 1,
                 }
@@ -279,6 +342,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                 let mut k = layer(&m, l);
                 k.id = Some(out.new_layer_id(&m));
                 k.bracket = ranges;
+                layer_keys.insert((name.to_string(), l.layer_id.clone()), k.key().to_string());
                 out.layers.push(k);
             }
             out
@@ -288,6 +352,17 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         warnings.push(format!(
             "{extra_layers} extra layer{} (not a master, brace or bracket layer) left out.",
             if extra_layers == 1 { " was" } else { "s were" }
+        ));
+    }
+    if foreground_layers > 0 {
+        warnings.push(format!(
+            "{foreground_layers} colour layer{} in the text colour (colorPalette *) {} left out.",
+            plural(foreground_layers),
+            if foreground_layers == 1 {
+                "was"
+            } else {
+                "were"
+            }
         ));
     }
     if skipped_braces > 0 {
@@ -376,8 +451,22 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         features,
         notes: String::new(),
         feature_settings: Default::default(),
-        palettes: Vec::new(),
-        master_palettes: Default::default(),
+        master_palettes: g
+            .masters
+            .iter()
+            .enumerate()
+            .filter_map(|(i, m)| {
+                let own: Vec<Vec<KColor>> = m
+                    .custom_parameters
+                    .color_palettes
+                    .as_ref()?
+                    .iter()
+                    .map(|pal| pal.iter().map(k_color).collect())
+                    .collect();
+                (own != palettes).then(|| (master_id(i), own))
+            })
+            .collect(),
+        palettes,
         filters: Vec::new(),
         variable_fonts: Vec::new(),
         export_presets: Vec::new(),
@@ -413,13 +502,261 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         }
         Err(e) => warnings.push(format!("Alignment zones and stems couldn't be read: {e}")),
     }
-    if font.glyphs.iter().any(|g| g.is_smart()) {
-        match read_glyph_dicts(path) {
-            Ok(dicts) => restore_smart_components(&mut font, &dicts, &master_ids),
-            Err(e) => warnings.push(format!("Smart components couldn't be read: {e}")),
+    match read_glyph_dicts(path) {
+        Ok(dicts) => {
+            if font.glyphs.iter().any(|g| g.is_smart()) {
+                restore_smart_components(&mut font, &dicts, &master_ids);
+            }
+            read_extras(&mut font, &dicts, &layer_keys);
         }
+        Err(e) => warnings.push(format!(
+            "Guides, backgrounds and tags couldn't be read: {e}"
+        )),
+    }
+    match read_master_guides(path) {
+        Ok(guides) => {
+            for (gid, list) in guides {
+                if let Some(m) = master_ids
+                    .get(&gid)
+                    .and_then(|id| font.masters.iter_mut().find(|m| &m.id == id))
+                {
+                    m.guides = list;
+                }
+            }
+        }
+        Err(e) => warnings.push(format!("Master guides couldn't be read: {e}")),
     }
     Ok(Imported { font, warnings })
+}
+
+fn k_color(c: &glyphs_reader::Color) -> KColor {
+    let b = |v: i64| v.clamp(0, 255) as u8;
+    KColor {
+        r: b(c.r),
+        g: b(c.g),
+        b: b(c.b),
+        a: b(c.a),
+    }
+}
+
+/// The palette index and opacity for a colour: the first palette colour with the same
+/// red, green and blue, else a new colour added to every palette.
+fn palette_color(palettes: &mut Vec<Vec<KColor>>, c: &glyphs_reader::Color) -> (u16, f64) {
+    let c = k_color(c);
+    if let Some(i) = palettes.first().and_then(|p| {
+        p.iter()
+            .position(|p| (p.r, p.g, p.b) == (c.r, c.g, c.b) && p.a > 0)
+    }) {
+        let base = f64::from(palettes[0][i].a);
+        return (i as u16, (f64::from(c.a) / base).min(1.0));
+    }
+    let opaque = KColor { a: 255, ..c };
+    if palettes.is_empty() {
+        palettes.push(Vec::new());
+    }
+    for p in palettes.iter_mut() {
+        p.push(opaque);
+    }
+    ((palettes[0].len() - 1) as u16, f64::from(c.a) / 255.0)
+}
+
+/// A Glyphs full-colour shape's fill as a Kernest paint. Gradient positions are
+/// relative to the layer's point box (see `glyphs_write::point_box`).
+fn shape_paint(
+    attr: &glyphs_reader::ShapeAttributes,
+    bbox: Option<(f64, f64, f64, f64)>,
+    palettes: &mut Vec<Vec<KColor>>,
+) -> Paint {
+    let Some(gr) = &attr.gradient else {
+        let (color, alpha) = attr
+            .fill_color
+            .as_ref()
+            .map(|c| palette_color(palettes, c))
+            .unwrap_or_else(|| palette_color(palettes, &glyphs_reader::Color::rgba(0, 0, 0, 255)));
+        return Paint::Solid { color, alpha };
+    };
+    let (x0, y0, x1, y1) = bbox.unwrap_or((0.0, 0.0, 1.0, 1.0));
+    let abs = |v: &[OrderedFloat<f64>]| -> [f64; 2] {
+        let (u, w) = (
+            v.first().map_or(0.0, |v| v.0),
+            v.get(1).map_or(0.0, |v| v.0),
+        );
+        [x0 + u * (x1 - x0), y0 + w * (y1 - y0)]
+    };
+    let stops: Vec<kernest_core::color::ColorStop> = gr
+        .colors
+        .iter()
+        .map(|st| {
+            let (color, alpha) = palette_color(palettes, &st.color);
+            kernest_core::color::ColorStop {
+                offset: st.stop_offset.0.clamp(0.0, 1.0),
+                color,
+                alpha,
+            }
+        })
+        .collect();
+    let (start, end) = (abs(&gr.start), abs(&gr.end));
+    if gr.style == "circle" {
+        let radius = ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt();
+        Paint::Radial {
+            center: start,
+            radius: if radius > 0.0 { radius } else { 1.0 },
+            focus: None,
+            stops,
+        }
+    } else {
+        Paint::Linear { start, end, stops }
+    }
+}
+
+/// A point written as `(x,y)` (Glyphs 3) or `"{x, y}"` (Glyphs 2).
+fn point(p: &glyphs_reader::Plist) -> Option<(f64, f64)> {
+    if let Some(a) = p.as_array() {
+        return Some((num(a.first()?)?, num(a.get(1)?)?));
+    }
+    let s = p
+        .as_str()?
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}');
+    let mut it = s.split(',').map(|v| v.trim().parse::<f64>());
+    Some((it.next()?.ok()?, it.next()?.ok()?))
+}
+
+/// A guide from a Glyphs `guides` (3) or `guideLines` (2) entry.
+fn guide(d: &glyphs_reader::Plist) -> Option<kernest_core::Guide> {
+    let (x, y) = d
+        .get("pos")
+        .or_else(|| d.get("position"))
+        .and_then(point)
+        .unwrap_or((0.0, 0.0));
+    Some(kernest_core::Guide {
+        x,
+        y,
+        angle: d.get("angle").and_then(num).unwrap_or(0.0),
+        name: d.get("name").and_then(|n| n.as_str()).map(String::from),
+        locked: d.get("locked").and_then(num).is_some_and(|v| v != 0.0),
+    })
+}
+
+fn guides_in(d: &glyphs_reader::Plist) -> Vec<kernest_core::Guide> {
+    d.get("guides")
+        .or_else(|| d.get("guideLines"))
+        .and_then(|g| g.as_array())
+        .map(|list| list.iter().filter_map(guide).collect())
+        .unwrap_or_default()
+}
+
+fn anchors_in(d: &glyphs_reader::Plist) -> Vec<Anchor> {
+    d.get("anchors")
+        .and_then(|a| a.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|a| {
+                    let name = a.get("name")?.as_str()?.to_string();
+                    let (x, y) = a
+                        .get("pos")
+                        .or_else(|| a.get("position"))
+                        .and_then(point)
+                        .unwrap_or((0.0, 0.0));
+                    Some(Anchor { name, x, y })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What glyphs-reader leaves out: glyph tags, notes and locks, and each layer's
+/// guides and background.
+fn read_extras(
+    font: &mut Font,
+    dicts: &HashMap<String, glyphs_reader::Plist>,
+    layer_keys: &HashMap<(String, String), String>,
+) {
+    for g in &mut font.glyphs {
+        let Some(d) = dicts.get(&g.name) else {
+            continue;
+        };
+        if let Some(tags) = d.get("tags").and_then(|t| t.as_array()) {
+            g.tags = tags
+                .iter()
+                .filter_map(|t| t.as_str().map(|s| s.trim().to_string()))
+                .filter(|t| !t.is_empty())
+                .collect();
+        }
+        if let Some(note) = d.get("note").and_then(|n| n.as_str()) {
+            if !note.trim().is_empty() {
+                g.note = Some(note.to_string());
+            }
+        }
+        if d.get("locked").and_then(num).is_some_and(|v| v != 0.0) {
+            g.locked = true;
+        }
+        for ld in d.get("layers").and_then(|l| l.as_array()).unwrap_or(&[]) {
+            let Some(key) = ld
+                .get("layerId")
+                .and_then(|i| i.as_str())
+                .and_then(|i| layer_keys.get(&(g.name.clone(), i.to_string())))
+            else {
+                continue;
+            };
+            let Some(l) = g.layer_mut(key) else {
+                continue;
+            };
+            l.guides = guides_in(ld);
+            if let Some(bg) = ld.get("background") {
+                let shapes: Vec<Shape> = match bg.get("shapes").and_then(|s| s.as_array()) {
+                    Some(list) => list.iter().filter_map(shape_v3).collect(),
+                    None => shapes_v2(bg),
+                };
+                let anchors = anchors_in(bg);
+                if !shapes.is_empty() || !anchors.is_empty() {
+                    l.background = Some(kernest_core::Background { shapes, anchors });
+                }
+            }
+        }
+    }
+}
+
+/// Each master's global guides, by Glyphs master id.
+fn read_master_guides(path: &Path) -> Result<Vec<(String, Vec<kernest_core::Guide>)>, String> {
+    let file = if path.is_dir() {
+        path.join("fontinfo.plist")
+    } else {
+        path.to_path_buf()
+    };
+    let text = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
+    let root =
+        glyphs_reader::Plist::parse(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+    Ok(root
+        .get("fontMaster")
+        .and_then(|m| m.as_array())
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|m| Some((m.get("id")?.as_str()?.to_string(), guides_in(m))))
+        .collect())
+}
+
+/// Line spacing and underline values from a master's custom parameters, falling back
+/// on the font's.
+fn vertical_metrics(
+    m: &glyphs_reader::CustomParameters,
+    f: &glyphs_reader::CustomParameters,
+) -> kernest_core::VerticalMetrics {
+    let i = |a: Option<i64>, b: Option<i64>| a.or(b).map(|v| v as f64);
+    let o = |a: Option<OrderedFloat<f64>>, b: Option<OrderedFloat<f64>>| a.or(b).map(|v| v.0);
+    kernest_core::VerticalMetrics {
+        typo_ascender: i(m.typo_ascender, f.typo_ascender),
+        typo_descender: i(m.typo_descender, f.typo_descender),
+        typo_line_gap: i(m.typo_line_gap, f.typo_line_gap),
+        hhea_ascender: i(m.hhea_ascender, f.hhea_ascender),
+        hhea_descender: i(m.hhea_descender, f.hhea_descender),
+        hhea_line_gap: i(m.hhea_line_gap, f.hhea_line_gap),
+        win_ascent: i(m.win_ascent, f.win_ascent),
+        win_descent: i(m.win_descent, f.win_descent).map(f64::abs),
+        underline_thickness: o(m.underline_thickness, f.underline_thickness),
+        underline_position: o(m.underline_position, f.underline_position),
+    }
 }
 
 /// Metrics keys found in a Glyphs source: per glyph, the glyph-wide keys and the keys

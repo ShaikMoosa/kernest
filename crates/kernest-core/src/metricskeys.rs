@@ -17,7 +17,7 @@ use crate::geometry::sidebearings;
 use crate::model::{Font, Layer};
 
 /// Which metric a key sets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Side {
     Left,
     Right,
@@ -108,18 +108,30 @@ pub fn rename_in_key(
     Some(out)
 }
 
-/// The other glyphs a layer's keys depend on.
-fn references(layer: &Layer) -> Vec<String> {
+/// The sides of other glyphs that `side` of a layer depends on: `=n` reads the same
+/// side of `n`, `=|n` the opposite one.
+fn references(layer: &Layer, side: Side) -> Vec<(String, Side)> {
     let k = &layer.metrics_keys;
-    [&k.left, &k.right, &k.width]
-        .into_iter()
-        .flatten()
-        .filter_map(|s| parse(s).ok())
-        .filter_map(|k| match k.source {
-            Source::Same(n) | Source::Opposite(n) => Some(n),
-            Source::Value(_) => None,
-        })
-        .collect()
+    let text = match side {
+        Side::Left => &k.left,
+        Side::Right => &k.right,
+        Side::Width => &k.width,
+    };
+    let Some(key) = text.as_deref().and_then(|t| parse(t).ok()) else {
+        return Vec::new();
+    };
+    match key.source {
+        Source::Same(n) => vec![(n, side)],
+        Source::Opposite(n) => {
+            let other = match side {
+                Side::Left => Side::Right,
+                Side::Right => Side::Left,
+                Side::Width => Side::Width,
+            };
+            vec![(n, other)]
+        }
+        Source::Value(_) => Vec::new(),
+    }
 }
 
 /// The value `key` gives for `side`, looking at the other glyph's layer for the same
@@ -159,6 +171,16 @@ fn value(font: &Font, side: Side, key: &Key, master_id: &str) -> Result<Option<f
 /// Applies the metrics keys of one layer (found by `key`) using the font as it is.
 /// Returns the updated layer, or `None` if nothing changes.
 pub fn apply_layer(font: &Font, glyph: &str, key: &str) -> Result<Option<Layer>, String> {
+    apply_layer_sides(font, glyph, key, &[Side::Width, Side::Left, Side::Right])
+}
+
+/// Like [`apply_layer`], for some sides only.
+fn apply_layer_sides(
+    font: &Font,
+    glyph: &str,
+    key: &str,
+    sides: &[Side],
+) -> Result<Option<Layer>, String> {
     let layer = font
         .glyph(glyph)
         .and_then(|g| g.layer(key))
@@ -174,6 +196,9 @@ pub fn apply_layer(font: &Font, glyph: &str, key: &str) -> Result<Option<Layer>,
         (Side::Right, &keys.right),
     ] {
         let Some(k) = k else { continue };
+        if !sides.contains(&side) {
+            continue;
+        }
         let parsed = parse(k).map_err(|e| format!("{glyph}: {e}"))?;
         let Some(v) =
             value(&f, side, &parsed, &layer.master_id).map_err(|e| format!("{glyph}: {k}: {e}"))?
@@ -230,47 +255,71 @@ pub fn apply_some(font: &Font, only: Option<&[String]>) -> (Font, Vec<String>) {
         })
         .map(|g| g.name.clone())
         .collect();
-    let mut order: Vec<String> = Vec::new();
-    let mut state = std::collections::HashMap::<String, u8>::new(); // 1 visiting, 2 done
+    // Each side is its own step: a glyph may follow another on the left while that
+    // one follows it on the right. Within a glyph the width comes first, then the
+    // left side, then the right side (setting the width moves the right side).
+    type Step = (String, Side);
+    let mut order: Vec<Step> = Vec::new();
+    let mut state = std::collections::HashMap::<Step, u8>::new(); // 1 visiting, 2 done
     fn visit(
         font: &Font,
-        name: &str,
-        state: &mut std::collections::HashMap<String, u8>,
-        order: &mut Vec<String>,
+        step: Step,
+        state: &mut std::collections::HashMap<Step, u8>,
+        order: &mut Vec<Step>,
         problems: &mut Vec<String>,
     ) {
-        match state.get(name) {
+        match state.get(&step) {
             Some(2) => return,
             Some(1) => {
-                problems.push(format!("{name}: its metrics keys go round in a loop"));
+                problems.push(format!("{}: its metrics keys go round in a loop", step.0));
                 return;
             }
             _ => {}
         }
-        state.insert(name.to_string(), 1);
-        if let Some(g) = font.glyph(name) {
-            let mut refs: Vec<String> = g.layers.iter().flat_map(references).collect();
-            refs.sort();
-            refs.dedup();
-            for r in refs {
-                if r != name {
-                    visit(font, &r, state, order, problems);
+        state.insert(step.clone(), 1);
+        if let Some(g) = font.glyph(&step.0) {
+            let mut deps: Vec<Step> = g
+                .layers
+                .iter()
+                .flat_map(|l| references(l, step.1))
+                .collect();
+            match step.1 {
+                Side::Width => {}
+                Side::Left => deps.push((step.0.clone(), Side::Width)),
+                Side::Right => {
+                    deps.push((step.0.clone(), Side::Width));
+                    deps.push((step.0.clone(), Side::Left));
+                }
+            }
+            deps.sort_by(|a, b| (&a.0, a.1 as u8).cmp(&(&b.0, b.1 as u8)));
+            deps.dedup();
+            for d in deps {
+                if d != step {
+                    visit(font, d, state, order, problems);
                 }
             }
         }
-        state.insert(name.to_string(), 2);
-        order.push(name.to_string());
+        state.insert(step.clone(), 2);
+        order.push(step);
     }
     for n in &with_keys {
-        visit(font, n, &mut state, &mut order, &mut problems);
+        for side in [Side::Width, Side::Left, Side::Right] {
+            visit(
+                font,
+                (n.clone(), side),
+                &mut state,
+                &mut order,
+                &mut problems,
+            );
+        }
     }
-    for name in order.iter().filter(|n| with_keys.contains(n)) {
+    for (name, side) in order.iter().filter(|(n, _)| with_keys.contains(n)) {
         let keys: Vec<String> = f
             .glyph(name)
             .map(|g| g.layers.iter().map(|l| l.key().to_string()).collect())
             .unwrap_or_default();
         for key in keys {
-            match apply_layer(&f, name, &key) {
+            match apply_layer_sides(&f, name, &key, &[*side]) {
                 Ok(Some(l)) => {
                     *f.glyph_mut(name)
                         .and_then(|g| g.layer_mut(&key))
@@ -281,7 +330,8 @@ pub fn apply_some(font: &Font, only: Option<&[String]>) -> (Font, Vec<String>) {
             }
         }
     }
-    problems.dedup();
+    let mut seen = std::collections::HashSet::new();
+    problems.retain(|p| seen.insert(p.clone()));
     (f, problems)
 }
 
@@ -383,5 +433,21 @@ mod tests {
             "{problems:?}"
         );
         assert!(problems.iter().any(|p| p.contains("loop")), "{problems:?}");
+    }
+
+    #[test]
+    fn following_each_other_on_different_sides_is_not_a_loop() {
+        let mut f = sample_font();
+        let (o_l, _) = sb(&f, "o");
+        let (_, h_r) = sb(&f, "H");
+        // n's left follows o; o's right follows n, whose right follows H.
+        f.glyph_mut("n").unwrap().layers[0].metrics_keys.left = Some("=o".into());
+        f.glyph_mut("n").unwrap().layers[0].metrics_keys.right = Some("=H".into());
+        f.glyph_mut("o").unwrap().layers[0].metrics_keys.right = Some("=n".into());
+        let (f2, problems) = apply_all(&f);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!((sb(&f2, "n").0 - o_l).abs() < 1e-9);
+        assert!((sb(&f2, "n").1 - h_r).abs() < 1e-9);
+        assert!((sb(&f2, "o").1 - h_r).abs() < 1e-9);
     }
 }

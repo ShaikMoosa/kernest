@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { backend, errorMessage, type FontView, type GlyphFilter, type GlyphSummary, type LanguageCoverage, type MissingGlyph } from "../lib/backend";
 import { SearchIcon } from "./Icons";
 import { t, tn } from "../lib/i18n";
@@ -8,6 +8,65 @@ import { SmartFilterDialog } from "./SmartFilterDialog";
 import { BatchMenu } from "./BatchMenu";
 
 const CATEGORY_ORDER = ["Uppercase", "Lowercase", "Letter", "Number", "Punctuation", "Symbol", "Separator", "Mark", "Other"];
+
+/** Rows drawn above and below the visible part of the grid. */
+const GRID_OVERSCAN = 3;
+
+/** S03 · The glyph grid, drawing only the rows in view (large fonts have thousands
+ *  of glyphs). Rows above and below are stood in for by two spacers. */
+function VirtualGrid({ glyphs, cellSize, onKeyDown, renderCell }: {
+  glyphs: GlyphSummary[];
+  cellSize: number;
+  onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => void;
+  renderCell: (g: GlyphSummary) => React.ReactNode;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState({ top: 0, height: 800, width: 800, gap: 8, padTop: 4, padX: 40 });
+  const [rowH, setRowH] = useState(0);
+  const measure = useCallback(() => {
+    const el = box.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    setView({
+      top: el.scrollTop,
+      height: el.clientHeight,
+      width: el.clientWidth,
+      gap: parseFloat(cs.rowGap) || 0,
+      padTop: parseFloat(cs.paddingTop) || 0,
+      padX: (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0),
+    });
+  }, []);
+  useLayoutEffect(() => {
+    measure();
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measure]);
+  const { gap } = view;
+  const inner = Math.max(cellSize, view.width - view.padX);
+  // Same rule as `repeat(auto-fill, minmax(cell, 1fr))`.
+  const cols = Math.max(1, Math.floor((inner + gap) / (cellSize + gap)));
+  const cellW = (inner - gap * (cols - 1)) / cols;
+  const row = (rowH || cellW + 24) + gap;
+  const rows = Math.ceil(glyphs.length / cols);
+  const first = Math.max(0, Math.floor((view.top - view.padTop) / row) - GRID_OVERSCAN);
+  const last = Math.min(rows, Math.ceil((view.top + view.height) / row) + GRID_OVERSCAN);
+  // The real row height (art plus label) once a cell is on screen.
+  useLayoutEffect(() => {
+    const cell = box.current?.querySelector<HTMLElement>(".glyph-cell");
+    const h = cell?.getBoundingClientRect().height ?? 0;
+    if (h > 0 && Math.abs(h - rowH) > 0.5) setRowH(h);
+  });
+  return (
+    <div ref={box} className="glyph-grid" role="list" style={{ "--k-cell-size": `${cellSize}px` } as React.CSSProperties} onScroll={measure} onKeyDown={onKeyDown}>
+      {first > 0 && <div className="glyph-grid-spacer" style={{ height: first * row - gap }} aria-hidden="true" />}
+      {glyphs.slice(first * cols, last * cols).map(renderCell)}
+      {last < rows && <div className="glyph-grid-spacer" style={{ height: (rows - last) * row - gap }} aria-hidden="true" />}
+    </div>
+  );
+}
 
 function GlyphCell({ glyph, font, selected, onSelect, onOpen, drag, dragging, drop }: { glyph: GlyphSummary; font: FontView; selected: boolean; onSelect: (e: React.MouseEvent) => void; onOpen: () => void; drag: DragHandlers; dragging: boolean; drop: boolean }) {
   const { ascender, descender } = font.metrics;
@@ -46,7 +105,7 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen, drag, dragging, dr
 }
 
 /** S03 · Font View — grid of glyphs with category sidebar and glyph info. */
-export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void> }) {
+export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetUnicodes, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetUnicodes?: (glyph: string, text: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void> }) {
   const [category, setCategory] = useState<string>("All");
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -128,18 +187,24 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
   // Info-box drafts follow the selected glyph and any refresh (undo, list edits).
   const [tagsDraft, setTagsDraft] = useState("");
   const [prodDraft, setProdDraft] = useState("");
+  const [uniDraft, setUniDraft] = useState("");
   const [leftDraft, setLeftDraft] = useState("");
   const [rightDraft, setRightDraft] = useState("");
   const oneTags = one?.tags.join(", ") ?? "";
   const oneProd = one?.productionName ?? "";
+  const oneUni = one?.unicodes.join(", ") ?? "";
   const oneLeft = one?.leftGroup ?? "";
   const oneRight = one?.rightGroup ?? "";
   useEffect(() => { setTagsDraft(oneTags); }, [one?.name, oneTags]);
   useEffect(() => { setProdDraft(oneProd); }, [one?.name, oneProd]);
+  useEffect(() => { setUniDraft(oneUni); }, [one?.name, oneUni]);
   useEffect(() => { setLeftDraft(oneLeft); setRightDraft(oneRight); }, [one?.name, oneLeft, oneRight]);
 
   function commitTags() {
     if (one && onSetTags && tagsDraft !== oneTags) onSetTags(one.name, tagsDraft.split(","));
+  }
+  function commitUnicodes() {
+    if (one && onSetUnicodes && uniDraft.trim() !== oneUni) onSetUnicodes(one.name, uniDraft).catch(() => setUniDraft(oneUni));
   }
   function commitProd() {
     if (one && onSetProductionName && prodDraft.trim() !== oneProd) onSetProductionName(one.name, prodDraft);
@@ -153,6 +218,7 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
     if (edit.kind === "metric") onSetMetric?.(edit.glyph, edit.metric, edit.value);
     else if (edit.kind === "groups") onSetGroups?.(edit.glyph, edit.left, edit.right);
     else if (edit.kind === "rename") onRenameGlyph?.(edit.glyph, edit.name);
+    else if (edit.kind === "unicodes") onSetUnicodes?.(edit.glyph, edit.text).catch(() => {});
     else onSetTags?.(edit.glyph, edit.tags);
   }
   function switchMode(m: "grid" | "list") {
@@ -335,6 +401,20 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
                 <label><span className="k-caption muted">{t("RSB")}</span><output className="metric">{fmt(one.rsb)}</output></label>
               </div>
               <p className="k-caption muted">{t(one.category)}{one.subcategory ? ` · ${t(one.subcategory)}` : ""} · {t(one.script)}{one.export ? "" : ` · ${t("not exported")}`}</p>
+              {onSetUnicodes && (
+                <label className="field info-field">
+                  <span className="k-caption muted">{t("Unicode")}</span>
+                  <input
+                    className="text-input k-code"
+                    value={uniDraft}
+                    placeholder={t("unencoded")}
+                    title={t("Type values like 0041 or U+0041, or the character itself; separate several with commas")}
+                    onChange={(e) => setUniDraft(e.target.value)}
+                    onBlur={commitUnicodes}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setUniDraft(oneUni); e.currentTarget.blur(); } }}
+                  />
+                </label>
+              )}
               {onSetTags && (
                 <label className="field info-field">
                   <span className="k-caption muted">{t("Tags")}</span>
@@ -426,17 +506,15 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
           mode === "list" ? (
             <GlyphListView glyphs={shown} selection={selection} onSelect={select} onOpen={onOpenGlyph} onEdit={listEdit} onSetExport={(names, on) => onSetExport?.(names, on)} dragProps={dragProps} dragName={dragName} dropName={dropName} />
           ) : (
-          <div className="glyph-grid" role="list" style={{ "--k-cell-size": `${cellSize}px` } as React.CSSProperties} onKeyDown={(e) => {
+          <VirtualGrid glyphs={shown} cellSize={cellSize} onKeyDown={(e) => {
             // Enter opens the selected glyphs in Edit View tabs.
             if (e.key === "Enter" && selection.size) {
               e.preventDefault();
               for (const g of font.glyphs) if (selection.has(g.name)) onOpenGlyph(g.name);
             }
-          }}>
-            {shown.map((g) => (
-              <GlyphCell key={g.name} glyph={g} font={font} selected={selection.has(g.name)} onSelect={(e) => select(g, e)} onOpen={() => onOpenGlyph(g.name)} drag={dragProps(g.name)} dragging={dragName === g.name} drop={dropName === g.name && dragName !== g.name} />
-            ))}
-          </div>
+          }} renderCell={(g) => (
+            <GlyphCell key={g.name} glyph={g} font={font} selected={selection.has(g.name)} onSelect={(e) => select(g, e)} onOpen={() => onOpenGlyph(g.name)} drag={dragProps(g.name)} dragging={dragName === g.name} drop={dropName === g.name && dragName !== g.name} />
+          )} />
           )
         ) : (
           <div className="empty">

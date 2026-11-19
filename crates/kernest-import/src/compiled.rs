@@ -92,6 +92,7 @@ fn build(font: &FontRef) -> Result<Imported, String> {
             guides: Vec::new(),
             alignment_zones: Vec::new(),
             stems: Vec::new(),
+            vertical: Default::default(),
         })
         .collect();
 
@@ -457,6 +458,7 @@ fn font_info(font: &FontRef, upem: u16) -> FontInfo {
         sample_text: s(StringId::SAMPLE_TEXT),
         hinting: None,
         grid: None,
+        use_typo_metrics: false,
         ps_hinting: None,
         control_instructions: String::new(),
     }

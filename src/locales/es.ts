@@ -1754,4 +1754,18 @@ export const es: Dict = {
   "{n} glyph{s} may not interpolate cleanly ({list}). See Interpolation warnings in Font View.": {"one": "{n} glifo puede no interpolar bien ({list}). Consulta Avisos de interpolación en la vista de fuente.", "other": "{n} glifos pueden no interpolar bien ({list}). Consulta Avisos de interpolación en la vista de fuente."},
   "This glyph's masters can't be interpolated yet; make them compatible first.": "Los másteres de este glifo aún no se pueden interpolar; primero hazlos compatibles.",
   "Fixing would make the masters incompatible; fix this glyph by hand.": "Corregirlo haría incompatibles los másteres; corrige este glifo a mano.",
+
+  // ---------- Unicode values ----------
+  "Move it to {glyph}?": "¿Moverlo a {glyph}?",
+  "Move": "Mover",
+  "Type values like 0041 or U+0041, or the character itself; separate several with commas": "Escribe valores como 0041 o U+0041, o el propio carácter; separa varios con comas",
+  "U+{code} already belongs to \"{name}\".": "U+{code} ya pertenece a «{name}».",
+  "\"{item}\" isn't a Unicode value. Type it like 0041 or U+0041, or type the character.": "«{item}» no es un valor Unicode. Escríbelo como 0041 o U+0041, o escribe el carácter.",
+  "\"{item}\" isn't a valid Unicode value.": "«{item}» no es un valor Unicode válido.",
+  "Unicode values need the desktop app (npm run tauri dev).": "Los valores Unicode necesitan la aplicación de escritorio (npm run tauri dev).",
+
+  // ---------- Import of guides, backgrounds and colour ----------
+  "{n} colour layer{s} in the text colour (colorPalette *) {was} left out.": {"one": "Se omitió {n} capa de color en el color del texto (colorPalette *).", "other": "Se omitieron {n} capas de color en el color del texto (colorPalette *)."},
+  "Guides, backgrounds and tags couldn't be read: {e}": "No se pudieron leer las guías, los fondos y las etiquetas: {e}",
+  "Master guides couldn't be read: {e}": "No se pudieron leer las guías de los másteres: {e}",
 };

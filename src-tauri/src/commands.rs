@@ -107,6 +107,8 @@ pub struct MasterInfo {
 pub struct GlyphSummary {
     name: String,
     unicode: Option<String>,
+    /// Every Unicode value, the first being `unicode`.
+    unicodes: Vec<String>,
     character: Option<String>,
     category: &'static str,
     subcategory: &'static str,
@@ -377,6 +379,7 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
             GlyphSummary {
                 name: g.name.clone(),
                 unicode: cp.map(|c| c.to_string()),
+                unicodes: g.unicodes.iter().map(|c| c.to_string()).collect(),
                 character: cp.and_then(|c| c.char()).map(String::from),
                 category: g.category().label(),
                 subcategory: kernest_core::glyphdata::subcategory(
@@ -1949,6 +1952,7 @@ mod path_edit_tests {
             guides: Vec::new(),
             alignment_zones: Vec::new(),
             stems: Vec::new(),
+            vertical: Default::default(),
         });
         for g in &mut f.glyphs {
             let mut l = g.layers[0].clone();

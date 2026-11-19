@@ -186,6 +186,29 @@ pub fn set_glyph_tags(
     Ok(status(doc))
 }
 
+/// Sets a glyph's Unicode values, as typed in the info box or the list view (empty
+/// leaves it unencoded). With `take`, values used by other glyphs move over.
+/// One undoable step.
+#[tauri::command]
+pub fn set_glyph_unicodes(
+    state: State<AppState>,
+    glyph: String,
+    unicodes: String,
+    take: bool,
+) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let next = kernest_core::glyphset::set_unicodes(&doc.font, &glyph, &unicodes, take)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
 /// Tags are trimmed; empty ones and repeats (first spelling wins) are dropped.
 fn with_tags(font: &Font, name: &str, tags: &[String]) -> Result<Font, String> {
     let mut next = font.clone();

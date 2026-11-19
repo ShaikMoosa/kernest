@@ -1963,4 +1963,18 @@ export const ar: Dict = {
   "{n} glyph{s} may not interpolate cleanly ({list}). See Interpolation warnings in Font View.": {"zero": "قد لا يكون استيفاء {n} حرف سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط.", "one": "قد لا يكون استيفاء حرف واحد سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط.", "two": "قد لا يكون استيفاء حرفين سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط.", "few": "قد لا يكون استيفاء {n} أحرف سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط.", "many": "قد لا يكون استيفاء {n} حرفًا سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط.", "other": "قد لا يكون استيفاء {n} حرف سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط."},
   "This glyph's masters can't be interpolated yet; make them compatible first.": "لا يمكن الاستيفاء بين النسخ الرئيسية لهذا الحرف بعد؛ اجعلها متوافقة أولًا.",
   "Fixing would make the masters incompatible; fix this glyph by hand.": "الإصلاح سيجعل النسخ الرئيسية غير متوافقة؛ أصلح هذا الحرف يدويًا.",
+
+  // ---------- Unicode values ----------
+  "Move it to {glyph}?": "هل تريد نقله إلى {glyph}؟",
+  "Move": "نقل",
+  "Type values like 0041 or U+0041, or the character itself; separate several with commas": "اكتب قيمًا مثل 0041 أو U+0041، أو الحرف نفسه؛ وافصل بين القيم المتعددة بفواصل",
+  "U+{code} already belongs to \"{name}\".": "U+{code} مستخدم بالفعل للحرف «{name}».",
+  "\"{item}\" isn't a Unicode value. Type it like 0041 or U+0041, or type the character.": "«{item}» ليس قيمة يونيكود. اكتبها مثل 0041 أو U+0041، أو اكتب الحرف نفسه.",
+  "\"{item}\" isn't a valid Unicode value.": "«{item}» ليس قيمة يونيكود صالحة.",
+  "Unicode values need the desktop app (npm run tauri dev).": "تحتاج قيم يونيكود إلى تطبيق سطح المكتب (npm run tauri dev).",
+
+  // ---------- Import of guides, backgrounds and colour ----------
+  "{n} colour layer{s} in the text colour (colorPalette *) {was} left out.": {"zero": "استُبعدت {n} طبقة لونية بلون النص (colorPalette *).", "one": "استُبعدت طبقة لونية واحدة بلون النص (colorPalette *).", "two": "استُبعدت طبقتان لونيتان بلون النص (colorPalette *).", "few": "استُبعدت {n} طبقات لونية بلون النص (colorPalette *).", "many": "استُبعدت {n} طبقة لونية بلون النص (colorPalette *).", "other": "استُبعدت {n} طبقة لونية بلون النص (colorPalette *)."},
+  "Guides, backgrounds and tags couldn't be read: {e}": "تعذّرت قراءة الأدلة والخلفيات والوسوم: {e}",
+  "Master guides couldn't be read: {e}": "تعذّرت قراءة أدلة النسخ الرئيسية: {e}",
 };

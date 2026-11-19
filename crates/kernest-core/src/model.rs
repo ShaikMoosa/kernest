@@ -116,6 +116,10 @@ pub struct FontInfo {
     /// Snap grid for the edit view; `None` (or spacing 0) means no grid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grid: Option<Grid>,
+    /// Sets OS/2 fsSelection bit 7 so applications use the typo metrics for line
+    /// spacing ("Use Typo Metrics" in Glyphs).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_typo_metrics: bool,
 }
 
 /// A snap grid in font units: nodes snap to `spacing / subdivision` steps.
@@ -321,6 +325,43 @@ pub struct Master {
     /// Standard stem widths for PostScript hinting.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stems: Vec<Stem>,
+    /// OpenType line spacing and underline values set by hand.
+    #[serde(default, skip_serializing_if = "VerticalMetrics::is_empty")]
+    pub vertical: VerticalMetrics,
+}
+
+/// OpenType vertical metrics for one master. Values left unset are worked out by the
+/// compiler from the ascender and descender.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerticalMetrics {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typo_ascender: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typo_descender: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typo_line_gap: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hhea_ascender: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hhea_descender: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hhea_line_gap: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub win_ascent: Option<f64>,
+    /// Positive below the baseline, as in the OS/2 table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub win_descent: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline_thickness: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underline_position: Option<f64>,
+}
+
+impl VerticalMetrics {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -901,6 +942,7 @@ impl Font {
             guides: Vec::new(),
             alignment_zones: Vec::new(),
             stems: Vec::new(),
+            vertical: Default::default(),
         };
         let glyphs = codepoints
             .into_iter()
@@ -932,6 +974,7 @@ impl Font {
                 ps_hinting: None,
                 control_instructions: String::new(),
                 grid: None,
+                use_typo_metrics: false,
             },
             axes: Vec::new(),
             masters: vec![master],

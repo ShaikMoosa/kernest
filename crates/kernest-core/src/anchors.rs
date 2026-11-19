@@ -572,6 +572,7 @@ mod tests {
             guides: Vec::new(),
             alignment_zones: Vec::new(),
             stems: Vec::new(),
+            vertical: Default::default(),
         });
         for g in &mut f.glyphs {
             let mut l = g.layers[0].clone();

@@ -372,6 +372,7 @@ mod tests {
             guides: Vec::new(),
             alignment_zones: Vec::new(),
             stems: Vec::new(),
+            vertical: Default::default(),
         });
         let r = compare_fonts(&current, &other);
         assert!(r

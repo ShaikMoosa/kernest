@@ -298,6 +298,22 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     if !v.is_empty() {
         info.postscript_stem_snap_v = Some(v);
     }
+    // Line spacing and underline: the master at this location, else the default master.
+    let v = &master.vertical;
+    let int = |x: Option<f64>| x.map(|x| x.round() as i32);
+    info.open_type_os2_typo_ascender = int(v.typo_ascender);
+    info.open_type_os2_typo_descender = int(v.typo_descender);
+    info.open_type_os2_typo_line_gap = int(v.typo_line_gap);
+    info.open_type_hhea_ascender = int(v.hhea_ascender);
+    info.open_type_hhea_descender = int(v.hhea_descender);
+    info.open_type_hhea_line_gap = int(v.hhea_line_gap);
+    info.open_type_os2_win_ascent = v.win_ascent.map(|x| x.round().max(0.0) as u32);
+    info.open_type_os2_win_descent = v.win_descent.map(|x| x.round().abs() as u32);
+    info.postscript_underline_thickness = v.underline_thickness;
+    info.postscript_underline_position = v.underline_position;
+    if font.info.use_typo_metrics {
+        info.open_type_os2_selection = Some(vec![7]);
+    }
     if let Some(ps) = &font.info.ps_hinting {
         info.postscript_blue_scale = Some(ps.blue_scale);
         info.postscript_blue_shift = Some(ps.blue_shift);
@@ -625,9 +641,13 @@ pub fn designspace(font: &Font, sources: &[DsSource], rules: &[DsRule]) -> Strin
     for i in font.instances.iter().filter(|i| i.export) {
         let _ = write!(
             x,
-            "    <instance familyname=\"{}\" stylename=\"{}\"><location>",
+            "    <instance familyname=\"{}\" stylename=\"{}\" postscriptfontname=\"{}\"><location>",
             xml_escape(&font.info.family_name),
-            xml_escape(&i.name)
+            xml_escape(&i.name),
+            xml_escape(&crate::cff::ps_name(&format!(
+                "{}-{}",
+                font.info.family_name, i.name
+            )))
         );
         for a in &font.axes {
             let d = i

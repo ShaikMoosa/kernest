@@ -734,6 +734,21 @@ export default function App() {
     else setToast({ kind: "info", text: tn(Object.keys(renames).length, "Renamed {n} glyph", "Renamed {n} glyphs") });
   }, [onStructureChanged]);
 
+  /** Unicode values typed in Font View. A value another glyph already uses is moved
+   *  over only after asking. */
+  const setUnicodes = useCallback(async (glyph: string, text: string) => {
+    try {
+      onStructureChanged(await backend.setGlyphUnicodes(glyph, text, false));
+    } catch (e) {
+      const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+      if (!raw.includes("already belongs to")) { fail(e); throw e; }
+      const msg = `${translateMessage(raw)} ${t("Move it to {glyph}?", { glyph })}`;
+      const ok = isTauri ? await ask(msg, { title: t("Unicode"), kind: "warning", okLabel: t("Move"), cancelLabel: t("Cancel") }) : window.confirm(msg);
+      if (!ok) throw e;
+      await backend.setGlyphUnicodes(glyph, text, true).then(onStructureChanged, (e2) => { fail(e2); throw e2; });
+    }
+  }, [onStructureChanged, fail]);
+
   /** A single name edited in the list view goes through the same rename engine. */
   const renameOne = useCallback((glyph: string, name: string) => {
     applyRename({ [glyph]: name }).catch(fail);
@@ -1102,7 +1117,7 @@ export default function App() {
             <button className="btn btn-secondary" onClick={openInfo} title={t("Font Info (Ctrl+I)")}>{t("Font Info")}</button>
             <button className="btn btn-primary" onClick={() => setExporting(true)} title={t("Export fonts (Ctrl+E)")}>{t("Export")}</button>
           </div>
-          {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} onSelectionChange={setFontSelection} onAddGlyphs={showAddGlyphs} onSetExport={(names, on) => backend.setGlyphExport(names, on).then(onStructureChanged, fail)} onSetFilters={(filters) => backend.setFilters(filters).then(onStructureChanged, fail)} onSetTags={(glyph, tags) => backend.setGlyphTags(glyph, tags).then(onStructureChanged, fail)} onSetProductionName={(glyph, name) => backend.setProductionName(glyph, name).then(onStructureChanged, fail)} onSetGroups={(glyph, left, right) => backend.setGlyphGroups(glyph, left, right).then(onStructureChanged, fail)} onRenameGlyphs={() => setRenameOpen(true)} onBatch={runBatch} onReorder={reorderGlyphs} onRenameGlyph={renameOne} onSetMetric={(glyph, metric, value) => backend.setMetric(glyph, font.masterId, metric, value).then((r) => onStructureChanged(r.status), fail)} onAddMissing={(language) => backend.addMissing(language).then((r) => onStructureChanged(r.status), fail)} />}
+          {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} onSelectionChange={setFontSelection} onAddGlyphs={showAddGlyphs} onSetExport={(names, on) => backend.setGlyphExport(names, on).then(onStructureChanged, fail)} onSetFilters={(filters) => backend.setFilters(filters).then(onStructureChanged, fail)} onSetTags={(glyph, tags) => backend.setGlyphTags(glyph, tags).then(onStructureChanged, fail)} onSetProductionName={(glyph, name) => backend.setProductionName(glyph, name).then(onStructureChanged, fail)} onSetUnicodes={setUnicodes} onSetGroups={(glyph, left, right) => backend.setGlyphGroups(glyph, left, right).then(onStructureChanged, fail)} onRenameGlyphs={() => setRenameOpen(true)} onBatch={runBatch} onReorder={reorderGlyphs} onRenameGlyph={renameOne} onSetMetric={(glyph, metric, value) => backend.setMetric(glyph, font.masterId, metric, value).then((r) => onStructureChanged(r.status), fail)} onAddMissing={(language) => backend.addMissing(language).then((r) => onStructureChanged(r.status), fail)} />}
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (

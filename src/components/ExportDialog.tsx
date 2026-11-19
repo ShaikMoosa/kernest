@@ -231,6 +231,7 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
                 </>
               )}
               {report.problems.map((p) => <p key={p} className="notice notice-warning k-label">⚠ {translateMessage(p)}</p>)}
+              {(report.warnings ?? []).map((p) => <p key={p} className="notice notice-warning k-label">{translateMessage(p)}</p>)}
             </div>
           )}
         </div>

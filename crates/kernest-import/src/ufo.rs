@@ -326,6 +326,44 @@ fn metrics(info: &norad::FontInfo) -> Metrics {
     }
 }
 
+/// OpenType line spacing and underline values from a UFO's font info.
+fn vertical_metrics(fi: &norad::FontInfo) -> kernest_core::VerticalMetrics {
+    kernest_core::VerticalMetrics {
+        typo_ascender: fi.open_type_os2_typo_ascender.map(|v| v as f64),
+        typo_descender: fi.open_type_os2_typo_descender.map(|v| v as f64),
+        typo_line_gap: fi.open_type_os2_typo_line_gap.map(|v| v as f64),
+        hhea_ascender: fi.open_type_hhea_ascender.map(|v| v as f64),
+        hhea_descender: fi.open_type_hhea_descender.map(|v| v as f64),
+        hhea_line_gap: fi.open_type_hhea_line_gap.map(|v| v as f64),
+        win_ascent: fi.open_type_os2_win_ascent.map(|v| v as f64),
+        win_descent: fi.open_type_os2_win_descent.map(|v| v as f64),
+        underline_thickness: fi.postscript_underline_thickness,
+        underline_position: fi.postscript_underline_position,
+    }
+}
+
+/// UFO guidelines as Kernest guides. Vertical ones (only `x`) and horizontal ones
+/// (only `y`) get the angle they imply.
+fn guides(list: &[norad::Guideline]) -> Vec<kernest_core::Guide> {
+    use norad::Line;
+    list.iter()
+        .map(|g| {
+            let (x, y, angle) = match g.line {
+                Line::Vertical(x) => (x, 0.0, 90.0),
+                Line::Horizontal(y) => (0.0, y, 0.0),
+                Line::Angle { x, y, degrees } => (x, y, degrees),
+            };
+            kernest_core::Guide {
+                x,
+                y,
+                angle,
+                name: g.name.as_ref().map(|n| n.to_string()),
+                locked: false,
+            }
+        })
+        .collect()
+}
+
 /// Alignment zones and stems from a UFO's PostScript hinting fields: blue value
 /// pairs become zones, StemSnapH/V become named stems.
 fn zones_and_stems(fi: &norad::FontInfo) -> (Vec<kernest_core::Zone>, Vec<kernest_core::Stem>) {
@@ -410,6 +448,10 @@ fn build(
         ps_hinting: ps_hinting(fi),
         control_instructions: String::new(),
         grid: None,
+        use_typo_metrics: fi
+            .open_type_os2_selection
+            .as_ref()
+            .is_some_and(|s| s.contains(&7)),
     };
 
     // Masters, with the default one first so it is the reference for empty layers.
@@ -426,9 +468,10 @@ fn build(
                 name: sources[i].0.clone(),
                 location: sources[i].1.clone(),
                 metrics: metrics(&sources[i].2.font_info),
-                guides: Vec::new(),
+                guides: guides(sources[i].2.font_info.guidelines.as_deref().unwrap_or(&[])),
                 alignment_zones,
                 stems,
+                vertical: vertical_metrics(&sources[i].2.font_info),
             }
         })
         .collect();
@@ -480,7 +523,24 @@ fn build(
             g.production_name = ps_names.get(n).cloned();
             for (k, &i) in order.iter().enumerate() {
                 if let Some(ug) = sources[i].2.get_glyph(n) {
-                    g.layers.push(layer(&master_id(k), ug, &mut open_points));
+                    let mut l = layer(&master_id(k), ug, &mut open_points);
+                    l.guides = guides(&ug.guidelines);
+                    // The "public.background" layer holds the reference drawing.
+                    if let Some(bg) = sources[i]
+                        .2
+                        .layers
+                        .get("public.background")
+                        .and_then(|b| b.get_glyph(n))
+                    {
+                        let b = layer(&master_id(k), bg, &mut open_points);
+                        if !b.shapes.is_empty() || !b.anchors.is_empty() {
+                            l.background = Some(kernest_core::Background {
+                                shapes: b.shapes,
+                                anchors: b.anchors,
+                            });
+                        }
+                    }
+                    g.layers.push(l);
                 }
             }
             g

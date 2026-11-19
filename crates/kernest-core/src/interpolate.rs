@@ -416,6 +416,7 @@ pub fn add_master_at(font: &Font, location: &Location, name: &str) -> Result<Fon
         guides: Vec::new(),
         alignment_zones: dflt.alignment_zones.clone(),
         stems: dflt.stems.clone(),
+        vertical: dflt.vertical,
     });
     Ok(f)
 }
@@ -496,6 +497,7 @@ mod tests {
             guides: Vec::new(),
             alignment_zones: Vec::new(),
             stems: Vec::new(),
+            vertical: Default::default(),
         });
         for g in &mut f.glyphs {
             let mut l = g.layers[0].clone();

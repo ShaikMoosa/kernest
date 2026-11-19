@@ -7,13 +7,15 @@
 //!
 //! Glyphs normalises some things on the way back in (feature code is re-wrapped, axis
 //! ranges are rebuilt from the master positions), so those round-trip in meaning rather
-//! than byte for byte. Colour layers, palettes, guides and notes are not written: the
-//! reader does not bring them back, and notes are private to Kernest.
+//! than byte for byte. Guides, backgrounds, glyph tags, notes and locks, line spacing
+//! metrics, colour palettes and colour layers are written as Glyphs stores them. A
+//! radial gradient's separate focus point has no Glyphs equivalent and is left out.
 
 use std::fmt::Write as _;
 use std::path::Path;
 
-use kernest_core::{Font, Glyph, Layer, NodeKind, Shape};
+use kernest_core::color::Paint;
+use kernest_core::{Font, Glyph, Guide, Layer, NodeKind, Shape};
 
 /// Writes `font` as a Glyphs 3 `.glyphs` file at `path`.
 pub fn write_glyphs(font: &Font, path: &Path) -> Result<(), String> {
@@ -163,23 +165,187 @@ fn metrics_keys(l: &Layer) -> String {
     s
 }
 
-fn shapes(l: &Layer) -> String {
-    if l.shapes.is_empty() {
+/// A `shapes = (...)` list; `attr`, when given, is added to every shape (a colour
+/// layer's fill).
+fn shapes_list(list: &[Shape], attr: Option<&str>) -> String {
+    if list.is_empty() {
         return String::new();
     }
-    let items: Vec<String> = l.shapes.iter().map(shape).collect();
+    let items: Vec<String> = list
+        .iter()
+        .map(|sh| {
+            let mut text = shape(sh);
+            if let Some(a) = attr {
+                text.pop();
+                let _ = write!(text, "attr = {{\n{a}\n}};\n}}");
+            }
+            text
+        })
+        .collect();
     format!("shapes = (\n{}\n);\n", items.join(",\n"))
 }
 
-/// The body shared by every kind of layer: width, keys, anchors and shapes.
-fn layer_body(l: &Layer) -> String {
+/// Guides as a Glyphs `guides` list (on a layer or a master).
+pub(crate) fn guides(list: &[Guide]) -> String {
+    if list.is_empty() {
+        return String::new();
+    }
+    let items: Vec<String> = list
+        .iter()
+        .map(|g| {
+            let mut e = String::from("{\n");
+            if g.angle != 0.0 {
+                let _ = writeln!(e, "angle = {};", num(g.angle));
+            }
+            if g.locked {
+                e.push_str("locked = 1;\n");
+            }
+            if let Some(n) = &g.name {
+                let _ = writeln!(e, "name = {};", q(n));
+            }
+            let _ = writeln!(e, "pos = ({},{});", num(g.x), num(g.y));
+            e.push('}');
+            e
+        })
+        .collect();
+    format!("guides = (\n{}\n);\n", items.join(",\n"))
+}
+
+fn background(l: &Layer) -> String {
+    let Some(bg) = l
+        .background
+        .as_ref()
+        .filter(|b| !b.shapes.is_empty() || !b.anchors.is_empty())
+    else {
+        return String::new();
+    };
+    let mut probe = Layer::new("", 0.0);
+    probe.anchors = bg.anchors.clone();
     format!(
-        "{}{}{}width = {};",
+        "background = {{\n{}{}}};\n",
+        anchors(&probe),
+        shapes_list(&bg.shapes, None)
+    )
+}
+
+/// The body shared by every kind of layer: width, keys, guides, background, anchors
+/// and shapes.
+fn layer_body(l: &Layer) -> String {
+    layer_body_with(l, None)
+}
+
+fn layer_body_with(l: &Layer, attr: Option<&str>) -> String {
+    format!(
+        "{}{}{}{}{}width = {};",
         metrics_keys(l),
         anchors(l),
-        shapes(l),
+        background(l),
+        guides(&l.guides),
+        shapes_list(&l.shapes, attr),
         num(l.width)
     )
+}
+
+/// The box around a layer's path points (on- and off-curve), which Glyphs gradient
+/// positions are relative to. The reader uses the same box, so positions round-trip.
+pub(crate) fn point_box(shapes: &[Shape]) -> Option<(f64, f64, f64, f64)> {
+    let mut b: Option<(f64, f64, f64, f64)> = None;
+    for sh in shapes {
+        let Shape::Path(p) = sh else { continue };
+        for n in &p.nodes {
+            b = Some(match b {
+                None => (n.x, n.y, n.x, n.y),
+                Some((x0, y0, x1, y1)) => (x0.min(n.x), y0.min(n.y), x1.max(n.x), y1.max(n.y)),
+            });
+        }
+    }
+    b
+}
+
+/// A palette colour as Glyphs writes it, `(r,g,b,a)`, with `alpha` applied.
+fn rgba(font: &Font, index: u16, alpha: f64) -> String {
+    let c = font
+        .palettes
+        .first()
+        .and_then(|p| p.get(index as usize))
+        .copied()
+        .unwrap_or(kernest_core::color::Color::BLACK);
+    let a = (f64::from(c.a) * alpha).round().clamp(0.0, 255.0) as u8;
+    format!("({},{},{},{a})", c.r, c.g, c.b)
+}
+
+/// The shape attributes that fill a full-colour layer with `paint`.
+fn paint_attr(font: &Font, l: &Layer, paint: &Paint) -> String {
+    let (x0, y0, x1, y1) = point_box(&l.shapes).unwrap_or((0.0, 0.0, 1.0, 1.0));
+    let (w, h) = ((x1 - x0).max(1e-9), (y1 - y0).max(1e-9));
+    let rel = |p: [f64; 2]| format!("({},{})", num((p[0] - x0) / w), num((p[1] - y0) / h));
+    let stops = |list: &[kernest_core::color::ColorStop]| -> String {
+        list.iter()
+            .map(|st| format!("({},{})", rgba(font, st.color, st.alpha), num(st.offset)))
+            .collect::<Vec<_>>()
+            .join(",\n")
+    };
+    match paint {
+        Paint::Solid { color, alpha } => format!("fillColor = {};", rgba(font, *color, *alpha)),
+        Paint::Linear {
+            start,
+            end,
+            stops: st,
+        } => format!(
+            "gradient = {{\ncolors = (\n{}\n);\nend = {};\nstart = {};\n}};",
+            stops(st),
+            rel(*end),
+            rel(*start)
+        ),
+        Paint::Radial {
+            center,
+            radius,
+            stops: st,
+            ..
+        } => format!(
+            "gradient = {{\ncolors = (\n{}\n);\nend = {};\nstart = {};\ntype = circle;\n}};",
+            stops(st),
+            rel([center[0] + radius, center[1]]),
+            rel(*center)
+        ),
+    }
+}
+
+/// A colour layer: a palette layer (`colorPalette`) for an opaque solid colour,
+/// otherwise a full-colour layer whose shapes carry the fill or gradient.
+fn color_layer(font: &Font, l: &Layer) -> Option<String> {
+    let paint = &l.color.as_ref()?.paint;
+    let gid = q(&l.master_id);
+    let lid = q(l.id.as_deref().unwrap_or(&l.master_id));
+    if let Paint::Solid { color, alpha } = paint {
+        if *alpha >= 1.0 {
+            return Some(format!(
+                "{{\nassociatedMasterId = {gid};\nattr = {{\ncolorPalette = {color};\n}};\nlayerId = {lid};\nname = {};\n{}\n}}",
+                q(&format!("Color {color}")),
+                layer_body(l)
+            ));
+        }
+    }
+    let attr = paint_attr(font, l, paint);
+    Some(format!(
+        "{{\nassociatedMasterId = {gid};\nattr = {{\ncolor = 1;\n}};\nlayerId = {lid};\nname = Color;\n{}\n}}",
+        layer_body_with(l, Some(&attr))
+    ))
+}
+
+/// Palettes as a "Color Palettes" value: a list of palettes of `(r,g,b,a)` colours.
+fn palettes_value(list: &[Vec<kernest_core::color::Color>]) -> String {
+    let pals: Vec<String> = list
+        .iter()
+        .map(|p| {
+            let cs: Vec<String> = p
+                .iter()
+                .map(|c| format!("({},{},{},{})", c.r, c.g, c.b, c.a))
+                .collect();
+            format!("(\n{}\n)", cs.join(",\n"))
+        })
+        .collect();
+    format!("(\n{}\n)", pals.join(",\n"))
 }
 
 /// The Glyphs id of a master: Kernest's own stable id.
@@ -278,6 +444,12 @@ fn glyph_layers(font: &Font, g: &Glyph) -> String {
             ));
         }
     }
+    // Colour layers, bottom to top, after the others.
+    for l in g.layers.iter().filter(|l| l.color.is_some()) {
+        if let Some(text) = color_layer(font, l) {
+            out.push(text);
+        }
+    }
     out.join(",\n")
 }
 
@@ -305,6 +477,16 @@ fn glyph(font: &Font, g: &Glyph) -> String {
     }
     if let Some(p) = &g.production_name {
         let _ = writeln!(s, "productionName = {};", q(p));
+    }
+    if g.locked {
+        s.push_str("locked = 1;\n");
+    }
+    if let Some(n) = g.note.as_ref().filter(|n| !n.is_empty()) {
+        let _ = writeln!(s, "note = {};", q(n));
+    }
+    if !g.tags.is_empty() {
+        let tags: Vec<String> = g.tags.iter().map(|t| q(t)).collect();
+        let _ = writeln!(s, "tags = (\n{}\n);", tags.join(",\n"));
     }
     if !g.smart_axes.is_empty() {
         let parts: Vec<String> = g
@@ -542,6 +724,15 @@ pub fn glyphs_source(font: &Font) -> String {
             entries.join("\n")
         ));
     }
+    if info.use_typo_metrics {
+        params.push("{\nname = \"Use Typo Metrics\";\nvalue = 1;\n}".to_string());
+    }
+    if !font.palettes.is_empty() {
+        params.push(format!(
+            "{{\nname = \"Color Palettes\";\nvalue = {};\n}}",
+            palettes_value(&font.palettes)
+        ));
+    }
     let _ = writeln!(s, "customParameters = (\n{}\n);", params.join(",\n"));
 
     let _ = writeln!(s, "unitsPerEm = {};", info.units_per_em);
@@ -670,6 +861,33 @@ pub fn glyphs_source(font: &Font) -> String {
                     .collect();
                 let _ = writeln!(e, "stemValues = (\n{}\n);", sv.join(",\n"));
             }
+            // Line spacing and underline, and this master's own palettes.
+            let v = &m.vertical;
+            let mut mp: Vec<String> = [
+                ("typoAscender", v.typo_ascender),
+                ("typoDescender", v.typo_descender),
+                ("typoLineGap", v.typo_line_gap),
+                ("hheaAscender", v.hhea_ascender),
+                ("hheaDescender", v.hhea_descender),
+                ("hheaLineGap", v.hhea_line_gap),
+                ("winAscent", v.win_ascent),
+                ("winDescent", v.win_descent),
+                ("underlineThickness", v.underline_thickness),
+                ("underlinePosition", v.underline_position),
+            ]
+            .into_iter()
+            .filter_map(|(k, val)| Some(format!("{{\nname = {k};\nvalue = {};\n}}", num(val?))))
+            .collect();
+            if let Some(p) = font.master_palettes.get(&m.id) {
+                mp.push(format!(
+                    "{{\nname = \"Color Palettes\";\nvalue = {};\n}}",
+                    palettes_value(p)
+                ));
+            }
+            if !mp.is_empty() {
+                let _ = writeln!(e, "customParameters = (\n{}\n);", mp.join(",\n"));
+            }
+            e.push_str(&guides(&m.guides));
             let _ = writeln!(e, "name = {};\n}}", q(&m.name));
             e
         })

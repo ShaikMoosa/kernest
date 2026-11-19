@@ -36,6 +36,8 @@ export interface DocStatus {
 export interface GlyphSummary {
   name: string;
   unicode: string | null;
+  /** Every Unicode value, the first being `unicode`. */
+  unicodes: string[];
   character: string | null;
   category: string;
   subcategory: string;
@@ -658,6 +660,8 @@ export interface ExportReport {
   files: ExportedFile[];
   /** Targets that could not be built, with the reason. */
   problems: string[];
+  /** Things worth a look in fonts that were built. */
+  warnings: string[];
 }
 
 export interface AddGlyphsResult {
@@ -855,6 +859,7 @@ export interface Backend {
   setGlyphExport(names: string[], exportGlyph: boolean): Promise<DocStatus>;
   /** Replaces one glyph's tags (trimmed, deduped). One undoable step. */
   setGlyphTags(glyph: string, tags: string[]): Promise<DocStatus>;
+  setGlyphUnicodes(glyph: string, unicodes: string, take: boolean): Promise<DocStatus>;
   /** Sets a glyph's production name (empty clears it). One undoable step. */
   setProductionName(glyph: string, name: string): Promise<DocStatus>;
   /** Replaces the saved smart and list filters. One undoable step. */
@@ -1278,6 +1283,7 @@ const tauriBackend: Backend = {
   removeGlyphs: (names) => invoke("remove_glyphs", { names }),
   setGlyphExport: (names, exportGlyph) => invoke("set_glyph_export", { names, export: exportGlyph }),
   setGlyphTags: (glyph, tags) => invoke("set_glyph_tags", { glyph, tags }),
+  setGlyphUnicodes: (glyph, unicodes, take) => invoke("set_glyph_unicodes", { glyph, unicodes, take }),
   setProductionName: (glyph, name) => invoke("set_production_name", { glyph, name }),
   setFilters: (filters) => invoke("set_filters", { filters }),
   evaluateFilter: (filter) => invoke("evaluate_filter", { filter }),
@@ -1475,7 +1481,7 @@ function mockFontView(d: MockDoc, masterId?: string): FontView {
     metrics: master.metrics,
     status: status(d),
     filters: [],
-    glyphs: d.glyphs.map((g) => ({ name: g.name, unicode: g.unicode, character: g.character, category: g.category, subcategory: "", script: "Latin", export: true, width: g.width, ...sb(d, g), leftGroup: null, rightGroup: null, tags: [], svg: pathsToSvg(resolved(d, g)), compatible: true })),
+    glyphs: d.glyphs.map((g) => ({ name: g.name, unicode: g.unicode, unicodes: g.unicode ? [g.unicode] : [], character: g.character, category: g.category, subcategory: "", script: "Latin", export: true, width: g.width, ...sb(d, g), leftGroup: null, rightGroup: null, tags: [], svg: pathsToSvg(resolved(d, g)), compatible: true })),
   };
 }
 
@@ -1962,6 +1968,9 @@ const mockBackend: Backend = {
   },
   async setGlyphTags() {
     throw "Tags need the desktop app (npm run tauri dev).";
+  },
+  async setGlyphUnicodes() {
+    throw "Unicode values need the desktop app (npm run tauri dev).";
   },
   async setProductionName() {
     throw "Production names need the desktop app (npm run tauri dev).";

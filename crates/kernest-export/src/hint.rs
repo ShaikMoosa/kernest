@@ -105,6 +105,19 @@ pub fn autohint(
             return Err(format!("autohinting failed unexpectedly: {msg}"));
         }
     };
+    // A hinted font rounds sizes to whole pixels (head flags bit 3), as hinting assumes.
+    let hinted = match FontRef::new(&hinted)
+        .ok()
+        .and_then(|f| f.table_data(Tag::new(b"head")))
+    {
+        Some(head) if head.len() >= 18 => {
+            let mut head = head.as_bytes().to_vec();
+            let flags = u16::from_be_bytes([head[16], head[17]]) | (1 << 3);
+            head[16..18].copy_from_slice(&flags.to_be_bytes());
+            replace_table(&hinted, b"head", &head)?
+        }
+        _ => hinted,
+    };
     let (Some(post), Some(mut names)) = (post, names) else {
         return Ok(hinted);
     };

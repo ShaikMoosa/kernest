@@ -333,11 +333,115 @@ fn flatten(
     }
 }
 
+/// Reads Unicode values as typed: hex (`0041`), `U+0041`, `uni0041` or the character
+/// itself, separated by commas or spaces. Repeats are dropped; order is kept.
+pub fn parse_unicodes(text: &str) -> R<Vec<Codepoint>> {
+    let mut out: Vec<Codepoint> = Vec::new();
+    for item in text.split(|c: char| c == ',' || c.is_whitespace()) {
+        if item.is_empty() {
+            continue;
+        }
+        let mut chars = item.chars();
+        let single = match (chars.next(), chars.next()) {
+            (Some(c), None) if !c.is_ascii_hexdigit() => Some(c as u32),
+            _ => None,
+        };
+        let value = match single {
+            Some(v) => v,
+            None => {
+                let upper = item.to_ascii_uppercase();
+                let hex = upper
+                    .strip_prefix("U+")
+                    .or_else(|| upper.strip_prefix("UNI"))
+                    .or_else(|| upper.strip_prefix("0X"))
+                    .unwrap_or(&upper);
+                if hex.is_empty() || hex.len() > 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(format!("\"{item}\" isn't a Unicode value. Type it like 0041 or U+0041, or type the character."));
+                }
+                u32::from_str_radix(hex, 16).map_err(|e| e.to_string())?
+            }
+        };
+        if value > 0x10FFFF || (0xD800..=0xDFFF).contains(&value) {
+            return Err(format!("\"{item}\" isn't a valid Unicode value."));
+        }
+        if !out.iter().any(|c| c.0 == value) {
+            out.push(Codepoint(value));
+        }
+    }
+    Ok(out)
+}
+
+/// Gives `glyph` the Unicode values in `text` (empty leaves it unencoded). A value that
+/// already belongs to another glyph is refused with that glyph's name, unless
+/// `take_from_others` is set: then it is moved over.
+pub fn set_unicodes(font: &Font, glyph: &str, text: &str, take_from_others: bool) -> R<Font> {
+    let wanted = parse_unicodes(text)?;
+    if font.glyph(glyph).is_none() {
+        return Err(format!("There is no glyph named \"{glyph}\"."));
+    }
+    let mut next = font.clone();
+    for g in next.glyphs.iter_mut().filter(|g| g.name != glyph) {
+        if let Some(c) = g.unicodes.iter().find(|c| wanted.contains(c)) {
+            if !take_from_others {
+                return Err(format!("U+{c} already belongs to \"{}\".", g.name));
+            }
+            g.unicodes.retain(|c| !wanted.contains(c));
+        }
+    }
+    next.glyph_mut(glyph).expect("checked above").unicodes = wanted;
+    Ok(next)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{KernPair, NodeKind, IDENTITY};
     use crate::sample::sample_font;
+
+    #[test]
+    fn parses_unicode_values_in_every_spelling() {
+        let v = parse_unicodes("0041, U+00e9 uni0416 Ж 0x1F600 0041").unwrap();
+        let v: Vec<u32> = v.iter().map(|c| c.0).collect();
+        assert_eq!(v, [0x41, 0xE9, 0x416, 0x1F600]);
+        // A single hex digit is a value, not a character.
+        assert_eq!(parse_unicodes("A").unwrap()[0].0, 0xA);
+        assert_eq!(parse_unicodes("é").unwrap()[0].0, 0xE9);
+        assert!(parse_unicodes("D800").is_err());
+        assert!(parse_unicodes("110000").is_err());
+        assert!(parse_unicodes("hello").unwrap_err().contains("hello"));
+        assert!(parse_unicodes("  ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn set_unicodes_refuses_or_moves_a_taken_value() {
+        let font = sample_font();
+        let a = font
+            .glyphs
+            .iter()
+            .find(|g| !g.unicodes.is_empty())
+            .unwrap()
+            .clone();
+        let b = font
+            .glyphs
+            .iter()
+            .find(|g| g.name != a.name)
+            .unwrap()
+            .name
+            .clone();
+        let taken = format!("U+{}", a.unicodes[0]);
+        let e = set_unicodes(&font, &b, &taken, false).unwrap_err();
+        assert!(e.contains(&a.name), "{e}");
+        let moved = set_unicodes(&font, &b, &taken, true).unwrap();
+        assert_eq!(moved.glyph(&b).unwrap().unicodes, vec![a.unicodes[0]]);
+        assert!(!moved
+            .glyph(&a.name)
+            .unwrap()
+            .unicodes
+            .contains(&a.unicodes[0]));
+        let cleared = set_unicodes(&font, &a.name, "", false).unwrap();
+        assert!(cleared.glyph(&a.name).unwrap().unicodes.is_empty());
+        assert!(set_unicodes(&font, "nope", "0041", false).is_err());
+    }
 
     #[test]
     fn parses_names_characters_and_codepoints() {

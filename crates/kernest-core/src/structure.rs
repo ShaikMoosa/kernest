@@ -311,6 +311,7 @@ pub fn add_master(
         guides: src.guides.clone(),
         alignment_zones: src.alignment_zones.clone(),
         stems: src.stems.clone(),
+        vertical: src.vertical,
     });
     Ok((f, id))
 }
@@ -459,6 +460,7 @@ pub fn add_master_from(
         guides: src.guides.clone(),
         alignment_zones: src.alignment_zones.clone(),
         stems: src.stems.clone(),
+        vertical: src.vertical,
     });
     Ok((f, missing))
 }

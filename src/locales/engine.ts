@@ -408,4 +408,13 @@ export const ENGINE_MESSAGES = [
   "{n} glyph{s} may not interpolate cleanly ({list}). See Interpolation warnings in Font View.",
   "This glyph's masters can't be interpolated yet; make them compatible first.",
   "Fixing would make the masters incompatible; fix this glyph by hand.",
+  // Unicode values
+  "U+{code} already belongs to \"{name}\".",
+  "\"{item}\" isn't a Unicode value. Type it like 0041 or U+0041, or type the character.",
+  "\"{item}\" isn't a valid Unicode value.",
+  "Unicode values need the desktop app (npm run tauri dev).",
+  // Import of guides, backgrounds and colour
+  "{n} colour layer{s} in the text colour (colorPalette *) {was} left out.",
+  "Guides, backgrounds and tags couldn't be read: {e}",
+  "Master guides couldn't be read: {e}",
 ];

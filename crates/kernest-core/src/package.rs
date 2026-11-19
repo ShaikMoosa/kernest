@@ -39,11 +39,12 @@ use crate::model::{
 /// palette overrides and per-master colour paints (older versions would drop the
 /// variation and export every master with the default colour); version 10 adds
 /// alignment zones, stems, manual hints and hinting settings (older versions
-/// would drop them on save); version 11 adds saved export presets.
+/// would drop them on save); version 11 adds saved export presets; version 12 adds
+/// line spacing metrics (typo, hhea, win, underline and Use Typo Metrics).
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 11;
+pub const FORMAT_VERSION: u32 = 12;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -239,9 +240,13 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
             .glyphs
             .iter()
             .any(|g| g.layers.iter().any(|l| !l.hints.is_empty()));
+    let has_vertical =
+        font.info.use_typo_metrics || font.masters.iter().any(|m| !m.vertical.is_empty());
     let file = FontFile {
-        format_version: if !font.export_presets.is_empty() {
+        format_version: if has_vertical {
             FORMAT_VERSION
+        } else if !font.export_presets.is_empty() {
+            11
         } else if has_phase10 {
             10
         } else if has_var_color {

@@ -87,6 +87,7 @@ The **Font** tab shows every glyph as a cell. Switch between **Grid** and **List
 
 ### Tags, groups and production names
 
+- **Unicode** (info box, or the list's Unicode column) sets the characters a glyph stands for. Type `0041`, `U+0041` or the character itself; separate several values with commas, or clear the field to leave the glyph unencoded. If a value already belongs to another glyph, Kernest names that glyph and asks whether to move the value over. Undo with Ctrl+Z.
 - **Tags** are free labels you put on glyphs (from the list or the info box) to find them again with a "tag contains" filter.
 - **Left / right group** set the kerning groups a glyph belongs to.
 - **Production name** (info box) is the name the glyph gets in compiled fonts when you tick **Use production names** in the Export dialog; the working name stays as it is. UFO sources always carry the mapping.
@@ -344,7 +345,9 @@ And what happens before building:
 - **Autohint** adds TrueType hinting instructions to TTF and WOFF2 files, static and variable, using the settings in Font Info › Hinting, including any control instructions. Hinting makes text crisper at small sizes on Windows. OTF files aren't affected. Kernest hints with [tilvisan](https://github.com/simoncozens/tilvisan), a Rust port of ttfautohint.
 - **Use production names** renames glyphs in compiled fonts to their production names (set per glyph in Font View); without it, compiled fonts keep the working names. UFO sources always carry the working → production mapping.
 
-Kerning and kerning groups are compiled into GPOS, and your feature code — generated and hand-written (see [Features](#features)) — is included. Glyphs that aren't set to export are left out.
+Kerning and kerning groups are compiled into GPOS, and your feature code — generated and hand-written (see [Features](#features)) — is included. Glyphs that aren't set to export are left out. Line spacing values brought in from a Glyphs or UFO source are written to the OS/2, hhea and post tables; named instances in a variable font get PostScript names; hinted fonts are marked to round sizes to whole pixels.
+
+When the export finishes, the window lists anything that went wrong (a format that couldn't be built, or a font exported without hinting or colour) and, separately, things worth a look in fonts that were built: metrics keys that couldn't be applied, and glyphs that may not interpolate cleanly.
 
 ### Presets
 
@@ -357,7 +360,7 @@ After exporting, **Check font** runs [Fontspector](https://github.com/fonttools/
 ### Editable sources
 
 - **File › Export › UFO…** writes editable sources instead of compiled fonts: one `.ufo` per chosen master, plus a `.designspace` tying them together, for editing in other font tools. Tick the masters to write (the default one is marked), and choose whether to **decompose smart components** (flatten smart glyphs to outlines; otherwise they stay plain components) and write **colour layers** as named UFO layers.
-- **File › Save As .glyphs…** writes a Glyphs 3 `.glyphs` copy of the open font. This is a copy out: the working document stays a `.kernest` font, since Glyphs cannot hold everything Kernest keeps (colour layers, guides, notes).
+- **File › Save As .glyphs…** writes a Glyphs 3 `.glyphs` copy of the open font, including guides, backgrounds, glyph tags, notes and locks, line spacing values, colour palettes and colour layers. An opaque solid colour becomes a palette colour layer; see-through colours and gradients become full-colour layers. This is a copy out: the working document stays a `.kernest` font, since some things have no Glyphs equivalent (a radial gradient's separate focus point, smart filters, export presets).
 
 ## Colour fonts
 
@@ -387,7 +390,11 @@ On export, every colour layer becomes a glyph of its own (`O.color0`, `O.color1`
 
 `.glyphspackage` and `.ufo` sources are folders. Use **File › Import Folder…** to pick the folder, or pick any file inside it with Import….
 
-Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers and, from Glyphs files, metrics keys (glyph-wide and per layer), alignment zones and stems, and the hinting settings in a **TTFAutohint options** custom parameter. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
+Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers, guides (per master and per glyph, locked or not), background drawings, and line spacing values (typo, hhea and win ascender/descender/line gap, underline, and **Use Typo Metrics**). From Glyphs files it also brings metrics keys (glyph-wide and per layer), glyph tags, notes and locks, alignment zones and stems, the hinting settings in a **TTFAutohint options** custom parameter, and colour: **Color Palettes**, palette colour layers and full-colour layers with fills and gradients. From UFOs, backgrounds come from the `public.background` layer. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
+
+Kerning pairs that point at a group with no glyphs in it are left out (they can't do anything). A pair with the value 0 is kept when one side is a glyph, because it cancels the group kerning for that glyph.
+
+Line spacing values are used when you export but can't be edited in Font Info yet.
 
 ### SVG outlines
 
@@ -514,9 +521,9 @@ shortcut. Undo and Redo also work as Ctrl+Z and Ctrl+Shift+Z.
 
 The installer puts `kernest-cli.exe` next to the app. It uses the same engine as the editor, so builds and checks match what you see in the app. Add the install folder to your `PATH`, or call it by full path.
 
-- `kernest-cli export <font> [--format ttf,otf,woff2,variable] [--out dir] [--preset name]` — build fonts. `<font>` is a `.kernest` package or any importable source. Without `--preset`, `--format` picks the formats (default `ttf`); `variable` adds the variable font. `--preset` uses a preset saved in the font (see [Export › Presets](#presets)); `--out` overrides its folder.
+- `kernest-cli export <font> [--format ttf,otf,woff2,variable] [--production-names] [--out dir] [--preset name]` — build fonts. `<font>` is a `.kernest` package or any importable source. Without `--preset`, `--format` picks the formats (default `ttf`); `variable` adds the variable font, and `--production-names` writes production names (such as `uni0628`) into the fonts. `--preset` uses a preset saved in the font (see [Export › Presets](#presets)); `--out` overrides its folder. Problems print as `FAIL:` and set exit code `1`; notes about fonts that were built print as `WARN:` and don't.
 - `kernest-cli check <dir|file> [--profile universal|opentype]` — run the same offline Fontspector checks as **Check font**. Exit code `0` = no failures, `1` = at least one FAIL, `2` = a check error or bad input. Warnings alone do not fail the build.
 - `kernest-cli convert <in> --to kernest|glyphs|ufo [--out path]` — convert between formats without overwriting an existing output.
-- `kernest-cli info <font>` — print the family, glyph count, masters, axes, instances and presets.
+- `kernest-cli info <font>` — print the family, glyph count, masters, axes, instances (at their axis values, in the same units as the axes) and presets.
 
 Add `--json` to any command for machine-readable output (handy in CI). The command line is English-only; the app interface is translated.

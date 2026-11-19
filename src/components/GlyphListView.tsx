@@ -7,7 +7,8 @@ export type ListEdit =
   | { kind: "metric"; glyph: string; metric: "lsb" | "rsb" | "width"; value: number }
   | { kind: "groups"; glyph: string; left: string | null; right: string | null }
   | { kind: "rename"; glyph: string; name: string }
-  | { kind: "tags"; glyph: string; tags: string[] };
+  | { kind: "tags"; glyph: string; tags: string[] }
+  | { kind: "unicodes"; glyph: string; text: string };
 
 /** HTML5 drag handlers shared by the Font View grid cells and list rows. */
 export type DragHandlers = React.HTMLAttributes<HTMLElement>;
@@ -16,9 +17,9 @@ type ColumnKey =
   | "name" | "unicode" | "category" | "subcategory" | "lsb" | "rsb" | "width"
   | "leftGroup" | "rightGroup" | "export" | "tags";
 
-const COLUMNS: { key: ColumnKey; label: string; w: string; edit?: "number" | "text" | "tags" | "name" }[] = [
+const COLUMNS: { key: ColumnKey; label: string; w: string; edit?: "number" | "text" | "tags" | "name" | "unicodes" }[] = [
   { key: "name", label: "Name", w: "150px", edit: "name" },
-  { key: "unicode", label: "Unicode", w: "76px" },
+  { key: "unicode", label: "Unicode", w: "90px", edit: "unicodes" },
   { key: "category", label: "Category", w: "96px" },
   { key: "subcategory", label: "Subcategory", w: "96px" },
   { key: "lsb", label: "LSB", w: "60px", edit: "number" },
@@ -104,6 +105,7 @@ export function GlyphListView({ glyphs, selection, onSelect, onOpen, onEdit, onS
     setDraft(
       col.edit === "number" ? String(g[key] ?? "")
         : key === "tags" ? g.tags.join(", ")
+        : key === "unicode" ? g.unicodes.join(", ")
         : String(g[key] ?? ""),
     );
   }
@@ -122,6 +124,8 @@ export function GlyphListView({ glyphs, selection, onSelect, onOpen, onEdit, onS
       }
     } else if (col.edit === "tags") {
       onEdit({ kind: "tags", glyph: g.name, tags: draft.split(",") });
+    } else if (col.edit === "unicodes") {
+      if (draft.trim() !== g.unicodes.join(", ")) onEdit({ kind: "unicodes", glyph: g.name, text: draft });
     } else if (col.edit === "name") {
       const next = draft.trim();
       if (next && next !== g.name) onEdit({ kind: "rename", glyph: g.name, name: next });
@@ -138,7 +142,7 @@ export function GlyphListView({ glyphs, selection, onSelect, onOpen, onEdit, onS
 
   function cellText(g: GlyphSummary, key: ColumnKey): string {
     switch (key) {
-      case "unicode": return g.unicode ? `U+${g.unicode}` : "—";
+      case "unicode": return g.unicode ? `U+${g.unicode}${g.unicodes.length > 1 ? ` +${g.unicodes.length - 1}` : ""}` : "—";
       case "category": return t(g.category);
       case "subcategory": return g.subcategory ? t(g.subcategory) : "—";
       case "lsb": return fmt(g.lsb);

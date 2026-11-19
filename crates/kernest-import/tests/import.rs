@@ -1522,3 +1522,178 @@ fn woff2_transformed_fixture() {
     assert!(l.width > 0.0);
     assert!(!l.shapes.is_empty(), "A should have a drawn outline");
 }
+
+#[test]
+fn glyphs_round_trip_keeps_guides_backgrounds_metrics_and_colour() {
+    use kernest_core::color::{self, Color, ColorStop, Paint};
+    use kernest_core::{Background, Guide};
+    let mut src = two_masters();
+    src.info.use_typo_metrics = true;
+    let red = Color {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let blue = Color {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 200,
+    };
+    let green = Color {
+        r: 0,
+        g: 128,
+        b: 0,
+        a: 255,
+    };
+    src = color::set_palettes(&src, vec![vec![red, blue, green]]).unwrap();
+    src.master_palettes
+        .insert("m02".into(), vec![vec![green, red, blue]]);
+    let stops = vec![
+        ColorStop {
+            offset: 0.0,
+            color: 0,
+            alpha: 1.0,
+        },
+        ColorStop {
+            offset: 1.0,
+            color: 2,
+            alpha: 0.5,
+        },
+    ];
+    let paints = vec![
+        Paint::Solid {
+            color: 0,
+            alpha: 1.0,
+        },
+        Paint::Solid {
+            color: 1,
+            alpha: 0.5,
+        },
+        Paint::Linear {
+            start: [10.0, 20.0],
+            end: [300.0, 600.0],
+            stops: stops.clone(),
+        },
+        Paint::Radial {
+            center: [250.0, 350.0],
+            radius: 120.0,
+            focus: None,
+            stops,
+        },
+    ];
+    let outline = src.glyph("H").unwrap().layer("m01").unwrap().shapes.clone();
+    for p in &paints {
+        let (f, key) = color::add_color_layer(&src, "H", "m01").unwrap();
+        src = color::set_paint(&f, "H", &key, p.clone()).unwrap();
+        for l in src
+            .glyph_mut("H")
+            .unwrap()
+            .layers
+            .iter_mut()
+            .filter(|l| l.color.is_some())
+        {
+            l.shapes = outline.clone();
+        }
+    }
+    {
+        let m = &mut src.masters[0];
+        m.guides = vec![Guide {
+            x: 0.0,
+            y: 500.0,
+            angle: 0.0,
+            name: Some("mid".into()),
+            locked: true,
+        }];
+        m.vertical.typo_ascender = Some(800.0);
+        m.vertical.win_ascent = Some(1100.0);
+        m.vertical.win_descent = Some(300.0);
+        m.vertical.underline_position = Some(-100.0);
+    }
+    let g = src.glyph_mut("H").unwrap();
+    g.tags = vec!["latin".into(), "upper case".into()];
+    g.note = Some("Check the crossbar".into());
+    g.locked = true;
+    let l = g.layer_mut("m01").unwrap();
+    l.guides = vec![Guide {
+        x: 100.0,
+        y: 0.0,
+        angle: 90.0,
+        name: None,
+        locked: false,
+    }];
+    l.background = Some(Background {
+        shapes: outline.clone(),
+        anchors: Vec::new(),
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Extras.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let imp = import(&path).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let f = &imp.font;
+
+    assert!(f.info.use_typo_metrics);
+    assert_eq!(f.masters[0].guides, src.masters[0].guides);
+    assert_eq!(f.masters[0].vertical, src.masters[0].vertical);
+    assert_eq!(f.palettes, src.palettes);
+    assert_eq!(f.master_palettes, src.master_palettes);
+    let (a, b) = (f.glyph("H").unwrap(), src.glyph("H").unwrap());
+    assert_eq!((&a.tags, &a.note, a.locked), (&b.tags, &b.note, b.locked));
+    let (la, lb) = (a.layer("m01").unwrap(), b.layer("m01").unwrap());
+    assert_eq!(la.guides, lb.guides);
+    assert_eq!(la.background, lb.background);
+    for m in ["m01", "m02"] {
+        let got: Vec<&Paint> = a
+            .color_layers(m)
+            .map(|l| &l.color.as_ref().unwrap().paint)
+            .collect();
+        assert_eq!(got.len(), paints.len(), "{m}");
+        for (g, want) in got.iter().zip(&paints) {
+            let close = |x: f64, y: f64| (x - y).abs() < 1e-6;
+            match (g, want) {
+                (
+                    Paint::Linear { start, end, .. },
+                    Paint::Linear {
+                        start: s2, end: e2, ..
+                    },
+                ) => {
+                    assert!(
+                        close(start[0], s2[0])
+                            && close(start[1], s2[1])
+                            && close(end[0], e2[0])
+                            && close(end[1], e2[1]),
+                        "{g:?}"
+                    );
+                }
+                (
+                    Paint::Radial { center, radius, .. },
+                    Paint::Radial {
+                        center: c2,
+                        radius: r2,
+                        ..
+                    },
+                ) => {
+                    assert!(
+                        close(center[0], c2[0]) && close(center[1], c2[1]) && close(*radius, *r2),
+                        "{g:?}"
+                    );
+                }
+                (
+                    Paint::Solid { color, alpha },
+                    Paint::Solid {
+                        color: c2,
+                        alpha: a2,
+                    },
+                ) => {
+                    assert_eq!(color, c2);
+                    assert!((alpha - a2).abs() < 0.01, "{g:?}");
+                }
+                _ => panic!("{g:?} vs {want:?}"),
+            }
+        }
+        assert!(a.color_layers(m).all(|l| !l.shapes.is_empty()));
+    }
+}

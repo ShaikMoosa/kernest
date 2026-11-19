@@ -105,6 +105,7 @@ fn main() {
             glyphs::remove_glyphs,
             glyphs::set_glyph_export,
             glyphs::set_glyph_tags,
+            glyphs::set_glyph_unicodes,
             glyphs::set_production_name,
             glyphs::set_filters,
             glyphs::evaluate_filter,

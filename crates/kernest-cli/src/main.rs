@@ -26,6 +26,12 @@ enum Action {
         format: Vec<Format>,
         #[arg(long, conflicts_with = "preset", help = "Also build a variable font")]
         variable: bool,
+        #[arg(
+            long,
+            conflicts_with = "preset",
+            help = "Write production names (such as uni0628) into the fonts"
+        )]
+        production_names: bool,
         #[arg(long)]
         out: Option<PathBuf>,
         #[arg(long)]
@@ -137,8 +143,18 @@ fn run(args: &Args) -> Result<u8, String> {
                         axis.tag, axis.min, axis.max, axis.default
                     );
                 }
+                // Instance positions in the same (user) units as the axes above.
                 for instance in &font.instances {
-                    println!("{}: {:?}", instance.name, instance.location);
+                    let at: Vec<String> = font
+                        .axes
+                        .iter()
+                        .filter_map(|a| {
+                            let d = *instance.location.get(&a.tag)?;
+                            let u = kernest_core::designspace::design_to_user(a, d);
+                            Some(format!("{} {}", a.tag, (u * 100.0).round() / 100.0))
+                        })
+                        .collect();
+                    println!("{}: {}", instance.name, at.join(", "));
                 }
                 for warning in warnings {
                     eprintln!("WARN: {warning}");
@@ -150,6 +166,7 @@ fn run(args: &Args) -> Result<u8, String> {
             font,
             format,
             variable,
+            production_names,
             out,
             preset,
         } => {
@@ -180,7 +197,7 @@ fn run(args: &Args) -> Result<u8, String> {
                         remove_overlaps: true,
                         apply_metrics_keys: true,
                         autohint: true,
-                        production_names: false,
+                        production_names: *production_names,
                         out_dir: out.unwrap_or(full_path(Path::new("build"))?),
                     },
                 )?
@@ -193,6 +210,9 @@ fn run(args: &Args) -> Result<u8, String> {
             } else {
                 for file in &report.files {
                     println!("{} ({} bytes)", file.path, file.bytes);
+                }
+                for warning in &report.warnings {
+                    eprintln!("WARN: {warning}");
                 }
                 for problem in &report.problems {
                     eprintln!("FAIL: {problem}");

@@ -153,10 +153,15 @@ fn finish(imp: &mut Imported) {
         .filter_map(|g| g.left_group.as_ref().map(|r| format!("@{r}")))
         .chain(names.iter().cloned())
         .collect();
+    // A zero pair with a glyph on either side is an exception that cancels group
+    // kerning, so it stays; a zero pair between two groups does nothing.
     let mut dropped = 0;
     for pairs in font.kerning.values_mut() {
         let before = pairs.len();
-        pairs.retain(|p| lefts.contains(&p.left) && rights.contains(&p.right) && p.value != 0.0);
+        pairs.retain(|p| {
+            let groups = p.left.starts_with('@') && p.right.starts_with('@');
+            lefts.contains(&p.left) && rights.contains(&p.right) && !(groups && p.value == 0.0)
+        });
         dropped += before - pairs.len();
     }
     font.kerning.retain(|_, v| !v.is_empty());
