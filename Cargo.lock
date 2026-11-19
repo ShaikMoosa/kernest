@@ -2262,7 +2262,7 @@ dependencies = [
 
 [[package]]
 name = "kernest"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "kernest-core",
  "kernest-export",
@@ -2282,7 +2282,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-core"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "fea-rs",
  "kurbo",
@@ -2295,7 +2295,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-export"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "brotli",
  "fontbe",
@@ -2311,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-import"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "brotli-decompressor",
  "glyphs-reader",
@@ -2328,7 +2328,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-script"
-version = "2.3.0"
+version = "2.4.0"
 dependencies = [
  "kernest-core",
  "serde",
