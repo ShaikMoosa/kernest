@@ -206,6 +206,7 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 
 /* ---------- Edit view (S05) ---------- */
 .editor { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.editor-columns { flex: 1; display: flex; min-height: 0; }
 .editor-loading { margin: auto; }
 .toolbar {
   display: flex; align-items: center; gap: var(--k-space-4); height: 44px; flex: none; padding: 0 var(--k-space-12);
@@ -217,7 +218,7 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .toolbar-hint { margin-inline-start: var(--k-space-12); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .toolbar .zoom { width: 44px; text-align: end; }
 .btn-sm { height: var(--k-control-md); padding: 0 var(--k-space-8); }
-.canvas-wrap { flex: 1; position: relative; min-height: 0; overflow: hidden; background: var(--k-editor-canvas); }
+.canvas-wrap { flex: 1; position: relative; min-height: 0; min-width: 0; overflow: hidden; background: var(--k-editor-canvas); }
 .canvas { position: absolute; inset: 0; display: block; touch-action: none; }
 .metric-line { stroke: var(--k-editor-metric-line); stroke-width: 1; shape-rendering: crispEdges; }
 .metric-line.baseline { stroke: var(--k-border-strong); }
@@ -599,6 +600,19 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .pixel-col { display: flex; flex-direction: column; gap: 2px; }
 .pixel-canvas { display: block; image-rendering: pixelated; color: var(--k-text-default); }
 .pixel-note { margin: 0; }
+
+/* The inspector sidebar: Transform, Hints and Pixel preview beside the canvas.
+   Logical border so it flips to the left in RTL. */
+.edit-sidebar {
+  width: 320px; flex: none; display: flex; flex-direction: column; gap: var(--k-space-8);
+  padding: var(--k-space-8); overflow-y: auto;
+  background: var(--k-bg-app); border-inline-start: 1px solid var(--k-border-default);
+}
+.edit-sidebar .transform-panel { width: 100%; max-width: none; box-shadow: none; }
+.edit-sidebar .hints-body, .edit-sidebar .pixel-body { max-height: none; }
+.edit-sidebar .hint-row, .edit-sidebar .pixel-controls { flex-wrap: wrap; }
+.sidebar-toggle[aria-pressed="true"] { background: var(--k-bg-hover); color: var(--k-text-primary); }
+[dir="rtl"] .sidebar-toggle svg { transform: scaleX(-1); }
 
 /* Colour fonts: palette swatches, the paint dialog and Font Info's palette table. */
 .swatches { display: inline-flex; flex-wrap: wrap; gap: var(--k-space-4); }

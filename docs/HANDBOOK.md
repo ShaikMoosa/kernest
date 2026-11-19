@@ -177,8 +177,8 @@ The **Filter** menu opens a dialog with a live preview drawn over the glyph befo
 
 ### Hints and pixel preview
 
-- **Hints panel:** the collapsible **Hints** panel beside Transform lists the glyph's hints. With no manual hints, Kernest derives them automatically from the master's stems, draws them faintly on the canvas and shows their count in the panel. **+ Horizontal**, **+ Vertical** and **+ Ghost** add hints; each has a direction, position and width. A width of 0 makes a *ghost hint* that marks a single edge — the button beside it picks which edge (top/bottom for horizontal hints, right/left for vertical ones). Manual hints replace the automatic ones for that glyph, and hint bands are drawn across the advance on the canvas. Every change is one undoable step.
-- **Pixel preview:** the collapsible **Pixel preview** panel shows text at real pixel sizes, with **Hinted** and **Unhinted** columns side by side. Type a test string (it starts with the current glyph's character) and comma-separated sizes (12, 16 and 24 by default; 1–512 pixels). The hinted side uses the same TrueType hinting as the export, so zone and stem changes show up right away; the unhinted side stays the same. If hinting can't be applied — for example a mistake in the control instructions — the panel says why and the hinted side falls back to the unhinted outlines.
+- **Hints panel:** the collapsible **Hints** panel in the editor sidebar lists the glyph's hints. With no manual hints, Kernest derives them automatically from the master's stems, draws them faintly on the canvas and shows their count in the panel. **+ Horizontal**, **+ Vertical** and **+ Ghost** add hints; each has a direction, position and width. A width of 0 makes a *ghost hint* that marks a single edge — the button beside it picks which edge (top/bottom for horizontal hints, right/left for vertical ones). Manual hints replace the automatic ones for that glyph, and hint bands are drawn across the advance on the canvas. Every change is one undoable step.
+- **Pixel preview:** the collapsible **Pixel preview** panel in the editor sidebar shows text at real pixel sizes, with **Hinted** and **Unhinted** columns side by side. Type a test string (it starts with the current glyph's character) and comma-separated sizes (12, 16 and 24 by default; 1–512 pixels). The hinted side uses the same TrueType hinting as the export, so zone and stem changes show up right away; the unhinted side stays the same. If hinting can't be applied — for example a mistake in the control instructions — the panel says why and the hinted side falls back to the unhinted outlines.
 
 ## Guides and background
 
@@ -206,9 +206,13 @@ Each layer can hold a background drawing, shown tinted behind the outline. Use i
 
 The background is saved in the `.kernest` file and never exported into the font.
 
+### Editor sidebar
+
+The **Transform**, **Hints** and **Pixel preview** panels sit in a sidebar beside the canvas — on the right, or on the left in Arabic. Each panel keeps its own collapse arrow, and the sidebar scrolls when the open panels grow taller than the window. **View › Show Sidebar**, or the sidebar button at the end of the editor toolbar, shows or hides the whole sidebar; Kernest remembers the choice between sessions. With the sidebar hidden the canvas gets the full width.
+
 ### Transform panel
 
-The **Transform** panel in the glyph editor scales, rotates, skews and mirrors the selected paths and components — or the whole layer when nothing is selected.
+The **Transform** panel in the editor sidebar scales, rotates, skews and mirrors the selected paths and components — or the whole layer when nothing is selected.
 
 - **Scale X %** and **Scale Y %** resize; **Rotate °** turns counter-clockwise; **Skew X °** and **Skew Y °** slant; the two mirror buttons flip left-to-right or top-to-bottom.
 - The nine-point picker chooses the origin the transform works around: a corner, an edge midpoint or the centre of the selection's bounding box.
