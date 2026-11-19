@@ -144,7 +144,7 @@ The rest of the plan, in order. Each phase is built, tested, checked in the app,
 | Release | What it adds | Status |
 |---|---|---|
 | 2.6 | Interpolation warnings: paths that run the other way, start points, contour order and kinks between masters, with a one-click fix | ✅ v2.6 |
-| 2.7 | Ready for real fonts: tested on real families, fast Font View for large fonts, editable Unicode values, guides/backgrounds/locks and line spacing imported from Glyphs and UFO, colour written to `.glyphs` | 🛠 built, not released |
+| 2.7 | Ready for real fonts: tested on real families, fast Font View for large fonts, editable Unicode values, guides/backgrounds/locks and line spacing imported from Glyphs and UFO, colour written to `.glyphs` | ✅ v2.7 |
 
 Later, not scheduled yet: strokes, brushes, corner and cap components, sbix and SVG colour, test install, kerning compress, manual TrueType instructions.
 
