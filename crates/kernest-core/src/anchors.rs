@@ -570,6 +570,8 @@ mod tests {
             location: BTreeMap::from([("wght".into(), 700.0)]),
             metrics: Metrics::default(),
             guides: Vec::new(),
+            alignment_zones: Vec::new(),
+            stems: Vec::new(),
         });
         for g in &mut f.glyphs {
             let mut l = g.layers[0].clone();

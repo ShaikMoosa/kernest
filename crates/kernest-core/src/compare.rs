@@ -370,6 +370,8 @@ mod tests {
             location: Default::default(),
             metrics: Default::default(),
             guides: Vec::new(),
+            alignment_zones: Vec::new(),
+            stems: Vec::new(),
         });
         let r = compare_fonts(&current, &other);
         assert!(r
@@ -431,6 +433,7 @@ mod tests {
             anchors: Vec::new(),
             metrics_keys: Default::default(),
             guides: Vec::new(),
+            hints: Vec::new(),
             background: None,
         };
         assert_eq!(outline_counts(&l), (1, 4));

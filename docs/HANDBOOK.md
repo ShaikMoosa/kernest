@@ -175,6 +175,11 @@ The **Filter** menu opens a dialog with a live preview drawn over the glyph befo
 - **Focus on Selected Path:** dims every other path so you can work on one contour without distraction. **Clear Focus** (or Esc) restores them. Focus is a view aid only — it changes nothing in the saved font.
 - Locks are saved in the `.kernest` file. A font that uses any lock saves at format version 6; older files without locks keep opening and saving at their own version.
 
+### Hints and pixel preview
+
+- **Hints panel:** the collapsible **Hints** panel beside Transform lists the glyph's hints. With no manual hints, Kernest derives them automatically from the master's stems, draws them faintly on the canvas and shows their count in the panel. **+ Horizontal**, **+ Vertical** and **+ Ghost** add hints; each has a direction, position and width. A width of 0 makes a *ghost hint* that marks a single edge — the button beside it picks which edge (top/bottom for horizontal hints, right/left for vertical ones). Manual hints replace the automatic ones for that glyph, and hint bands are drawn across the advance on the canvas. Every change is one undoable step.
+- **Pixel preview:** the collapsible **Pixel preview** panel shows text at real pixel sizes, with **Hinted** and **Unhinted** columns side by side. Type a test string (it starts with the current glyph's character) and comma-separated sizes (12, 16 and 24 by default; 1–512 pixels). The hinted side uses the same TrueType hinting as the export, so zone and stem changes show up right away; the unhinted side stays the same. If hinting can't be applied — for example a mistake in the control instructions — the panel says why and the hinted side falls back to the unhinted outlines.
+
 ## Guides and background
 
 ### Guides
@@ -252,11 +257,14 @@ Open **Font Info** (Ctrl+I) to set:
   - **Smallest size** and **Largest size:** the range of text sizes, in pixels per em, that gets hinting instructions (8 to 50 by default).
   - **Increase x-height up to:** at sizes up to this one, the x-height is rounded up so lowercase letters stay legible (14 by default; 0 turns it off).
   - **Hint composites as whole glyphs:** hints accented letters and other composites as one shape, instead of through their components.
+  - **PostScript hints:** **Blue scale**, **Blue shift** and **Blue fuzz** control how OTF exports keep overshoots near zones; the defaults are the usual PostScript values.
+  - **Control instructions:** TTFAutohint control instructions applied when exporting TrueType, one per line (for example `H point 0 yshift 0.5 @ 12`).
+  - Zones and stems under Masters guide PostScript hinting. For TrueType, ttfautohint ignores manual zones it can't use.
 - **Axes:** for example Weight (`wght`) from 100 to 900, with a default value.
   - **Mapping** (avar): apps use *user* values (the numbers in a font menu or CSS), masters use *design* values. Add points to map one to the other, for example a Weight axis whose user 400–700 covers design 400–900. User values must rise strictly and design values never fall; points stay inside the axis range. With no points, user and design values are the same.
   - **Values** (STAT): names for the styles at each position on the axis, such as Regular at 400 or Bold at 700. Apps show these names. Each value can carry a range (from–to) it covers and link to another axis's value; instances take their style name from these names.
   - Removing an axis takes masters and instances off it (their positions on that axis are dropped) and deletes intermediate and alternate layers that use it. Kernest asks first, and Ctrl+Z undoes it.
-- **Masters:** each master is a full set of outlines at a location on the axes. Add a master by copying an existing one, then edit its outlines. **Add from font…** brings a master in from another font (a compiled font, or a Kernest, Glyphs, UFO or designspace source): pick the source master and its location, and Kernest reports which glyphs are compatible and which differ before anything is added.
+- **Masters:** each master is a full set of outlines at a location on the axes. Add a master by copying an existing one, then edit its outlines. **Add from font…** brings a master in from another font (a compiled font, or a Kernest, Glyphs, UFO or designspace source): pick the source master and its location, and Kernest reports which glyphs are compatible and which differ before anything is added. Each master has **Zones** and **Stems** editors: zones keep edges like the baseline and x-height on one pixel row at small sizes (a positive size marks a top edge, a negative size a bottom edge); stems are the common stroke widths — PostScript exports use them for hints, and TrueType uses the first horizontal stem as its guide width.
 - **Instances:** named styles such as SemiBold at a location between masters. They become static fonts on export; untick **Export** on an instance to leave it out.
   - **Weight class** and **Width class** set the numbers apps use to sort and match styles (weight 1–1000, width 1–9). Leave them empty (**Automatic**) to take them from the instance's position on the Weight or Width axis, or from its name.
   - **Style link** marks an instance as the Bold, Italic or Bold Italic of another instance (or of the family). Exported fonts then carry the right style-map names, so apps group Regular and Bold as one family.
@@ -292,14 +300,14 @@ OpenType features are the substitutions and positioning rules that run when text
 Choose the formats:
 
 - **TTF:** TrueType outlines, for desktop apps.
-- **OTF:** PostScript outlines: CFF for static fonts and CFF2 for the variable font (`Family-VF.otf`), with intermediate layers and alternates just as in the TrueType variable font.
+- **OTF:** PostScript outlines: CFF for static fonts and CFF2 for the variable font (`Family-VF.otf`), with intermediate layers and alternates just as in the TrueType variable font. OTF exports carry the master's zones, stems and blue controls in the font's Private DICT, plus automatic stem hints and your manual glyph hints.
 - **WOFF2:** compressed web fonts, for static and variable fonts.
 
 And what happens before building:
 
 - **Remove overlaps** merges overlapping contours in static fonts. Variable fonts keep them, because their masters must stay compatible.
 - **Apply metrics keys** re-applies every metrics key, so sidebearings are up to date.
-- **Autohint** adds TrueType hinting instructions to TTF and WOFF2 files, static and variable, using the settings in Font Info › Hinting. Hinting makes text crisper at small sizes on Windows. OTF files aren't affected. Kernest hints with [tilvisan](https://github.com/simoncozens/tilvisan), a Rust port of ttfautohint.
+- **Autohint** adds TrueType hinting instructions to TTF and WOFF2 files, static and variable, using the settings in Font Info › Hinting, including any control instructions. Hinting makes text crisper at small sizes on Windows. OTF files aren't affected. Kernest hints with [tilvisan](https://github.com/simoncozens/tilvisan), a Rust port of ttfautohint.
 - **Use production names** renames glyphs in compiled fonts to their production names (set per glyph in Font View); without it, compiled fonts keep the working names. UFO sources always carry the working → production mapping.
 
 Kerning and kerning groups are compiled into GPOS, and your feature code — generated and hand-written (see [Features](#features)) — is included. Glyphs that aren't set to export are left out.
@@ -337,7 +345,7 @@ On export, every colour layer becomes a glyph of its own (`O.color0`, `O.color1`
 
 `.glyphspackage` and `.ufo` sources are folders. Use **File › Import Folder…** to pick the folder, or pick any file inside it with Import….
 
-Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers and, from Glyphs files, metrics keys (glyph-wide and per layer) and the hinting settings in a **TTFAutohint options** custom parameter. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
+Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers and, from Glyphs files, metrics keys (glyph-wide and per layer), alignment zones and stems, and the hinting settings in a **TTFAutohint options** custom parameter. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
 
 ### SVG outlines
 

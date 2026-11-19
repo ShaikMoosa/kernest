@@ -349,6 +349,7 @@ pub(crate) fn build_cff_with(
                 .collect()
         })
         .unwrap_or_default();
+    let hint_map = crate::cffhint::glyph_hints(ufo);
     for (gid, name) in order.iter().enumerate() {
         let source = to_source.get(name).unwrap_or(name);
         let g = ufo
@@ -370,6 +371,10 @@ pub(crate) fn build_cff_with(
         glyphs.push(GlyphOps {
             ops,
             width: (w != default_width).then_some(w - nominal_width),
+            hints: hint_map
+                .get(source)
+                .map(|h| crate::cffhint::encode_hints(h))
+                .unwrap_or_default(),
         });
         if gid > 0 {
             glyph_sids.push(sid(name));
@@ -385,6 +390,7 @@ pub(crate) fn build_cff_with(
     op(20, &mut private); // defaultWidthX
     int(nominal_width, &mut private);
     op(21, &mut private); // nominalWidthX
+    crate::cffhint::private_hinting(&ufo.font_info, &mut private);
     if !subrs.is_empty() {
         let len = private.len() + 6;
         int5(len as i32, &mut private);

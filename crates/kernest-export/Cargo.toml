@@ -16,4 +16,4 @@ plist = "1"
 serde.workspace = true
 write-fonts = "0.55"
 brotli = "9"
-tilvisan = { version = "0.2.1", default-features = false }
+tilvisan = { version = "0.2.1", default-features = false, features = ["control"] }

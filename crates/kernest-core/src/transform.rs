@@ -381,6 +381,8 @@ mod tests {
             location: Default::default(),
             metrics: bold.metrics,
             guides: Vec::new(),
+            alignment_zones: Vec::new(),
+            stems: Vec::new(),
         });
         for g in &mut f.glyphs {
             let mut l = g.layers[0].clone();

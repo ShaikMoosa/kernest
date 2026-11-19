@@ -67,6 +67,13 @@ export const DYNAMIC_KEYS = [
   "Above this size the font isn't hinted",
   "Increase x-height up to (px)",
   "Rounds the x-height up at small sizes for legibility; 0 is off",
+  // Font Info › PostScript hints
+  "Blue scale",
+  "How strongly overshoots are kept at small sizes; 0.039625 is the usual value",
+  "Blue shift",
+  "How far an overshoot must reach past a zone to stay visible",
+  "Blue fuzz",
+  "Extra reach around each zone when matching edges",
   // Axis presets
   "Weight",
   "Optical size",

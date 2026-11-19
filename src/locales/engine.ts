@@ -132,10 +132,26 @@ export const ENGINE_MESSAGES = [
   "\"{glyph}\" has no anchor named \"{old}\".",
   "\"{glyph}\" already has an anchor named \"{new}\".",
   "An anchor has an invalid coordinate.",
+  // kernest-core: hinting
+  "Zone positions and sizes must be numbers.",
+  "A zone needs a size other than 0.",
+  "Every stem needs a name.",
+  "Stem widths must be greater than 0.",
+  "Hint positions must be numbers and widths 0 or more.",
+  "No layer \"{key}\" for glyph \"{glyph}\"",
+  "Blue scale must be greater than 0.",
+  "Blue shift must be 0 or more.",
+  "Blue fuzz must be 0 or more.",
   // kernest-core: features
   "include statements are not supported; paste the feature code here",
   // src-tauri: feature preview
   "could not read the preview font",
+  // src-tauri: pixel preview
+  "Type some text to preview.",
+  "Choose at least one pixel size.",
+  "Pixel sizes must be between 1 and 512.",
+  "could not read the preview font: {e}",
+  "could not read the hinted preview font: {e}",
   // kernest-export
   "could not read the compiled font: {e}",
   "could not read the variable font: {e}",
@@ -146,7 +162,10 @@ export const ENGINE_MESSAGES = [
   "could not write a temporary font: {e}",
   "autohinting failed: {e}",
   "autohinting failed unexpectedly",
+  "autohinting failed unexpectedly: {msg}",
   "autohinting made an invalid font: {e}",
+  "could not write control instructions: {e}",
+  "could not write glyph names: {e}",
   "could not read the generated sources: {e}",
   "the font compiler failed: {e}",
   "{label}: {n} glyph{s} can't be interpolated ({list})",
@@ -273,6 +292,7 @@ export const ENGINE_MESSAGES = [
   "Comparing fonts needs the desktop app (npm run tauri dev).",
   "This font has no instances to generate.",
   "Generating instances needs the desktop app (npm run tauri dev).",
+  "The pixel preview needs the desktop app (npm run tauri dev).",
   // Scripts, plug-ins & settings (kernest-script runner, shell script/settings commands)
   "Could not start Python ({path}): {e}",
   "Could not open script stdin",

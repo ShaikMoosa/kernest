@@ -909,6 +909,276 @@ fn imported_glyphs_font_exports() {
     assert_eq!(r.files.len(), 1, "one exported instance: SemiBold");
 }
 
+// ---- Hinting: alignment zones and stems ------------------------------------
+
+use kernest_core::{PsHinting, Stem, Zone};
+
+/// Two masters with zones, stems and hinting settings on the regular master.
+fn hinted_font() -> Font {
+    let mut f = two_masters();
+    let m = &mut f.masters[0];
+    m.alignment_zones = vec![
+        Zone {
+            position: 690.0,
+            size: 10.0,
+        },
+        Zone {
+            position: 510.0,
+            size: 12.0,
+        },
+        Zone {
+            position: 0.0,
+            size: -10.0,
+        },
+        Zone {
+            position: -210.0,
+            size: -10.0,
+        },
+    ];
+    m.stems = vec![
+        Stem {
+            name: "hStem0".into(),
+            horizontal: true,
+            value: 80.0,
+        },
+        Stem {
+            name: "vStem0".into(),
+            horizontal: false,
+            value: 90.0,
+        },
+    ];
+    f.info.control_instructions = "0x0025 touch 0-5 y".into();
+    f.info.ps_hinting = Some(PsHinting {
+        blue_scale: 0.05,
+        blue_shift: 7.0,
+        blue_fuzz: 2.0,
+    });
+    f
+}
+
+const V3_HINTING: &str = r#"
+.appVersion = "3260";
+.formatVersion = 3;
+customParameters = (
+{
+name = "TTFAutohint control instructions";
+value = "0x0025 touch 0-5 y";
+},
+{
+name = BlueScale;
+value = 0.05;
+},
+{
+name = BlueFuzz;
+value = 2;
+}
+);
+familyName = "Hint Test";
+fontMaster = (
+{
+id = "M-REG";
+metricValues = (
+{
+pos = 780;
+},
+{
+pos = 690;
+over = 10;
+},
+{
+pos = 510;
+over = 12;
+},
+{
+over = -10;
+},
+{
+pos = -210;
+over = -10;
+},
+{
+}
+);
+name = Regular;
+stemValues = (
+80,
+90
+);
+}
+);
+metrics = (
+{
+type = ascender;
+},
+{
+type = "cap height";
+},
+{
+type = "x-height";
+},
+{
+type = baseline;
+},
+{
+type = descender;
+},
+{
+type = "italic angle";
+}
+);
+stems = (
+{
+name = hStem0;
+horizontal = 1;
+},
+{
+name = vStem0;
+}
+);
+unitsPerEm = 1000;
+"#;
+
+const V2_HINTING: &str = r#"
+.appVersion = "895";
+customParameters = (
+{
+name = "TTFAutohint control instructions";
+value = "0x0025 touch 0-5 y";
+}
+);
+familyName = "Hint Test";
+fontMaster = (
+{
+alignmentZones = (
+"{690, 10}",
+"{510, 12}",
+"{0, -10}",
+"{-210, -10}"
+);
+ascender = 780;
+capHeight = 690;
+descender = -210;
+horizontalStems = (
+80
+);
+id = "M-REG";
+name = Regular;
+verticalStems = (
+90
+);
+xHeight = 510;
+}
+);
+unitsPerEm = 1000;
+"#;
+
+fn hinting_glyphs_file(info: &str) -> String {
+    let g = "{\nglyphname = A;\nlayers = (\n{\nlayerId = \"M-REG\";\nwidth = 500;\n}\n);\nunicode = 65;\n}";
+    format!("{{\n{}\nglyphs = (\n{g}\n);\n}}\n", info.trim())
+}
+
+fn check_hinting_import(imp: &kernest_import::Imported) {
+    let f = &imp.font;
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let m = &f.masters[0];
+    assert_eq!(
+        m.alignment_zones,
+        vec![
+            Zone {
+                position: 690.0,
+                size: 10.0
+            },
+            Zone {
+                position: 510.0,
+                size: 12.0
+            },
+            Zone {
+                position: 0.0,
+                size: -10.0
+            },
+            Zone {
+                position: -210.0,
+                size: -10.0
+            },
+        ]
+    );
+    assert_eq!(m.stems.len(), 2);
+    assert!(m.stems.iter().any(|s| s.horizontal && s.value == 80.0));
+    assert!(m.stems.iter().any(|s| !s.horizontal && s.value == 90.0));
+    assert_eq!(f.info.control_instructions, "0x0025 touch 0-5 y");
+}
+
+#[test]
+fn glyphs_v3_hinting_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Hint.glyphs");
+    fs::write(&path, hinting_glyphs_file(V3_HINTING)).unwrap();
+    let imp = import(&path).unwrap();
+    check_hinting_import(&imp);
+    assert_eq!(
+        imp.font.info.ps_hinting,
+        Some(PsHinting {
+            blue_scale: 0.05,
+            blue_shift: 7.0,
+            blue_fuzz: 2.0
+        })
+    );
+}
+
+#[test]
+fn glyphs_v2_hinting_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Hint.glyphs");
+    fs::write(&path, hinting_glyphs_file(V2_HINTING)).unwrap();
+    check_hinting_import(&import(&path).unwrap());
+}
+
+#[test]
+fn glyphs_hinting_round_trip() {
+    let src = hinted_font();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Hint.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let imp = import(&path).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let f = &imp.font;
+    // Glyphs stores zones on metrics, so their order is normalised; compare as a set.
+    let key = |z: &Zone| (z.position as i64, z.size as i64);
+    let mut want = src.masters[0].alignment_zones.clone();
+    let mut got = f.masters[0].alignment_zones.clone();
+    want.sort_by_key(key);
+    got.sort_by_key(key);
+    assert_eq!(got, want);
+    assert_eq!(f.masters[0].stems, src.masters[0].stems);
+    assert_eq!(f.info.control_instructions, src.info.control_instructions);
+    assert_eq!(f.info.ps_hinting, src.info.ps_hinting);
+}
+
+#[test]
+fn ufo_hinting_round_trip() {
+    let src = hinted_font();
+    let dir = tempfile::tempdir().unwrap();
+    let opts = kernest_export::UfoExportOptions {
+        masters: vec![],
+        decompose_smart: false,
+        color_layers: false,
+    };
+    kernest_export::export_ufo(&src, dir.path(), &opts).unwrap();
+    let imp = import(&dir.path().join("font.designspace")).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let m = &imp.font.masters[0];
+    // UFO keeps zones as blue pairs; compare as a set (order is normalised on read).
+    let mut want = src.masters[0].alignment_zones.clone();
+    let mut got = m.alignment_zones.clone();
+    let key = |z: &Zone| (z.position as i64, z.size as i64);
+    want.sort_by_key(key);
+    got.sort_by_key(key);
+    assert_eq!(got, want);
+    assert!(m.stems.iter().any(|s| s.horizontal && s.value == 80.0));
+    assert!(m.stems.iter().any(|s| !s.horizontal && s.value == 90.0));
+    assert_eq!(imp.font.info.ps_hinting, src.info.ps_hinting);
+}
+
 // ---- Compiled fonts --------------------------------------------------------
 
 /// Exports the font as one static file in the given format ("ttf", "otf", "woff2").

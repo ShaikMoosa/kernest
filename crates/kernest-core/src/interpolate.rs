@@ -407,12 +407,15 @@ pub fn add_master_at(font: &Font, location: &Location, name: &str) -> Result<Fon
         }
     }
     f.kerning.insert(id.clone(), kern);
+    let dflt = default_master(font);
     f.masters.push(Master {
         id,
         name: name.into(),
         location: location.clone(),
         metrics,
         guides: Vec::new(),
+        alignment_zones: dflt.alignment_zones.clone(),
+        stems: dflt.stems.clone(),
     });
     Ok(f)
 }
@@ -491,6 +494,8 @@ mod tests {
             location: BTreeMap::from([("wght".into(), 700.0)]),
             metrics: Metrics::default(),
             guides: Vec::new(),
+            alignment_zones: Vec::new(),
+            stems: Vec::new(),
         });
         for g in &mut f.glyphs {
             let mut l = g.layers[0].clone();

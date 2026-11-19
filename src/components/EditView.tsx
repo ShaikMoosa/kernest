@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
+import { backend, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
 import {
@@ -10,6 +10,7 @@ import { CloseIcon, SearchIcon } from "./Icons";
 import { t, tn, translateMessage } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
 import { PaintDialog } from "./PaintDialog";
+import { PixelPreviewPanel } from "./PixelPreviewPanel";
 
 type Tool = "select" | "pen" | "rect" | "ellipse" | "knife" | "hand" | "measure";
 interface Pt { x: number; y: number }
@@ -337,6 +338,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [measurement, setMeasurement] = useState<Measurement | null>(null);
   const [knifeLine, setKnifeLine] = useState<{ p0: Pt; p1: Pt } | null>(null);
   const [transformOpen, setTransformOpen] = useState(false);
+  const [hintsOpen, setHintsOpen] = useState(false);
   const [tf, setTf] = useState({ sx: 100, sy: 100, rot: 0, kx: 0, ky: 0, mh: false, mv: false, origin: 4, allMasters: false });
   const [, rerender] = useState(0);
 
@@ -458,6 +460,19 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       try {
         accept(await backend.removeAnchors(glyph, masterId, names, true));
         setAnchorSel(new Set());
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, accept, onError]);
+
+  // ---------- Hints ----------
+
+  /** Replaces the layer's manual hints as one undoable step. */
+  const setHints = useCallback((next: Hint[]) => {
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await backend.setGlyphHints(glyph, masterId, next));
       } catch (e) {
         onError(e);
       }
@@ -1533,6 +1548,21 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             );
           })}
           {showMetrics && <rect x={x0} y={toScreen(0, ascender).y} width={Math.max(0, x1 - x0)} height={(ascender - descender) * view.s} className="advance-box" />}
+          {/* Hint bands: manual hints, or the automatic ones from the master's stems. */}
+          {!editingBackground && (layer.hints.length ? layer.hints : layer.autoHints).map((h, i) => {
+            const auto = layer.hints.length === 0;
+            const top = toScreen(0, ascender).y, bot = toScreen(0, descender).y;
+            if (h.horizontal) {
+              const y = toScreen(0, h.position).y;
+              return h.width === 0
+                ? <line key={`hint${i}`} x1={x0} x2={x1} y1={y} y2={y} className={`hint-ghost${auto ? " is-auto" : ""}`} pointerEvents="none" />
+                : <rect key={`hint${i}`} x={x0} y={y - h.width * view.s} width={Math.max(0, x1 - x0)} height={h.width * view.s} className={`hint-band${auto ? " is-auto" : ""}`} pointerEvents="none" />;
+            }
+            const x = toScreen(h.position, 0).x;
+            return h.width === 0
+              ? <line key={`hint${i}`} x1={x} x2={x} y1={top} y2={bot} className={`hint-ghost${auto ? " is-auto" : ""}`} pointerEvents="none" />
+              : <rect key={`hint${i}`} x={x} y={top} width={h.width * view.s} height={bot - top} className={`hint-band${auto ? " is-auto" : ""}`} pointerEvents="none" />;
+          })}
           {/* Background: a reference drawing behind the outline; never exports. */}
           {showBackground && !editingBackground && layer.background && (
             <g transform={world} pointerEvents="none">
@@ -1864,6 +1894,59 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             </div>
           )}
         </div>
+        <div className="transform-panel hints-panel">
+          <button type="button" className="transform-head" aria-expanded={hintsOpen} onClick={() => setHintsOpen((o) => !o)}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+            {t("Hints")}
+            {layer.hints.length > 0 && <span className="k-caption muted">{tn(layer.hints.length, "{n} hint", "{n} hints")}</span>}
+          </button>
+          {hintsOpen && (
+            <div className="transform-body hints-body">
+              {layer.hints.length === 0 && (
+                <p className="k-caption muted hints-note">
+                  {layer.autoHints.length > 0
+                    ? tn(layer.autoHints.length, "Automatic: {n} hint from the master's stems.", "Automatic: {n} hints from the master's stems.")
+                    : t("No hints yet. Add stems in Font Info for automatic hints, or add hints here.")}
+                </p>
+              )}
+              {layer.hints.map((h, i) => {
+                const patch = (p: Partial<Hint>) => setHints(layer.hints.map((x, j) => (j === i ? { ...x, ...p } : x)));
+                const disabled = editingBackground || layer.glyphLocked;
+                return (
+                  <div key={i} className="hint-row">
+                    <select className="select" value={h.horizontal ? "h" : "v"} aria-label={t("Hint direction")} disabled={disabled}
+                      onChange={(e) => patch({ horizontal: e.target.value === "h" })}>
+                      <option value="h">{t("Horizontal")}</option>
+                      <option value="v">{t("Vertical")}</option>
+                    </select>
+                    <MetricField onInvalid={onError} label={t("Position")} value={h.position} disabled={disabled} onCommit={(v) => patch({ position: v })} />
+                    <MetricField onInvalid={onError} label={t("Width")} value={h.width} disabled={disabled} onCommit={(v) => patch({ width: v, ...(v !== 0 ? { ghostTop: undefined } : {}) })} />
+                    {h.width === 0 && (
+                      <button type="button" className="align-toggle is-manual" disabled={disabled}
+                        title={t("Which edge this ghost hint marks")}
+                        onClick={() => patch({ ghostTop: !h.ghostTop })}>
+                        {h.horizontal ? (h.ghostTop ? t("Top") : t("Bottom")) : (h.ghostTop ? t("Right") : t("Left"))}
+                      </button>
+                    )}
+                    <button type="button" className="icon-btn" aria-label={t("Remove hint")} title={t("Remove hint")} disabled={disabled}
+                      onClick={() => setHints(layer.hints.filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
+                  </div>
+                );
+              })}
+              <div className="hints-add">
+                <button type="button" className="btn btn-secondary btn-sm" disabled={editingBackground || layer.glyphLocked}
+                  onClick={() => setHints([...layer.hints, { horizontal: true, position: 0, width: 80 }])}>{t("+ Horizontal")}</button>
+                <button type="button" className="btn btn-secondary btn-sm" disabled={editingBackground || layer.glyphLocked}
+                  onClick={() => setHints([...layer.hints, { horizontal: false, position: 0, width: 80 }])}>{t("+ Vertical")}</button>
+                <button type="button" className="btn btn-secondary btn-sm" disabled={editingBackground || layer.glyphLocked}
+                  title={t("A ghost hint marks a single edge, with no width")}
+                  onClick={() => setHints([...layer.hints, { horizontal: true, position: 0, width: 0, ghostTop: true }])}>{t("+ Ghost")}</button>
+              </div>
+              <p className="k-caption muted hints-note">{t("Manual hints replace the automatic ones for this glyph. A width of 0 makes a ghost hint.")}</p>
+            </div>
+          )}
+        </div>
+        <PixelPreviewPanel glyph={glyph} unicode={layer.unicode} master={master} version={version} active={active} />
         </div>
       </div>
       {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}

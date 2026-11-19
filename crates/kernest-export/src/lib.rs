@@ -7,6 +7,7 @@
 
 pub mod cff;
 pub mod cff2;
+mod cffhint;
 mod charstring;
 mod colr;
 mod hint;
@@ -149,6 +150,25 @@ pub fn preview_ttf(
     ufo.save(&path)
         .map_err(|e| format!("could not write a UFO: {e}"))?;
     Ok((compile(&path)?, order))
+}
+
+/// The preview compile with the font's TrueType hinting applied, for the edit
+/// view's pixel preview. Uses the same settings and mappings as a TTF export.
+pub fn hint_preview(
+    ttf: &[u8],
+    font: &Font,
+    location: Option<&Location>,
+) -> Result<Vec<u8>, String> {
+    let tmp =
+        tempfile::tempdir().map_err(|e| format!("could not create a temporary folder: {e}"))?;
+    hint::autohint(
+        ttf,
+        &font.info.hinting.unwrap_or_default(),
+        font,
+        location,
+        tmp.path(),
+        "preview",
+    )
 }
 
 /// One master as a UFO source. For a static font (`for_static`) each glyph uses the
@@ -382,11 +402,16 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     let hinting = font.info.hinting.unwrap_or_default();
     // The TrueType bytes for TTF and WOFF2: hinted if asked (a failure is reported and
     // the unhinted font is used).
-    let truetype = |report: &mut ExportReport, label: &str, name: &str, bytes: &[u8]| -> Vec<u8> {
+    let truetype = |report: &mut ExportReport,
+                    label: &str,
+                    name: &str,
+                    bytes: &[u8],
+                    location: Option<&Location>|
+     -> Vec<u8> {
         if !opts.autohint || !(opts.ttf || opts.woff2) {
             return bytes.to_vec();
         }
-        match hint::autohint(bytes, &hinting, tmp.path(), name) {
+        match hint::autohint(bytes, &hinting, font, location, tmp.path(), name) {
             Ok(h) => h,
             Err(e) => {
                 report
@@ -428,7 +453,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     bytes
                 }
             };
-            let tt = truetype(report, label, file_base, &bytes);
+            let tt = truetype(report, label, file_base, &bytes, None);
             let tt = colorize(report, label, &bytes, tt, true, None);
             if opts.ttf {
                 emit(
@@ -541,7 +566,13 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
             match built {
                 Ok((bytes, ufo)) => {
                     let stem = format!("{family}-{}", file_stem(style));
-                    let tt = truetype(&mut report, style, &format!("instance{i}"), &bytes);
+                    let tt = truetype(
+                        &mut report,
+                        style,
+                        &format!("instance{i}"),
+                        &bytes,
+                        Some(location),
+                    );
                     let tt = colorize(&mut report, style, &bytes, tt, false, Some(location));
                     if opts.ttf {
                         emit(
@@ -2076,6 +2107,420 @@ pub(crate) mod tests {
             small.len(),
             plain.len()
         );
+    }
+
+    /// A font whose H and O have known stems (as in the core hinting tests), zones,
+    /// blue controls, and a manual ghost hint on I.
+    fn hinted_font() -> Font {
+        use kernest_core::{Hint, Node, Path, PsHinting, Stem, Zone};
+        let mut f = sample_font();
+        let line = |points: &[(f64, f64)]| {
+            Shape::Path(Path {
+                closed: true,
+                locked: false,
+                nodes: points
+                    .iter()
+                    .map(|&(x, y)| Node::new(x, y, NodeKind::Line))
+                    .collect(),
+            })
+        };
+        f.glyph_mut("H").unwrap().layer_mut("m01").unwrap().shapes = vec![line(&[
+            (80.0, 0.0),
+            (180.0, 0.0),
+            (180.0, 330.0),
+            (420.0, 330.0),
+            (420.0, 0.0),
+            (520.0, 0.0),
+            (520.0, 700.0),
+            (420.0, 700.0),
+            (420.0, 380.0),
+            (180.0, 380.0),
+            (180.0, 700.0),
+            (80.0, 700.0),
+        ])];
+        let ring = |rx: f64, ry: f64| {
+            let (cy, k) = (350.0, 0.55);
+            let nodes = [
+                (300.0, cy - ry, NodeKind::Curve),
+                (300.0 + k * rx, cy - ry, NodeKind::OffCurve),
+                (300.0 + rx, cy - k * ry, NodeKind::OffCurve),
+                (300.0 + rx, cy, NodeKind::Curve),
+                (300.0 + rx, cy + k * ry, NodeKind::OffCurve),
+                (300.0 + k * rx, cy + ry, NodeKind::OffCurve),
+                (300.0, cy + ry, NodeKind::Curve),
+                (300.0 - k * rx, cy + ry, NodeKind::OffCurve),
+                (300.0 - rx, cy + k * ry, NodeKind::OffCurve),
+                (300.0 - rx, cy, NodeKind::Curve),
+                (300.0 - rx, cy - k * ry, NodeKind::OffCurve),
+                (300.0 - k * rx, cy - ry, NodeKind::OffCurve),
+            ]
+            .into_iter()
+            .map(|(x, y, k)| Node::new(x, y, k))
+            .collect();
+            Shape::Path(Path {
+                closed: true,
+                locked: false,
+                nodes,
+            })
+        };
+        f.glyph_mut("O").unwrap().layer_mut("m01").unwrap().shapes =
+            vec![ring(220.0, 360.0), ring(120.0, 260.0)];
+        let m = &mut f.masters[0];
+        m.alignment_zones = vec![
+            Zone {
+                position: 700.0,
+                size: 10.0,
+            },
+            Zone {
+                position: 0.0,
+                size: -10.0,
+            },
+            Zone {
+                position: -210.0,
+                size: -10.0,
+            },
+        ];
+        m.stems = vec![
+            Stem {
+                name: "h0".into(),
+                horizontal: true,
+                value: 50.0,
+            },
+            Stem {
+                name: "h1".into(),
+                horizontal: true,
+                value: 100.0,
+            },
+            Stem {
+                name: "v0".into(),
+                horizontal: false,
+                value: 100.0,
+            },
+        ];
+        f.info.ps_hinting = Some(PsHinting {
+            blue_scale: 0.05,
+            blue_shift: 7.0,
+            blue_fuzz: 2.0,
+        });
+        // Manual hints win over the automatic ones: a top ghost and one bar.
+        f.glyph_mut("I").unwrap().layer_mut("m01").unwrap().hints = vec![
+            Hint {
+                horizontal: true,
+                position: 700.0,
+                width: 0.0,
+                ghost_top: true,
+            },
+            Hint {
+                horizontal: false,
+                position: 80.0,
+                width: 100.0,
+                ghost_top: false,
+            },
+        ];
+        f
+    }
+
+    #[test]
+    fn cff_export_carries_zones_stems_and_hints() {
+        use write_fonts::read::ps::cff::dict::{self, Entry};
+        use write_fonts::read::ps::cff::index::Index;
+        use write_fonts::read::ps::cff::CffFontRef;
+        use write_fonts::types::Fixed;
+        let f = hinted_font();
+        let m = f.masters[0].clone();
+        let ufo = to_ufo(&master_source(&f, &m, "Regular", true)).unwrap();
+        assert_eq!(
+            ufo.font_info.postscript_blue_values,
+            Some(vec![-10.0, 0.0, 700.0, 710.0])
+        );
+        assert_eq!(
+            ufo.font_info.postscript_other_blues,
+            Some(vec![-220.0, -210.0])
+        );
+        assert_eq!(
+            ufo.font_info.postscript_stem_snap_h,
+            Some(vec![50.0, 100.0])
+        );
+        assert_eq!(ufo.font_info.postscript_stem_snap_v, Some(vec![100.0]));
+        let lib_hints = |name: &str| -> Vec<(bool, f64, f64, bool)> {
+            let mut v: Vec<(bool, f64, f64, bool)> = ufo
+                .lib
+                .get("com.kernest.hints")
+                .and_then(|v| v.as_dictionary())
+                .and_then(|d| d.get(name))
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .map(|h| {
+                            let d = h.as_dictionary().unwrap();
+                            let num = |k: &str| {
+                                d.get(k)
+                                    .and_then(|v| v.as_real())
+                                    .or_else(|| {
+                                        d.get(k)
+                                            .and_then(|v| v.as_signed_integer())
+                                            .map(|i| i as f64)
+                                    })
+                                    .unwrap()
+                            };
+                            (
+                                d.get("horizontal").and_then(|v| v.as_boolean()).unwrap(),
+                                num("position"),
+                                num("width"),
+                                d.get("ghostTop").and_then(|v| v.as_boolean()).unwrap(),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            v.sort_by_key(|(h, p, _, _)| (!*h, *p as i64));
+            v
+        };
+        // Automatic stems: H's crossbar and bars, O's ring; I keeps its manual hints.
+        assert_eq!(
+            lib_hints("H"),
+            vec![
+                (true, 330.0, 50.0, false),
+                (false, 80.0, 100.0, false),
+                (false, 420.0, 100.0, false)
+            ]
+        );
+        assert_eq!(
+            lib_hints("O"),
+            vec![
+                (true, -10.0, 100.0, false),
+                (true, 610.0, 100.0, false),
+                (false, 80.0, 100.0, false),
+                (false, 420.0, 100.0, false)
+            ]
+        );
+        assert_eq!(
+            lib_hints("I"),
+            vec![(true, 700.0, 0.0, true), (false, 80.0, 100.0, false)]
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.ufo");
+        ufo.save(&path).unwrap();
+        let ttf = compile(&path).unwrap();
+        let font = FontRef::new(&ttf).unwrap();
+        let n = font.maxp().unwrap().num_glyphs();
+        let post = font.post().unwrap();
+        let order: Vec<String> = (0..n)
+            .map(|g| {
+                post.glyph_name(write_fonts::types::GlyphId16::new(g))
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        let hmtx = font.hmtx().unwrap();
+        let widths: Vec<u16> = (0..n)
+            .map(|g| {
+                hmtx.advance(write_fonts::types::GlyphId::new(u32::from(g)))
+                    .unwrap()
+            })
+            .collect();
+        let table = cff::build_cff(&ufo, &order, &widths, "T-R", "T R", "T").unwrap();
+
+        // The Private DICT carries the zones, stems and blue controls.
+        let hdr = usize::from(table[2]);
+        let names = Index::new(&table[hdr..], false).unwrap();
+        let top_at = hdr + names.size_in_bytes().unwrap();
+        let top_index = Index::new(&table[top_at..], false).unwrap();
+        let top = top_index.get(0).unwrap();
+        let range = dict::entries(top, None)
+            .filter_map(|e| e.ok())
+            .find_map(|e| match e {
+                Entry::PrivateDictRange(r) => Some(r),
+                _ => None,
+            })
+            .expect("a Private DICT");
+        let entries: Vec<Entry> = dict::entries(&table[range.clone()], None)
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(entries.contains(&Entry::StdHw(Fixed::from_i32(50))));
+        assert!(entries.contains(&Entry::StdVw(Fixed::from_i32(100))));
+        assert!(entries.contains(&Entry::BlueShift(Fixed::from_i32(7))));
+        assert!(entries.contains(&Entry::BlueFuzz(Fixed::from_i32(2))));
+        let cff = CffFontRef::new_cff(&table, 0, None).unwrap();
+        let (_, params) = cff.subfont_hinted(0, &[]).unwrap();
+        assert_eq!(
+            params.blues.values(),
+            [
+                (Fixed::from_i32(-10), Fixed::ZERO),
+                (Fixed::from_i32(700), Fixed::from_i32(710))
+            ]
+        );
+        assert_eq!(
+            params.other_blues.values(),
+            [(Fixed::from_i32(-220), Fixed::from_i32(-210))]
+        );
+        // Readers hold blue values at 1/65536 precision.
+        assert!((params.blue_scale.to_f64() - 0.05).abs() < 1.0 / 65536.0);
+        assert_eq!(params.blue_shift, Fixed::from_i32(7));
+        assert_eq!(params.blue_fuzz, Fixed::from_i32(2));
+
+        // The charstrings carry the stem hints (exact bytes, before the outlines).
+        let has_bytes = |name: &str, bytes: &[u8]| {
+            let gid = order.iter().position(|g| g == name).unwrap();
+            let cs = cff.charstrings().get(gid).unwrap();
+            assert!(
+                cs.windows(bytes.len()).any(|w| w == bytes),
+                "{name} charstring lacks its hints"
+            );
+        };
+        // hstem 330 50; vstem 80 100 240 100.
+        has_bytes("H", &[247, 222, 189, 1, 219, 239, 247, 132, 239, 3]);
+        // hstem -10 100 520 100; the same vstem.
+        has_bytes(
+            "O",
+            &[129, 239, 248, 156, 239, 1, 219, 239, 247, 132, 239, 3],
+        );
+        // I's manual hints: hstem 700 -20 (ghost); vstem 80 100.
+        has_bytes("I", &[249, 80, 119, 1, 219, 239, 3]);
+
+        // Hints don't change the drawing: every glyph decodes to the same widths
+        // and bounds as a hint-free build of the same source.
+        let mut plain_ufo = ufo.clone();
+        plain_ufo.lib.remove("com.kernest.hints");
+        plain_ufo.font_info.postscript_blue_values = None;
+        plain_ufo.font_info.postscript_other_blues = None;
+        plain_ufo.font_info.postscript_stem_snap_h = None;
+        plain_ufo.font_info.postscript_stem_snap_v = None;
+        plain_ufo.font_info.postscript_blue_scale = None;
+        plain_ufo.font_info.postscript_blue_shift = None;
+        plain_ufo.font_info.postscript_blue_fuzz = None;
+        let plain = cff::build_cff(&plain_ufo, &order, &widths, "T-R", "T R", "T").unwrap();
+        assert_ne!(table, plain);
+        assert_eq!(
+            cff_glyphs(&table, false, 0.0, n),
+            cff_glyphs(&plain, false, 0.0, n)
+        );
+        let w: Vec<f64> = cff_glyphs(&table, false, 0.0, n)
+            .iter()
+            .map(|g| g.0)
+            .collect();
+        assert_eq!(w, widths.iter().map(|w| f64::from(*w)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn cff2_export_carries_zones_and_stems() {
+        use kernest_core::{PsHinting, Stem, Zone};
+        use write_fonts::read::ps::cff::dict::{self, Entry};
+        use write_fonts::read::ps::cff::index::Index;
+        use write_fonts::read::ps::cff::CffFontRef;
+        use write_fonts::types::{F2Dot14, Fixed, Tag};
+        let mut f = two_masters();
+        let m = &mut f.masters[0];
+        m.alignment_zones = vec![
+            Zone {
+                position: 700.0,
+                size: 10.0,
+            },
+            Zone {
+                position: 0.0,
+                size: -10.0,
+            },
+            Zone {
+                position: -210.0,
+                size: -10.0,
+            },
+        ];
+        m.stems = vec![
+            Stem {
+                name: "h0".into(),
+                horizontal: true,
+                value: 50.0,
+            },
+            Stem {
+                name: "h1".into(),
+                horizontal: true,
+                value: 100.0,
+            },
+            Stem {
+                name: "v0".into(),
+                horizontal: false,
+                value: 100.0,
+            },
+        ];
+        f.info.ps_hinting = Some(PsHinting {
+            blue_scale: 0.05,
+            blue_shift: 7.0,
+            blue_fuzz: 2.0,
+        });
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        let vf = std::fs::read(&r.files[0].path).unwrap();
+        let otf = variable_otf(&f, &vf).unwrap();
+        let font = FontRef::new(&otf).unwrap();
+        let n = font.maxp().unwrap().num_glyphs();
+        let table = font
+            .table_data(Tag::new(b"CFF2"))
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let cff = CffFontRef::new_cff2(&table, None).unwrap();
+        let (_, params) = cff.subfont_hinted(0, &[F2Dot14::ZERO]).unwrap();
+        assert_eq!(
+            params.blues.values(),
+            [
+                (Fixed::from_i32(-10), Fixed::ZERO),
+                (Fixed::from_i32(700), Fixed::from_i32(710))
+            ]
+        );
+        assert_eq!(
+            params.other_blues.values(),
+            [(Fixed::from_i32(-220), Fixed::from_i32(-210))]
+        );
+        assert!((params.blue_scale.to_f64() - 0.05).abs() < 1.0 / 65536.0);
+        assert_eq!(params.blue_shift, Fixed::from_i32(7));
+        assert_eq!(params.blue_fuzz, Fixed::from_i32(2));
+        // StdHW and the stem snaps live in the Private DICT under the FDArray.
+        let top_len = u16::from_be_bytes([table[3], table[4]]) as usize;
+        let top = &table[5..5 + top_len];
+        let fd_off = dict::entries(top, None)
+            .filter_map(|e| e.ok())
+            .find_map(|e| match e {
+                Entry::FdArrayOffset(o) => Some(o),
+                _ => None,
+            })
+            .expect("an FDArray");
+        let fd = Index::new(&table[fd_off..], true).unwrap();
+        let font_dict = fd.get(0).unwrap();
+        let range = dict::entries(font_dict, None)
+            .filter_map(|e| e.ok())
+            .find_map(|e| match e {
+                Entry::PrivateDictRange(r) => Some(r),
+                _ => None,
+            })
+            .expect("a Private DICT");
+        let entries: Vec<Entry> = dict::entries(&table[range], None)
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(entries.contains(&Entry::StdHw(Fixed::from_i32(50))));
+        assert!(entries.contains(&Entry::StdVw(Fixed::from_i32(100))));
+        let snaps = |pick: fn(&Entry) -> bool| -> Vec<Fixed> {
+            entries
+                .iter()
+                .find(|e| pick(e))
+                .map(|e| match e {
+                    Entry::StemSnapH(s) | Entry::StemSnapV(s) => s.values().to_vec(),
+                    _ => unreachable!(),
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            snaps(|e| matches!(e, Entry::StemSnapH(_))),
+            [Fixed::from_i32(50), Fixed::from_i32(100)]
+        );
+        assert_eq!(
+            snaps(|e| matches!(e, Entry::StemSnapV(_))),
+            [Fixed::from_i32(100)]
+        );
+        // The charstrings still decode at every weight (CFF2 carries no stem hints).
+        for coord in [0.0, 0.5, 1.0] {
+            assert_eq!(cff_glyphs(&table, true, coord, n).len(), usize::from(n));
+        }
     }
 
     #[test]

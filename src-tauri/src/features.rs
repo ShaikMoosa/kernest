@@ -202,7 +202,7 @@ pub struct ShapedView {
 
 /// The compiled preview font for this revision and location, compiling it if the
 /// cache is stale. Returns the bytes and the glyph order they were built with.
-fn preview_font(
+pub(crate) fn preview_font(
     doc: &mut Document,
     master_id: &str,
     location: Option<&Location>,

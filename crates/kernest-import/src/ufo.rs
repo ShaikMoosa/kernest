@@ -326,6 +326,41 @@ fn metrics(info: &norad::FontInfo) -> Metrics {
     }
 }
 
+/// Alignment zones and stems from a UFO's PostScript hinting fields: blue value
+/// pairs become zones, StemSnapH/V become named stems.
+fn zones_and_stems(fi: &norad::FontInfo) -> (Vec<kernest_core::Zone>, Vec<kernest_core::Stem>) {
+    let blue = fi.postscript_blue_values.clone().unwrap_or_default();
+    let other = fi.postscript_other_blues.clone().unwrap_or_default();
+    let zones = kernest_core::hinting::zones_from_blues(&blue, &other);
+    let mut stems = Vec::new();
+    for (values, horizontal) in [
+        (fi.postscript_stem_snap_h.clone().unwrap_or_default(), true),
+        (fi.postscript_stem_snap_v.clone().unwrap_or_default(), false),
+    ] {
+        for (i, value) in values.into_iter().enumerate() {
+            if value > 0.0 {
+                stems.push(kernest_core::Stem {
+                    name: format!("{}{i}", if horizontal { "h" } else { "v" }),
+                    horizontal,
+                    value,
+                });
+            }
+        }
+    }
+    (zones, stems)
+}
+
+/// The blue zone controls, when the UFO sets any of them away from the defaults.
+fn ps_hinting(fi: &norad::FontInfo) -> Option<kernest_core::PsHinting> {
+    let d = kernest_core::PsHinting::default();
+    let ps = kernest_core::PsHinting {
+        blue_scale: fi.postscript_blue_scale.unwrap_or(d.blue_scale),
+        blue_shift: fi.postscript_blue_shift.unwrap_or(d.blue_shift),
+        blue_fuzz: fi.postscript_blue_fuzz.unwrap_or(d.blue_fuzz),
+    };
+    (ps != d).then_some(ps)
+}
+
 fn lib_strings(ufo: &norad::Font, key: &str) -> Vec<String> {
     ufo.lib
         .get(key)
@@ -372,6 +407,8 @@ fn build(
         trademark: fi.trademark.clone(),
         sample_text: fi.open_type_name_sample_text.clone(),
         hinting: None,
+        ps_hinting: ps_hinting(fi),
+        control_instructions: String::new(),
         grid: None,
     };
 
@@ -382,12 +419,17 @@ fn build(
     let masters: Vec<Master> = order
         .iter()
         .enumerate()
-        .map(|(k, &i)| Master {
-            id: master_id(k),
-            name: sources[i].0.clone(),
-            location: sources[i].1.clone(),
-            metrics: metrics(&sources[i].2.font_info),
-            guides: Vec::new(),
+        .map(|(k, &i)| {
+            let (alignment_zones, stems) = zones_and_stems(&sources[i].2.font_info);
+            Master {
+                id: master_id(k),
+                name: sources[i].0.clone(),
+                location: sources[i].1.clone(),
+                metrics: metrics(&sources[i].2.font_info),
+                guides: Vec::new(),
+                alignment_zones,
+                stems,
+            }
         })
         .collect();
 

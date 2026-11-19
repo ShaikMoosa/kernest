@@ -218,6 +218,10 @@ export interface LayerView {
   /** All components resolved to outlines, SVG path data in font units. */
   componentSvg: string;
   anchors: { name: string; x: number; y: number }[];
+  /** This layer's manual PostScript hints (empty means auto stems are used). */
+  hints: Hint[];
+  /** The automatic stem hints the master's stems produce for this layer. */
+  autoHints: Hint[];
   /** Metrics keys such as "=n" (left/right sidebearing, width). */
   metricsKeys: { left?: string; right?: string; width?: string };
   /** This glyph's smart axes, if it is a smart glyph. */
@@ -295,6 +299,8 @@ export interface MasterView {
   name: string;
   location: Location;
   metrics: Metrics;
+  alignmentZones: Zone[];
+  stems: Stem[];
 }
 
 /** A current glyph whose incoming layer from another font can't interpolate. */
@@ -432,6 +438,60 @@ export interface Hinting {
 
 export const DEFAULT_HINTING: Hinting = { rangeMin: 8, rangeMax: 50, increaseXHeight: 14, hintComposites: false };
 
+/** An alignment zone: `position` is the flat edge, `size` the overshoot
+ * (positive = a top zone, negative = a bottom zone; the baseline zone is 0, negative). */
+export interface Zone {
+  position: number;
+  size: number;
+}
+
+/** A standard stem width used for hinting. */
+export interface Stem {
+  name: string;
+  horizontal: boolean;
+  value: number;
+}
+
+/** A manual PostScript hint on a layer. Width 0 makes it a ghost hint;
+ * `ghostTop` then picks the edge (top/right when true, bottom/left when false). */
+export interface Hint {
+  horizontal: boolean;
+  position: number;
+  width: number;
+  ghostTop?: boolean;
+}
+
+/** PostScript blue zone controls (CFF Private DICT). */
+export interface PsHinting {
+  blueScale: number;
+  blueShift: number;
+  blueFuzz: number;
+}
+
+export const DEFAULT_PS_HINTING: PsHinting = { blueScale: 0.039625, blueShift: 7, blueFuzz: 1 };
+
+/** One character in the pixel preview, at one size. Paths are SVG data in pixels, y down, baseline at 0. */
+export interface PixelGlyph {
+  ch: string;
+  name: string;
+  advance: number;
+  hinted: string;
+  unhinted: string;
+}
+
+export interface PixelSize {
+  ppem: number;
+  glyphs: PixelGlyph[];
+}
+
+export interface PixelPreview {
+  unitsPerEm: number;
+  sizes: PixelSize[];
+  /** Why hinting could not be applied (empty when it could); hinted then shows unhinted. */
+  problem: string;
+  status: DocStatus;
+}
+
 export interface FontInfo {
   familyName: string;
   unitsPerEm: number;
@@ -447,6 +507,10 @@ export interface FontInfo {
   variableFonts: VariableFontSetting[];
   /** TrueType autohinting settings. */
   hinting: Hinting;
+  /** TTFAutohint control instructions, applied to TrueType exports. */
+  controlInstructions: string;
+  /** PostScript blue zone controls. */
+  psHinting: PsHinting;
   /** The edit view's snap grid, if set. */
   grid: Grid | null;
   /** Colour palettes (CSS colours #rrggbbaa); every palette has the same length. */
@@ -645,6 +709,8 @@ export interface Backend {
   /** Replaces outlines and width; components are replaced too when given. */
   updateLayer(glyph: string, masterId: string, width: number, paths: EditPath[], components?: ComponentEdit[]): Promise<LayerView>;
   setMetric(glyph: string, masterId: string, metric: MetricName, value: number): Promise<LayerView>;
+  /** Replaces a layer's manual PostScript hints (empty restores the auto stems). */
+  setGlyphHints(glyph: string, masterId: string, hints: Hint[]): Promise<LayerView>;
   undo(): Promise<UndoResult | null>;
   redo(): Promise<UndoResult | null>;
   /** Lays out text for a master, or at an interpolated `location` (axis tag → value). */
@@ -669,9 +735,19 @@ export interface Backend {
   importFeatures(path: string): Promise<FeaturesView>;
   /** Shapes text with feature settings like "ss01=1" against a compiled preview. */
   shapeText(text: string, masterId: string, location?: Location, features?: string[]): Promise<ShapedView>;
+  /** Hinted and unhinted outlines of text at pixel sizes, for the edit view's pixel preview. */
+  pixelPreview(text: string, masterId: string, location: Location | undefined, sizes: number[]): Promise<PixelPreview>;
   setAxes(axes: Axis[]): Promise<FontInfo>;
   /** Sets the TrueType autohinting settings. */
   setHinting(hinting: Hinting): Promise<FontInfo>;
+  /** Replaces a master's alignment zones (Font Info › Masters). */
+  setAlignmentZones(masterId: string, zones: Zone[]): Promise<FontInfo>;
+  /** Replaces a master's standard stems (Font Info › Masters). */
+  setStems(masterId: string, stems: Stem[]): Promise<FontInfo>;
+  /** Sets the TTFAutohint control instructions (empty clears them). */
+  setControlInstructions(text: string): Promise<FontInfo>;
+  /** Sets or clears (null restores defaults) the PostScript blue zone controls. */
+  setPsHinting(ps: PsHinting | null): Promise<FontInfo>;
   /** Sets (or clears, with null) the edit view's snap grid. */
   setGrid(grid: Grid | null): Promise<FontInfo>;
   /** Replaces a master's global guides, drawn in every glyph of that master. */
@@ -1034,6 +1110,7 @@ const tauriBackend: Backend = {
   updateLayer: (glyph, masterId, width, paths, components) =>
     invoke("update_layer", { glyph, masterId, width, paths, components: components ?? null }),
   setMetric: (glyph, masterId, metric, value) => invoke("set_metric", { glyph, masterId, metric, value }),
+  setGlyphHints: (glyph, masterId, hints) => invoke("set_glyph_hints", { glyph, masterId, hints }),
   undo: () => invoke("undo"),
   redo: () => invoke("redo"),
   textLayout: (text, masterId, location) => invoke("text_layout", { text, masterId, location: location ?? null }),
@@ -1051,7 +1128,12 @@ const tauriBackend: Backend = {
   previewFeatureImport: (path) => invoke("preview_feature_import", { path }),
   importFeatures: (path) => invoke("import_features", { path }),
   shapeText: (text, masterId, location, features) => invoke("shape_text", { text, masterId, location: location ?? null, features: features ?? [] }),
+  pixelPreview: (text, masterId, location, sizes) => invoke("pixel_preview", { text, masterId, location: location ?? null, sizes }),
   setHinting: (hinting) => invoke("set_hinting", { hinting }),
+  setAlignmentZones: (masterId, zones) => invoke("set_alignment_zones", { masterId, zones }),
+  setStems: (masterId, stems) => invoke("set_stems", { masterId, stems }),
+  setControlInstructions: (text) => invoke("set_control_instructions", { text }),
+  setPsHinting: (ps) => invoke("set_ps_hinting", { psHinting: ps }),
   setGrid: (grid) => invoke("set_grid", { grid }),
   setMasterGuides: (masterId, guides) => invoke("set_master_guides", { masterId, guides }),
   setGuides: (glyph, masterId, guides) => invoke("set_guides", { glyph, masterId, guides }),
@@ -1181,6 +1263,7 @@ interface Snapshot {
   width: number;
   paths: EditPath[];
   components: ComponentEdit[];
+  hints?: Hint[];
 }
 
 interface MockGlyph extends Snapshot {
@@ -1211,6 +1294,8 @@ interface MockMeta {
   instances: Instance[];
   variableFonts: VariableFontSetting[];
   hinting?: Hinting;
+  controlInstructions?: string;
+  psHinting?: PsHinting | null;
   grid?: Grid | null;
 }
 
@@ -1226,7 +1311,7 @@ interface MockDoc extends MockMeta {
 const METRICS: Metrics = { ascender: 800, capHeight: 700, xHeight: 500, descender: -200, italicAngle: 0 };
 let mock: MockDoc | null = null;
 
-const snap = (s: Snapshot): Snapshot => ({ width: s.width, paths: clonePaths(s.paths), components: s.components.map((c) => ({ base: c.base, transform: [...c.transform] })) });
+const snap = (s: Snapshot): Snapshot => ({ width: s.width, paths: clonePaths(s.paths), components: s.components.map((c) => ({ base: c.base, transform: [...c.transform] })), hints: (s.hints ?? []).map((h) => ({ ...h })) });
 
 function mockDoc(familyName: string, codepoints: number[], withOutlines: boolean): MockDoc {
   const glyphs = codepoints.map((cp): MockGlyph => {
@@ -1248,7 +1333,7 @@ function mockDoc(familyName: string, codepoints: number[], withOutlines: boolean
   const kerning = withOutlines ? [{ left: "T", right: "o", value: -60 }, { left: "L", right: "T", value: -80 }] : [];
   return {
     familyName, unitsPerEm: 1000, versionMajor: 1, versionMinor: 0, names: { ...EMPTY_NAMES }, notes: "", axes: [], instances: [], variableFonts: [],
-    masters: [{ id: "m01", name: "Regular", location: {}, metrics: { ...METRICS } }],
+    masters: [{ id: "m01", name: "Regular", location: {}, metrics: { ...METRICS }, alignmentZones: [], stems: [] }],
     glyphs, kerning, undo: [], redo: [], revision: 0, savedRevision: 0,
   };
 }
@@ -1295,7 +1380,7 @@ function mockLayer(d: MockDoc, g: MockGlyph): LayerView {
   const components = g.components.map((c) => ({ base: c.base, transform: [...c.transform], align: true, svg: pathsToSvg(resolveComponent(d, c)) }));
   return {
     glyph: g.name, unicode: g.unicode, masterId: "m01", metrics: METRICS, width: g.width, ...sb(d, g),
-    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], metricsKeys: {}, issues: [], glyphLocked: false, guides: [], masterGuides: [], status: status(d),
+    paths: clonePaths(g.paths), components, componentSvg: components.map((c) => c.svg).join(""), anchors: [], hints: (g.hints ?? []).map((h) => ({ ...h })), autoHints: [], metricsKeys: {}, issues: [], glyphLocked: false, guides: [], masterGuides: [], status: status(d),
   };
 }
 
@@ -1320,9 +1405,11 @@ function record(d: MockDoc, c: MockChange) {
 
 function mockApply(d: MockDoc, g: MockGlyph, next: Snapshot) {
   const before = snap(g);
-  if (JSON.stringify(before) === JSON.stringify(snap(next))) return;
-  Object.assign(g, snap(next));
-  record(d, { kind: "layer", glyph: g.name, before, after: snap(next) });
+  // Outline edits keep the layer's hints, as update_layer does.
+  const after = snap(next.hints === undefined ? { ...next, hints: g.hints } : next);
+  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  Object.assign(g, after);
+  record(d, { kind: "layer", glyph: g.name, before, after });
 }
 
 // Kerning lookup mirrors kernest_core::kerning.
@@ -1391,7 +1478,7 @@ function undoStep(d: MockDoc, c: MockChange, forward: boolean): UndoResult {
 
 const metaCopy = (m: MockMeta): MockMeta => JSON.parse(JSON.stringify({
   familyName: m.familyName, unitsPerEm: m.unitsPerEm, versionMajor: m.versionMajor, versionMinor: m.versionMinor,
-  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, variableFonts: m.variableFonts, hinting: m.hinting, grid: m.grid,
+  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, variableFonts: m.variableFonts, hinting: m.hinting, controlInstructions: m.controlInstructions, psHinting: m.psHinting, grid: m.grid,
 }));
 
 function mockInfo(d: MockDoc): FontInfo {
@@ -1400,7 +1487,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, grid: d.grid ?? null, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, grid: d.grid ?? null, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -1532,6 +1619,44 @@ const mockBackend: Backend = {
     if (h.increaseXHeight !== 0 && !(ok(h.increaseXHeight) && h.increaseXHeight >= 6)) throw "Increase x-height must be 0 (off) or between 6 and 1000.";
     return editMeta(need(), (m) => { m.hinting = { ...h }; });
   },
+  async setAlignmentZones(masterId, zones) {
+    for (const z of zones) {
+      if (!Number.isFinite(z.position) || !Number.isFinite(z.size)) throw "Zone positions and sizes must be numbers.";
+      if (z.size === 0) throw "A zone needs a size other than 0.";
+    }
+    return editMeta(need(), (m) => {
+      const x = m.masters.find((k) => k.id === masterId);
+      if (!x) throw `No master with id "${masterId}"`;
+      x.alignmentZones = zones.map((z) => ({ ...z }));
+    });
+  },
+  async setStems(masterId, stems) {
+    for (const s of stems) {
+      if (!s.name.trim()) throw "Every stem needs a name.";
+      if (!Number.isFinite(s.value) || s.value <= 0) throw "Stem widths must be greater than 0.";
+    }
+    return editMeta(need(), (m) => {
+      const x = m.masters.find((k) => k.id === masterId);
+      if (!x) throw `No master with id "${masterId}"`;
+      x.stems = stems.map((s) => ({ ...s }));
+    });
+  },
+  async setControlInstructions(text) {
+    return editMeta(need(), (m) => { m.controlInstructions = text.trimEnd(); });
+  },
+  async setPsHinting(ps) {
+    if (ps) {
+      if (!Number.isFinite(ps.blueScale) || ps.blueScale <= 0) throw "Blue scale must be greater than 0.";
+      if (!Number.isFinite(ps.blueShift) || ps.blueShift < 0) throw "Blue shift must be 0 or more.";
+      if (!Number.isFinite(ps.blueFuzz) || ps.blueFuzz < 0) throw "Blue fuzz must be 0 or more.";
+    }
+    return editMeta(need(), (m) => {
+      m.psHinting = ps && JSON.stringify(ps) !== JSON.stringify(DEFAULT_PS_HINTING) ? { ...ps } : null;
+    });
+  },
+  async pixelPreview() {
+    throw "The pixel preview needs the desktop app (npm run tauri dev).";
+  },
   async setGrid(grid) {
     const whole = (v: number) => Number.isInteger(v) && v >= 0 && v <= 65535;
     if (grid && (!whole(grid.spacing) || !whole(grid.subdivision))) throw "Grid spacing and subdivision must be whole numbers.";
@@ -1585,7 +1710,7 @@ const mockBackend: Backend = {
     const loc = checkLocation(d, location);
     let n = 1;
     while (d.masters.some((m) => m.id === `m${String(n).padStart(2, "0")}`)) n++;
-    return editMeta(d, (m) => m.masters.push({ id: `m${String(n).padStart(2, "0")}`, name: name.trim(), location: loc, metrics: { ...src.metrics } }));
+    return editMeta(d, (m) => m.masters.push({ id: `m${String(n).padStart(2, "0")}`, name: name.trim(), location: loc, metrics: { ...src.metrics }, alignmentZones: src.alignmentZones.map((z) => ({ ...z })), stems: src.stems.map((s) => ({ ...s })) }));
   },
   async previewForeignMasters() {
     throw "Adding masters from another font needs the desktop app (npm run tauri dev).";
@@ -1867,6 +1992,15 @@ const mockBackend: Backend = {
         components: g.components.map((c) => ({ base: c.base, transform: [c.transform[0], c.transform[1], c.transform[2], c.transform[3], c.transform[4] + dx, c.transform[5]] })),
       });
     }
+    return mockLayer(d, g);
+  },
+  async setGlyphHints(glyph, _m, hints) {
+    const d = need();
+    const g = findGlyph(d, glyph);
+    for (const h of hints) {
+      if (!Number.isFinite(h.position) || !Number.isFinite(h.width) || h.width < 0) throw "Hint positions must be numbers and widths 0 or more.";
+    }
+    mockApply(d, g, { ...snap(g), hints: hints.map((h) => ({ ...h })) });
     return mockLayer(d, g);
   },
   async undo() {

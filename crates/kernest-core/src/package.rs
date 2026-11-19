@@ -37,11 +37,13 @@ use crate::model::{
 /// would drop them on save); version 8 adds axis mappings (older versions would
 /// misplace masters, which live in design coordinates); version 9 adds per-master
 /// palette overrides and per-master colour paints (older versions would drop the
-/// variation and export every master with the default colour).
+/// variation and export every master with the default colour); version 10 adds
+/// alignment zones, stems, manual hints and hinting settings (older versions
+/// would drop them on save).
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 9;
+pub const FORMAT_VERSION: u32 = 10;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -225,9 +227,21 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
             .iter()
             .any(|a| !a.map.is_empty() || !a.labels.is_empty());
     let has_var_color = crate::color::varies_between_masters(font);
+    let has_phase10 = !font.info.control_instructions.is_empty()
+        || font.info.ps_hinting.is_some()
+        || font
+            .masters
+            .iter()
+            .any(|m| !m.alignment_zones.is_empty() || !m.stems.is_empty())
+        || font
+            .glyphs
+            .iter()
+            .any(|g| g.layers.iter().any(|l| !l.hints.is_empty()));
     let file = FontFile {
-        format_version: if has_var_color {
+        format_version: if has_phase10 {
             FORMAT_VERSION
+        } else if has_var_color {
+            9
         } else if has_phase9 {
             8
         } else if has_phase8 {

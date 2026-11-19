@@ -64,10 +64,13 @@ impl Format {
 }
 
 /// A glyph to encode: its plain operations (in drawing order) and, for CFF, the
-/// width operand to put first (`None` when it equals the default width).
+/// width operand to put first (`None` when it equals the default width). `hints`
+/// holds already-encoded stem operators, placed after the width and before the
+/// first moveto (CFF only; CFF2 charstrings carry no stem hints).
 pub(crate) struct GlyphOps {
     pub ops: Ops,
     pub width: Option<i32>,
+    pub hints: Vec<u8>,
 }
 
 /// Stack slots an operand list needs when written (blended operands carry deltas).
@@ -227,7 +230,7 @@ fn encode_body(segs: &[(u8, Vec<Operand>)], format: Format, regions: usize, out:
     flush(&mut run, out);
 }
 
-fn encode_moveto(args: &[Operand], width: Option<i32>, out: &mut Vec<u8>) {
+fn encode_moveto(args: &[Operand], out: &mut Vec<u8>) {
     let (op, a): (u8, Vec<Operand>) = if zero(&args[0]) {
         (VMOVETO, vec![args[1].clone()])
     } else if zero(&args[1]) {
@@ -235,9 +238,6 @@ fn encode_moveto(args: &[Operand], width: Option<i32>, out: &mut Vec<u8>) {
     } else {
         (RMOVETO, args.to_vec())
     };
-    if let Some(w) = width {
-        int(w, out);
-    }
     write_args(&a, out);
     out.push(op);
 }
@@ -245,14 +245,15 @@ fn encode_moveto(args: &[Operand], width: Option<i32>, out: &mut Vec<u8>) {
 /// A glyph split into what may be shared: (moveto bytes, body bytes) per contour.
 struct Pieces {
     contours: Vec<(Vec<u8>, Vec<u8>)>,
-    /// Only for an empty CFF glyph: the width before `endchar`.
-    lone_width: Option<i32>,
+    /// The width operand, emitted once before any hints or contours (CFF only).
+    width: Option<i32>,
+    /// Encoded stem operators, after the width and before the first moveto.
+    hints: Vec<u8>,
 }
 
 fn pieces(g: &GlyphOps, format: Format, regions: usize, optimize: bool) -> Pieces {
     let mut contours = Vec::new();
     let mut i = 0;
-    let mut first = true;
     while i < g.ops.len() {
         let (op, args) = &g.ops[i];
         debug_assert_eq!(*op, RMOVETO);
@@ -260,16 +261,11 @@ fn pieces(g: &GlyphOps, format: Format, regions: usize, optimize: bool) -> Piece
             .find(|&j| g.ops[j].0 == RMOVETO)
             .unwrap_or(g.ops.len());
         let mut mv = Vec::new();
-        let width = if first { g.width } else { None };
-        first = false;
         let mut body = Vec::new();
         if optimize {
-            encode_moveto(args, width, &mut mv);
+            encode_moveto(args, &mut mv);
             encode_body(&g.ops[i + 1..end], format, regions, &mut body);
         } else {
-            if let Some(w) = width {
-                int(w, &mut mv);
-            }
             write_args(args, &mut mv);
             mv.push(RMOVETO);
             for (op, a) in &g.ops[i + 1..end] {
@@ -281,7 +277,8 @@ fn pieces(g: &GlyphOps, format: Format, regions: usize, optimize: bool) -> Piece
         i = end;
     }
     Pieces {
-        lone_width: if contours.is_empty() { g.width } else { None },
+        width: g.width,
+        hints: g.hints.clone(),
         contours,
     }
 }
@@ -348,6 +345,12 @@ pub(crate) fn encode(
         .iter()
         .map(|p| {
             let mut out = Vec::new();
+            if format == Format::Cff {
+                if let Some(w) = p.width {
+                    int(w, &mut out);
+                }
+                out.extend(&p.hints);
+            }
             for (mv, body) in &p.contours {
                 out.extend(mv);
                 match index_of.get(body) {
@@ -359,9 +362,6 @@ pub(crate) fn encode(
                 }
             }
             if format == Format::Cff {
-                if let Some(w) = p.lone_width {
-                    int(w, &mut out);
-                }
                 out.push(ENDCHAR);
             }
             out
@@ -390,6 +390,7 @@ mod tests {
                 (RLINETO, vec![o(-100), o(0)]),
             ],
             width: None,
+            hints: Vec::new(),
         };
         let (cs, _) = encode(&[g], Format::Cff, 0, true);
         // 10 hmoveto | 100 50 -100 hlineto | endchar
@@ -401,6 +402,7 @@ mod tests {
                 (RRCURVETO, vec![o(30), o(0), o(20), o(20), o(0), o(30)]),
             ],
             width: Some(0),
+            hints: Vec::new(),
         };
         let (cs, _) = encode(&[g], Format::Cff, 0, true);
         assert_eq!(
@@ -421,6 +423,7 @@ mod tests {
                 .chain(body.clone())
                 .collect(),
             width: None,
+            hints: Vec::new(),
         };
         let glyphs = [glyph(10), glyph(20), glyph(30)];
         let (cs, subrs) = encode(&glyphs, Format::Cff, 0, true);
@@ -440,6 +443,7 @@ mod tests {
         let g = GlyphOps {
             ops: vec![(RMOVETO, vec![vec![5, 0], vec![9, 7]])],
             width: None,
+            hints: Vec::new(),
         };
         let (cs, _) = encode(&[g], Format::Cff2, 1, true);
         // 5 (plain) | 9 7 1 blend | rmoveto

@@ -309,6 +309,8 @@ pub fn add_master(
         location,
         metrics: src.metrics,
         guides: src.guides.clone(),
+        alignment_zones: src.alignment_zones.clone(),
+        stems: src.stems.clone(),
     });
     Ok((f, id))
 }
@@ -455,6 +457,8 @@ pub fn add_master_from(
         location,
         metrics: src.metrics,
         guides: src.guides.clone(),
+        alignment_zones: src.alignment_zones.clone(),
+        stems: src.stems.clone(),
     });
     Ok((f, missing))
 }

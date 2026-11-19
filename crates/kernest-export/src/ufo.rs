@@ -275,6 +275,80 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
         });
     }
 
+    // PostScript hinting: zones become blue values and stems become stem snaps. The
+    // master at this location supplies them; an interpolated instance uses the default
+    // master's (UFO sources carry one set of hinting values).
+    let master = font
+        .masters
+        .iter()
+        .find(|m| m.location == src.location)
+        .unwrap_or_else(|| kernest_core::interpolate::default_master(font));
+    let (blue, other) = kernest_core::hinting::blues_from_zones(&master.alignment_zones);
+    if !blue.is_empty() {
+        info.postscript_blue_values = Some(blue);
+    }
+    if !other.is_empty() {
+        info.postscript_other_blues = Some(other);
+    }
+    let h = kernest_core::hinting::stem_snaps(&master.stems, true);
+    let v = kernest_core::hinting::stem_snaps(&master.stems, false);
+    if !h.is_empty() {
+        info.postscript_stem_snap_h = Some(h);
+    }
+    if !v.is_empty() {
+        info.postscript_stem_snap_v = Some(v);
+    }
+    if let Some(ps) = &font.info.ps_hinting {
+        info.postscript_blue_scale = Some(ps.blue_scale);
+        info.postscript_blue_shift = Some(ps.blue_shift);
+        info.postscript_blue_fuzz = Some(ps.blue_fuzz);
+    }
+
+    // Per-glyph stem hints: a glyph's manual hints win; otherwise they are generated
+    // from its outline within the master's stem ranges. The CFF builder reads them back
+    // from this lib key and places them at the start of each charstring.
+    let h_stems: Vec<f64> = master
+        .stems
+        .iter()
+        .filter(|s| s.horizontal)
+        .map(|s| s.value)
+        .collect();
+    let v_stems: Vec<f64> = master
+        .stems
+        .iter()
+        .filter(|s| !s.horizontal)
+        .map(|s| s.value)
+        .collect();
+    let mut hints_lib = plist::Dictionary::new();
+    for (gname, layer) in &src.layers {
+        let hints = if layer.hints.is_empty() {
+            kernest_core::hinting::auto_stems(font, layer, &h_stems, &v_stems)
+        } else {
+            layer.hints.clone()
+        };
+        if hints.is_empty() {
+            continue;
+        }
+        let arr: Vec<plist::Value> = hints
+            .iter()
+            .map(|h| {
+                let mut d = plist::Dictionary::new();
+                d.insert("horizontal".into(), plist::Value::Boolean(h.horizontal));
+                d.insert("position".into(), plist::Value::Real(h.position));
+                d.insert("width".into(), plist::Value::Real(h.width));
+                d.insert("ghostTop".into(), plist::Value::Boolean(h.ghost_top));
+                plist::Value::Dictionary(d)
+            })
+            .collect();
+        hints_lib.insert(gname.clone(), plist::Value::Array(arr));
+    }
+    if !hints_lib.is_empty() {
+        ufo.lib.insert(
+            "com.kernest.hints".into(),
+            plist::Value::Dictionary(hints_lib),
+        );
+    }
+
     let has_notdef = src.layers.iter().any(|(n, _)| n == ".notdef");
     let mut order: Vec<String> = Vec::with_capacity(src.layers.len() + 1);
     if !has_notdef {
