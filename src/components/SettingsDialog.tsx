@@ -1,11 +1,20 @@
 import { useEffect, useState } from "react";
-import { backend, errorMessage, type PluginInfo, type PythonInfo, type Settings } from "../lib/backend";
+import { backend, errorMessage, type Appearance, type PluginInfo, type PythonInfo, type Settings, type UpdateInfo } from "../lib/backend";
+import { AppearanceSettings } from "./AppearanceSettings";
+import { UpdateSettings } from "./UpdateSettings";
+import type { ThemePref } from "../lib/theme";
 import { SHORTCUT_ACTIONS, effectiveShortcut, shortcutFromEvent } from "../lib/shortcuts";
 import { CloseIcon } from "./Icons";
-import { t } from "../lib/i18n";
+import { t, type Lang } from "../lib/i18n";
 
 interface Props {
   settings: Settings;
+  theme: ThemePref;
+  language: Lang;
+  updateInfo: UpdateInfo | null;
+  onAppearance: (next: Appearance) => Promise<void>;
+  onToggleUpdates: (enabled: boolean) => Promise<void>;
+  onCheckUpdates: () => Promise<void>;
   plugins: PluginInfo[];
   onClose: () => void;
   onSetPluginEnabled: (name: string, enabled: boolean) => void;
@@ -16,13 +25,13 @@ interface Props {
   onReloadPlugins: () => void;
 }
 
-type Tab = "plugins" | "shortcuts" | "python";
+type Tab = "appearance" | "updates" | "plugins" | "shortcuts" | "python";
 
 const TYPE_LABEL: Record<string, string> = { filter: "Filter", reporter: "Reporter", general: "General" };
 
 /** S44 · Settings: plug-ins, keyboard shortcuts and the Python runtime. */
-export function SettingsDialog({ settings, plugins, onClose, onSetPluginEnabled, onSetShortcut, onResetShortcuts, onSetPythonPath, onOpenPluginsFolder, onReloadPlugins }: Props) {
-  const [tab, setTab] = useState<Tab>("plugins");
+export function SettingsDialog({ settings, theme, language, updateInfo, onAppearance, onToggleUpdates, onCheckUpdates, plugins, onClose, onSetPluginEnabled, onSetShortcut, onResetShortcuts, onSetPythonPath, onOpenPluginsFolder, onReloadPlugins }: Props) {
+  const [tab, setTab] = useState<Tab>("appearance");
   const [recording, setRecording] = useState<string | null>(null);
   const [python, setPython] = useState<PythonInfo | null>(null);
   const [pythonPath, setPythonPath] = useState(settings.pythonPath ?? "");
@@ -55,6 +64,8 @@ export function SettingsDialog({ settings, plugins, onClose, onSetPluginEnabled,
   }, [settings.pythonPath]);
 
   const tabs: { id: Tab; label: string }[] = [
+    { id: "appearance", label: t("Appearance") },
+    { id: "updates", label: t("Updates") },
     { id: "plugins", label: t("Plugins") },
     { id: "shortcuts", label: t("Shortcuts") },
     { id: "python", label: t("Python") },
@@ -67,12 +78,19 @@ export function SettingsDialog({ settings, plugins, onClose, onSetPluginEnabled,
           <h2 id="settings-title" className="k-subtitle">{t("Settings")}</h2>
           <button type="button" className="icon-btn" aria-label={t("Close")} onClick={onClose}><CloseIcon /></button>
         </header>
-        <div className="settings-tabs" role="tablist" aria-label={t("Settings")}>
+        <div className="settings-layout">
+        <div className="settings-tabs" role="tablist" aria-orientation="vertical" aria-label={t("Settings")} onKeyDown={e => {
+          const current = tabs.findIndex(tb => tb.id === tab);
+          const index = e.key === "ArrowDown" ? (current + 1) % tabs.length : e.key === "ArrowUp" ? (current + tabs.length - 1) % tabs.length : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : -1;
+          if (index >= 0) { e.preventDefault(); setTab(tabs[index].id); document.getElementById(`settings-tab-${tabs[index].id}`)?.focus(); }
+        }}>
           {tabs.map((tb) => (
-            <button key={tb.id} role="tab" aria-selected={tab === tb.id} className={`segment${tab === tb.id ? " is-selected" : ""}`} onClick={() => setTab(tb.id)}>{tb.label}</button>
+            <button key={tb.id} id={`settings-tab-${tb.id}`} role="tab" aria-selected={tab === tb.id} aria-controls="settings-panel" tabIndex={tab === tb.id ? 0 : -1} className={`segment${tab === tb.id ? " is-selected" : ""}`} onClick={() => setTab(tb.id)}>{tb.label}</button>
           ))}
         </div>
-        <div className="dialog-body settings-body">
+        <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="dialog-body settings-body">
+          {tab === "appearance" && <AppearanceSettings appearance={settings.appearance} theme={theme} language={language} onChange={onAppearance} />}
+          {tab === "updates" && <UpdateSettings enabled={settings.updates.enabled} info={updateInfo} onToggle={onToggleUpdates} onCheck={onCheckUpdates} />}
           {tab === "plugins" && (
             <>
               <div className="settings-row">
@@ -148,6 +166,7 @@ export function SettingsDialog({ settings, plugins, onClose, onSetPluginEnabled,
               </div>
             </>
           )}
+        </div>
         </div>
         <footer className="dialog-footer">
           <span className="spacer" />

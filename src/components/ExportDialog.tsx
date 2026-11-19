@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { backend, errorMessage, isTauri, type ExportFormats, type ExportReport, type FontInfo } from "../lib/backend";
+import { backend, errorMessage, isTauri, type DocStatus, type ExportFormats, type ExportPreset, type ExportReport, type FontInfo } from "../lib/backend";
 import { CloseIcon, FolderIcon } from "./Icons";
+import { QualityDialog } from "./QualityDialog";
 import { t, tn, translateMessage } from "../lib/i18n";
 
 const DIR_KEY = "kernest.exportFolder";
@@ -45,7 +46,7 @@ const kb = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(n < 10240
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
 /** S14 · Export: variable and static fonts as TTF, OTF and WOFF2. */
-export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; onClose: () => void }) {
+export function ExportDialog({ fontPath, version, onChanged, onClose, onExported, onFontInfo, onGlyph }: { fontPath: string | null; version: number; onChanged: (status: DocStatus) => void; onClose: () => void; onExported?: () => void; onFontInfo: () => void; onGlyph: (name: string) => void }) {
   const [info, setInfo] = useState<FontInfo | null>(null);
   const [variable, setVariable] = useState(true);
   const [statics, setStatics] = useState(true);
@@ -55,13 +56,59 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<ExportReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedPreset, setSelectedPreset] = useState("");
+  const [presetName, setPresetName] = useState("");
+  const [allInstances, setAllInstances] = useState(true);
+  const [selectedInstances, setSelectedInstances] = useState<string[]>([]);
+  const [dirEdited, setDirEdited] = useState(true);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
-    backend.fontInfo().then(setInfo, (e) => setError(errorMessage(e)));
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && onClose();
+    let cancelled = false;
+    backend.fontInfo().then(result => { if (!cancelled) setInfo(result); }, e => { if (!cancelled) setError(errorMessage(e)); });
+    return () => { cancelled = true; };
+  }, [version]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && !checking && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, busy]);
+  }, [onClose, busy, checking]);
+
+  function choosePreset(name: string) {
+    setSelectedPreset(name); setPresetName(name); setError(null);
+    const preset = info?.exportPresets.find(p => p.name === name);
+    if (!preset) return;
+    const { variable, statics, ...options } = preset.options;
+    setVariable(variable); setStatics(statics);
+    setFormats({ ...options, ttf: preset.formats.includes("ttf"), otf: preset.formats.includes("otf"), woff2: preset.formats.includes("woff2") });
+    setSelectedInstances(preset.instances); setAllInstances(preset.instances.length === 0);
+    const parent = fontPath?.replace(/[\\/][^\\/]+$/, "");
+    const folder = preset.folder || "build";
+    setDir(/^(?:[A-Za-z]:[\\/]|[\\/]{2}|\/)/.test(folder) ? folder : parent ? `${parent}/${folder}` : "");
+    setDirEdited(false);
+  }
+
+  async function savePreset(remove = false) {
+    if (!info) return;
+    const name = presetName.trim();
+    if (!remove && !name) return setError(t("Enter a preset name."));
+    if (!remove && name !== selectedPreset && info.exportPresets.some(p => p.name === name)) return setError(t("Preset name \"{name}\" is used twice.", { name }));
+    if (!remove && statics && !allInstances && selectedInstances.length === 0) return setError(t("Choose at least one instance."));
+    setBusy(true); setError(null);
+    try {
+      const preset: ExportPreset = {
+        name, formats: (["ttf", "otf", "woff2"] as const).filter(f => formats[f]), instances: allInstances ? [] : selectedInstances,
+        options: { variable: wantVariable, statics, removeOverlaps: formats.removeOverlaps, applyMetricsKeys: formats.applyMetricsKeys, autohint: formats.autohint, productionNames: formats.productionNames },
+        folder: !dirEdited ? info.exportPresets.find(p => p.name === selectedPreset)?.folder ?? dir.trim() : dir.trim(),
+      };
+      const list = info.exportPresets.filter(p => p.name !== selectedPreset);
+      if (!remove) list.push(preset);
+      const result = await backend.setExportPresets(list);
+      setInfo(result); onChanged(result.status);
+      setSelectedPreset(remove ? "" : name); setPresetName(remove ? "" : name);
+    } catch (e) { setError(errorMessage(e)); }
+    finally { setBusy(false); }
+  }
 
   const canVariable = !!info && info.masters.length > 1 && info.axes.length > 0;
   const variableNote = !info
@@ -72,14 +119,14 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
         ? tn(info.incompatible, "{n} glyph is incompatible and will block the variable font.", "{n} glyphs are incompatible and will block the variable font.")
         : `${tn(info.masters.length, "{n} master", "{n} masters")} · ${info.axes.map((a) => a.tag).join(", ")}`;
   const exportedInstances = info?.instances.filter((i) => i.export !== false) ?? [];
-  const staticStyles = exportedInstances.length ? exportedInstances.map((i) => i.name) : (info?.masters.map((m) => m.name) ?? []);
+  const staticStyles = !allInstances ? selectedInstances : exportedInstances.length ? exportedInstances.map((i) => i.name) : (info?.masters.map((m) => m.name) ?? []);
   const wantVariable = variable && canVariable;
   const noFormat = !formats.ttf && !formats.otf && !formats.woff2;
-  const nothing = (!wantVariable && !statics) || noFormat;
+  const nothing = (!wantVariable && !statics) || noFormat || (statics && !allInstances && selectedInstances.length === 0);
 
   async function browse() {
     const picked = await open({ directory: true, multiple: false, title: t("Export fonts to"), defaultPath: dir || undefined });
-    if (typeof picked === "string") setDir(picked);
+    if (typeof picked === "string") { setDir(picked); setDirEdited(true); }
   }
 
   async function run() {
@@ -90,13 +137,17 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
     try {
       saveDir(dir.trim());
       saveFormats(formats);
-      setReport(await backend.exportFont(wantVariable, statics, dir.trim(), formats));
+      const result = await backend.exportFont(wantVariable, statics, dir.trim(), formats, allInstances ? [] : selectedInstances);
+      setReport(result);
+      if (result.files.length) onExported?.();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
   }
+
+  if (checking && report && info) return <QualityDialog files={report.files} familyName={info.familyName} glyphNames={info.glyphOrder} onClose={() => setChecking(false)} onFontInfo={onFontInfo} onGlyph={onGlyph} />;
 
   return (
     <div className="scrim" role="presentation">
@@ -105,6 +156,16 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
           <h2 id="export-title" className="k-subtitle">{t("Export {name}", { name: info?.familyName ?? "" })}</h2>
           <button type="button" className="icon-btn" aria-label={t("Close")} onClick={onClose} disabled={busy}><CloseIcon /></button>
         </header>
+        <div className="export-layout">
+        <aside className="export-presets" aria-label={t("Export presets")}>
+          <h3 className="k-subtitle">{t("Presets")}</h3>
+          <label className="field"><span className="k-caption muted">{t("Saved preset")}</span><select value={selectedPreset} disabled={busy} aria-label={t("Saved preset")} onChange={e => choosePreset(e.target.value)}><option value="">{t("Custom settings")}</option>{info?.exportPresets.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}</select></label>
+          <div className="preset-list">{info?.exportPresets.map(p => <button key={p.name} type="button" disabled={busy} className={selectedPreset === p.name ? "is-selected" : ""} onClick={() => choosePreset(p.name)}><strong>{p.name}</strong><small>{p.formats.map(f => f.toUpperCase()).join(" + ")}{p.options.variable ? ` · ${t("Variable font")}` : ""}</small></button>)}</div>
+          <label className="field"><span className="k-caption muted">{t("Preset name")}</span><input value={presetName} maxLength={64} disabled={busy} aria-label={t("Preset name")} onChange={e => setPresetName(e.target.value)} /></label>
+          <button type="button" className="btn btn-secondary btn-sm" disabled={busy || !info || nothing} onClick={() => savePreset()}>{t("Save preset")}</button>
+          <button type="button" className="btn btn-link" disabled={busy || !selectedPreset} onClick={() => savePreset(true)}>{t("Remove preset")}</button>
+          <p className="k-caption muted">{t("Presets are saved in this font and shared with the command line. Save preset keeps your current choices.")}</p>
+        </aside>
         <div className="dialog-body">
           <fieldset className="field" disabled={busy}>
             <legend className="k-overline muted">{t("Fonts")}</legend>
@@ -126,6 +187,7 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
               </span>
             </label>
           </fieldset>
+          {statics && !!info?.instances.length && <fieldset className="field export-instance-picks" disabled={busy}><legend className="k-label">{t("Instances")}</legend><label className="check-row"><input type="checkbox" checked={allInstances} onChange={e => { setAllInstances(e.target.checked); if (!e.target.checked && !selectedInstances.length) setSelectedInstances(exportedInstances.map(i => i.name)); }} />{t("All exported instances")}</label>{!allInstances && info.instances.map(i => <label key={i.name} className="check-row"><input type="checkbox" checked={selectedInstances.includes(i.name)} aria-label={t("Export instance {name}", { name: i.name })} onChange={() => setSelectedInstances(names => names.includes(i.name) ? names.filter(n => n !== i.name) : [...names, i.name])} />{i.name}</label>)}</fieldset>}
           <fieldset className="field" disabled={busy}>
             <legend className="k-overline muted">{t("Formats")}</legend>
             <div className="export-formats">
@@ -144,7 +206,7 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
           <label className="field">
             <span className="k-label">{t("Destination folder")}</span>
             <span className="row">
-              <input className="text-input dest-input" value={dir} onChange={(e) => setDir(e.target.value)} placeholder="C:\Users\you\Documents\Fonts" disabled={busy} spellCheck={false} />
+              <input className="text-input dest-input" value={dir} onChange={(e) => { setDir(e.target.value); setDirEdited(true); }} placeholder="C:\Users\you\Documents\Fonts" disabled={busy} spellCheck={false} />
               <button type="button" className="btn btn-secondary" onClick={browse} disabled={busy || !isTauri}><FolderIcon size={14} /> {t("Browse…")}</button>
             </span>
           </label>
@@ -172,9 +234,11 @@ export function ExportDialog({ fontPath, onClose }: { fontPath: string | null; o
             </div>
           )}
         </div>
+        </div>
         <footer className="dialog-footer">
           <span className="k-caption muted">{t("Compiled with fontc · CFF and WOFF2 written by Kernest")}</span>
           <span className="spacer" />
+          <button type="button" className="btn btn-secondary" disabled={busy || !report?.files.length} onClick={() => setChecking(true)}>{t("Check font")}</button>
           <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>{report ? t("Done") : t("Cancel")}</button>
           <button type="button" className="btn btn-primary" onClick={run} disabled={busy || nothing || !info}>{busy ? t("Exporting…") : t("Export")}</button>
         </footer>

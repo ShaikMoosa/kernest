@@ -23,6 +23,7 @@ pub async fn export_font(
     apply_metrics_keys: Option<bool>,
     autohint: Option<bool>,
     production_names: Option<bool>,
+    instances: Option<Vec<String>>,
 ) -> CmdResult<ExportReport> {
     if !variable && !statics {
         return Err("Choose at least one kind of font to export.".into());
@@ -42,6 +43,7 @@ pub async fn export_font(
         let mut guard = lock(&state)?;
         doc_mut(&mut guard)?.font.clone()
     };
+    let font = kernest_core::presets::select_instances(&font, &instances.unwrap_or_default())?;
     tauri::async_runtime::spawn_blocking(move || {
         export(
             &font,
@@ -58,6 +60,37 @@ pub async fn export_font(
                 out_dir,
             },
         )
+    })
+    .await
+    .map_err(|e| format!("Export stopped unexpectedly: {e}"))?
+}
+
+#[tauri::command]
+pub async fn export_preset(
+    state: State<'_, AppState>,
+    name: String,
+    out_dir: Option<String>,
+) -> CmdResult<ExportReport> {
+    let out = out_dir
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| PathBuf::from(p.trim()));
+    if out.as_ref().is_some_and(|p| !p.is_absolute()) {
+        return Err("Choose a full folder path for the export.".into());
+    }
+    let (font, source_dir) = {
+        let mut guard = lock(&state)?;
+        let doc = doc_mut(&mut guard)?;
+        let source_dir = doc
+            .path
+            .as_deref()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .or_else(|| out.clone())
+            .ok_or("Choose a folder to export to.")?;
+        (doc.font.clone(), source_dir)
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        kernest_export::export_preset(&font, &name, &source_dir, out.as_deref())
     })
     .await
     .map_err(|e| format!("Export stopped unexpectedly: {e}"))?

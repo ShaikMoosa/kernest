@@ -8,6 +8,7 @@ src-tauri/gen/schemas/
 __pycache__/
 *.pyc
 src-tauri/python-runtime/
+src-tauri/binaries/
 
 # Editors and OS
 .vscode/*

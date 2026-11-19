@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { backend, type DocStatus, type FeaturesView, type FontInfo, type KernMode, type Location, type MetricName, type ShapedView, type TextItem, type TextLayout } from "../lib/backend";
+import { backend, type DocStatus, type FeaturesView, type FontInfo, type KernMode, type Location, type MetricName, type Milestone, type ShapedView, type TextItem, type TextLayout } from "../lib/backend";
 import { t } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
+import { wrapRows } from "../lib/onboarding";
 
 const PRESETS = ["HOHOHAVATAR To LT", "nnonnoonon HHOHHOOHOH", "Hamburgefontsiv", "/H/O/H/n/o/n LTLTLT ToTo"];
 const MISSING_WIDTH = 500;
@@ -61,12 +62,18 @@ interface Props {
   onChanged: (status: DocStatus) => void;
   onError: (e: unknown) => void;
   onOpenGlyph: (name: string) => void;
+  textWidth?: number;
+  onMilestone?: (milestone: Milestone) => void;
 }
 
 /** S06 · Text view for spacing and kerning. */
-export function TextView({ masterId, version, active, onChanged, onError, onOpenGlyph }: Props) {
+export function TextView({ masterId, version, active, onChanged, onError, onOpenGlyph, textWidth = 16000, onMilestone }: Props) {
   const [text, setText] = useState(PRESETS[0]);
-  const [layout, setLayout] = useState<TextLayout | null>(null);
+  const [info, setInfo] = useState<FontInfo | null>(null);
+  const [rawLayout, setLayout] = useState<TextLayout | null>(null);
+  // The setting is in 1/1000 em; advances are in font units, so scale by the UPM.
+  const wrapWidth = textWidth / 1000 * (info?.unitsPerEm ?? 1000);
+  const layout = useMemo(() => rawLayout ? { ...rawLayout, lines: wrapRows(rawLayout.lines, wrapWidth, item => item.type === "glyph" ? item.width + item.kern : MISSING_WIDTH) } : null, [rawLayout, wrapWidth]);
   const [size, setSize] = useState(140);
   const [mode, setMode] = useState<KernMode>("group");
   const [cursor, setCursor] = useState<Cursor>({ line: 0, pos: 1 });
@@ -76,7 +83,6 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   const latest = useRef({ layout, cursor, mode, previewing: false, shapeOn: false });
   latest.current = { layout, cursor, mode, previewing: latest.current?.previewing ?? false, shapeOn: latest.current?.shapeOn ?? false };
 
-  const [info, setInfo] = useState<FontInfo | null>(null);
   // "" = the current master; "i:<name>" = an instance; "custom" = the sliders below.
   const [preview, setPreview] = useState("");
   const [custom, setCustom] = useState<Location>({});
@@ -101,7 +107,8 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   const [shapeOn, setShapeOn] = useState(false);
   // Only the tags the user flipped; the rest follow what's in the font.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
-  const [shaped, setShaped] = useState<ShapedView | null>(null);
+  const [rawShaped, setShaped] = useState<ShapedView | null>(null);
+  const shaped = useMemo(() => rawShaped ? { ...rawShaped, lines: wrapRows(rawShaped.lines, wrapWidth, glyph => glyph.advance, glyph => glyph.cluster) } : null, [rawShaped, wrapWidth]);
   latest.current.shapeOn = shapeOn;
   const featRef = useRef<HTMLDivElement>(null);
   useEffect(() => { backend.features().then(setFeatView, () => setFeatView(null)); }, [version]);
@@ -118,8 +125,8 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   // Explicit on/off per tag so default-on features like liga can be switched off too.
   const featSettings = useMemo(() => featTags.map((tag) => `${tag}=${featChecked(tag) ? 1 : 0}`), [featTags, overrides, featView]);
 
-  const reload = useCallback(() => backend.textLayout(text, masterId, location).then(setLayout, onError), [text, masterId, location, onError]);
-  const reloadShaped = useCallback(() => backend.shapeText(text, masterId, location, featSettings).then(setShaped, onError), [text, masterId, location, featSettings, onError]);
+  const reload = useCallback(() => backend.textLayout(text, masterId, location).then(result => { setLayout(result); if (preview.startsWith("i:")) onMilestone?.("instance"); }, onError), [text, masterId, location, preview, onMilestone, onError]);
+  const reloadShaped = useCallback(() => backend.shapeText(text, masterId, location, featSettings).then(result => { setShaped(result); if (preview.startsWith("i:")) onMilestone?.("instance"); }, onError), [text, masterId, location, featSettings, preview, onMilestone, onError]);
   useEffect(() => {
     if (!shapeOn) { reload(); return; }
     // Shaping compiles a preview font; don't do it on every keystroke.
@@ -136,17 +143,18 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
     });
   }, [layout]);
 
-  const run = useCallback((task: () => Promise<DocStatus>) => {
+  const run = useCallback((task: () => Promise<DocStatus>, milestone?: Milestone) => {
     if (latest.current.previewing) return onError(t("Spacing edits apply to a master. Set the preview back to “Current master” to edit."));
     chain.current = chain.current.then(async () => {
       try {
         onChanged(await task());
+        if (milestone) onMilestone?.(milestone);
         await reload();
       } catch (e) {
         onError(e);
       }
     });
-  }, [onChanged, onError, reload]);
+  }, [onChanged, onError, reload, onMilestone]);
 
   /**
    * Sets the kerning of (left, right). In Group mode the pair that currently applies
@@ -157,10 +165,10 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
     run(async () => {
       if (m === "group" && left.kernLeft && left.kernRight) return backend.setKerningPair(masterId, left.kernLeft, left.kernRight, value(left.kern));
       return (await backend.setGlyphKerning(masterId, left.name, right.name, m, value(left.kern))).status;
-    });
+    }, "kerned");
   }, [masterId, run]);
 
-  const setMetric = (glyph: string, metric: MetricName, v: number) => run(async () => (await backend.setMetric(glyph, masterId, metric, v)).status);
+  const setMetric = (glyph: string, metric: MetricName, v: number) => run(async () => (await backend.setMetric(glyph, masterId, metric, v)).status, "spaced");
   const setGroups = (glyph: string, l: string | null, r: string | null) => run(() => backend.setGlyphGroups(glyph, l, r));
 
   // ---------- Geometry ----------
@@ -196,7 +204,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   }), [shaped, scale]);
 
   const activePositions = showShaped ? sPositions : positions;
-  const width = Math.max(800, ...activePositions.map((xs) => xs[xs.length - 1] + pad));
+  const width = Math.max(textWidth * scale + pad * 2, ...activePositions.map((xs) => xs[xs.length - 1] + pad));
   const activeLines = showShaped ? shaped.lines.length : layout?.lines.length;
   const activeBaseline = showShaped ? sBaseline : baseline;
   const activeDescender = (showShaped ? sMetrics : metrics)?.descender ?? -200;

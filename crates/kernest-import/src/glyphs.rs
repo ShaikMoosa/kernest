@@ -380,6 +380,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         master_palettes: Default::default(),
         filters: Vec::new(),
         variable_fonts: Vec::new(),
+        export_presets: Vec::new(),
     };
     let master_ids: HashMap<String, String> = ids
         .iter()

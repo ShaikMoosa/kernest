@@ -1,0 +1,19 @@
+[package]
+name = "kernest-cli"
+description = "Build, check and convert fonts from the command line"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kernest-core = { path = "../kernest-core" }
+kernest-export = { path = "../kernest-export" }
+kernest-import = { path = "../kernest-import" }
+kernest-check = { path = "../kernest-check" }
+clap = { version = "4", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

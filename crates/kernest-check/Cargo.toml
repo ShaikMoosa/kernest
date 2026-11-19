@@ -1,0 +1,22 @@
+[package]
+name = "kernest-check"
+description = "Offline font quality checks shared by Kernest and its command line"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fontspector-checkapi = "=1.10.0"
+fontspector-profile-opentype = "=1.8.0"
+# default-features off keeps the crate pure Rust: the `check` feature pulls a
+# bundled FreeType (C) and a git interpolatable dep that break ARM64 cross-builds.
+fontspector-profile-universal = { version = "=1.10.0", default-features = false }
+kernest-import = { path = "../kernest-import" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+kernest-core = { path = "../kernest-core" }
+kernest-export = { path = "../kernest-export" }
+tempfile = "3"

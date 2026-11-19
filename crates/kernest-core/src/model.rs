@@ -54,6 +54,8 @@ pub struct Font {
     /// variable font covering every axis at its full range.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variable_fonts: Vec<VariableFontSetting>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub export_presets: Vec<crate::presets::ExportPreset>,
 }
 
 /// Toggles for the features Kernest generates from glyph names. Only the tags
@@ -943,6 +945,7 @@ impl Font {
             master_palettes: BTreeMap::new(),
             filters: Vec::new(),
             variable_fonts: Vec::new(),
+            export_presets: Vec::new(),
         }
     }
 
@@ -968,6 +971,7 @@ impl Font {
     pub fn validate(&self) -> crate::Result<()> {
         use std::collections::HashSet;
         let bad = |m: String| Err(crate::Error::Invalid(m));
+        crate::presets::validate(&self.export_presets).map_err(crate::Error::Invalid)?;
         if self.masters.is_empty() {
             return bad("a font needs at least one master".into());
         }

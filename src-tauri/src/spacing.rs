@@ -109,6 +109,7 @@ fn interpolated_font(
         master_palettes: Default::default(),
         filters: Vec::new(),
         variable_fonts: Vec::new(),
+        export_presets: Vec::new(),
     };
     (scratch, bad)
 }

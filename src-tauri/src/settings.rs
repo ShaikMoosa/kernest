@@ -32,6 +32,9 @@ pub struct Settings {
     pub shortcuts: BTreeMap<String, String>,
     /// Overrides the bundled Python when set.
     pub python_path: Option<String>,
+    pub appearance: crate::preferences::Appearance,
+    pub onboarding: crate::preferences::Onboarding,
+    pub updates: crate::preferences::UpdateSettings,
 }
 
 impl Settings {
@@ -60,22 +63,32 @@ pub fn load_from(path: &std::path::Path) -> Settings {
 }
 
 pub fn save_to(path: &std::path::Path, settings: &Settings) -> CmdResult<()> {
+    settings.appearance.validate()?;
+    settings.onboarding.validate()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Could not create settings folder: {e}"))?;
     }
     let json = serde_json::to_vec_pretty(settings)
         .map_err(|e| format!("Could not encode settings: {e}"))?;
-    std::fs::write(path, json).map_err(|e| format!("Could not save settings: {e}"))
+    let temporary = path.with_extension("tmp");
+    std::fs::write(&temporary, json).map_err(|e| format!("Could not save settings: {e}"))?;
+    std::fs::rename(&temporary, path).map_err(|e| format!("Could not save settings: {e}"))
 }
 
-fn persist(state: &SettingsState, settings: Settings) -> CmdResult<Settings> {
-    save_to(&settings_path(), &settings)?;
-    *state
+pub(crate) fn change(
+    state: &SettingsState,
+    edit: impl FnOnce(&mut Settings) -> CmdResult<()>,
+) -> CmdResult<Settings> {
+    let mut guard = state
         .0
         .lock()
-        .map_err(|_| "Internal error: settings lock poisoned")? = settings.clone();
-    Ok(settings)
+        .map_err(|_| "Internal error: settings lock poisoned")?;
+    let mut next = guard.clone();
+    edit(&mut next)?;
+    save_to(&settings_path(), &next)?;
+    *guard = next.clone();
+    Ok(next)
 }
 
 #[tauri::command]
@@ -93,13 +106,10 @@ pub fn set_plugin_enabled(
     name: String,
     enabled: bool,
 ) -> CmdResult<Settings> {
-    let mut s = state
-        .0
-        .lock()
-        .map_err(|_| "Internal error: settings lock poisoned")?
-        .clone();
-    s.plugin_enabled.insert(name, enabled);
-    persist(&state, s)
+    change(&state, |s| {
+        s.plugin_enabled.insert(name, enabled);
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -108,45 +118,125 @@ pub fn set_shortcut(
     action: String,
     shortcut: String,
 ) -> CmdResult<Settings> {
-    let mut s = state
-        .0
-        .lock()
-        .map_err(|_| "Internal error: settings lock poisoned")?
-        .clone();
-    let trimmed = shortcut.trim().to_string();
-    if trimmed.is_empty() {
-        s.shortcuts.remove(&action);
-    } else {
-        s.shortcuts.insert(action, trimmed);
-    }
-    persist(&state, s)
+    change(&state, |s| {
+        let trimmed = shortcut.trim().to_string();
+        if trimmed.is_empty() {
+            s.shortcuts.remove(&action);
+        } else {
+            s.shortcuts.insert(action, trimmed);
+        }
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub fn reset_shortcuts(state: State<SettingsState>) -> CmdResult<Settings> {
-    let mut s = state
-        .0
-        .lock()
-        .map_err(|_| "Internal error: settings lock poisoned")?
-        .clone();
-    s.shortcuts.clear();
-    persist(&state, s)
+    change(&state, |s| {
+        s.shortcuts.clear();
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub fn set_python_path(state: State<SettingsState>, path: Option<String>) -> CmdResult<Settings> {
-    let mut s = state
-        .0
-        .lock()
-        .map_err(|_| "Internal error: settings lock poisoned")?
-        .clone();
-    s.python_path = path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
-    persist(&state, s)
+    change(&state, |s| {
+        s.python_path = path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty());
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn set_appearance(
+    state: State<SettingsState>,
+    appearance: crate::preferences::Appearance,
+) -> CmdResult<Settings> {
+    change(&state, |s| {
+        s.appearance = appearance;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn set_onboarding(
+    state: State<SettingsState>,
+    onboarding: crate::preferences::Onboarding,
+) -> CmdResult<Settings> {
+    change(&state, |s| {
+        s.onboarding = onboarding;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn record_milestone(state: State<SettingsState>, milestone: String) -> CmdResult<Settings> {
+    change(&state, |s| {
+        s.onboarding.completed.insert(milestone);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn set_update_check(state: State<SettingsState>, enabled: bool) -> CmdResult<Settings> {
+    change(&state, |s| {
+        s.updates.enabled = enabled;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearance_and_onboarding_survive_settings_round_trip() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "appearance":{"theme":"dark","language":"ar","handleSize":"large","textWidth":20000,"colors":{"light":{"canvas":"#f0f0f0"},"dark":{"cornerNode":"#abcdef"}}},
+            "onboarding":{"welcomeDone":true,"experience":"beginner","tourEnabled":true,"tourStep":2,"completed":["created","drawn"]},
+            "updates":{"enabled":true,"lastChecked":1234,"latestVersion":"2.5.0"}
+        })).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        save_to(&path, &settings).unwrap();
+        let back = serde_json::to_value(load_from(&path)).unwrap();
+        assert_eq!(back["appearance"]["textWidth"], 20000);
+        assert_eq!(back["appearance"]["language"], "ar");
+        assert_eq!(
+            back["appearance"]["colors"]["dark"]["cornerNode"],
+            "#abcdef"
+        );
+        assert_eq!(back["onboarding"]["tourStep"], 2);
+        assert_eq!(back["onboarding"]["completed"].as_array().unwrap().len(), 2);
+        assert_eq!(back["updates"]["lastChecked"], 1234);
+    }
+
+    #[test]
+    fn invalid_appearance_is_rejected_without_changing_saved_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        save_to(&path, &Settings::default()).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        for appearance in [
+            serde_json::json!({"textWidth":0}),
+            serde_json::json!({"theme":"unknown"}),
+            serde_json::json!({"handleSize":"huge"}),
+            serde_json::json!({"colors":{"light":{"canvas":"url(remote)"}}}),
+        ] {
+            let settings: Settings =
+                serde_json::from_value(serde_json::json!({"appearance":appearance})).unwrap();
+            assert!(save_to(&path, &settings).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn first_run_and_update_defaults_preserve_offline_behavior() {
+        let value = serde_json::to_value(Settings::default()).unwrap();
+        assert_eq!(value["onboarding"]["welcomeDone"], false);
+        assert_eq!(value["updates"]["enabled"], false);
+        assert_eq!(value["appearance"]["textWidth"], 16000);
+        assert!(value["appearance"]["theme"].is_null());
+        assert!(value["appearance"]["language"].is_null());
+    }
 
     #[test]
     fn round_trips_through_a_file() {
