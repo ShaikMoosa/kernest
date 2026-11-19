@@ -17,6 +17,7 @@ mod woff2;
 pub use glyphs_write::{glyphs_source, write_glyphs};
 pub use metrics::{apply_metrics, from_font, parse_afm, KeepSide, SourceMetrics};
 pub use svg::{svg_shapes, Placement};
+pub use woff2::decode as decode_woff2;
 
 use std::collections::BTreeMap;
 use std::path::Path;

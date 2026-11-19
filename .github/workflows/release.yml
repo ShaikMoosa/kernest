@@ -108,9 +108,16 @@ jobs:
       # The runtime is downloaded above, so it is added to the bundled resources
       # here (not in tauri.conf.json) to keep ordinary builds and tests working
       # without it.
+      - name: Build command line
+        shell: bash
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p kernest-cli
+          mkdir -p src-tauri/binaries
+          cp target/${{ matrix.target }}/release/kernest-cli.exe src-tauri/binaries/kernest-cli-${{ matrix.target }}.exe
+
       - name: Build setup installer
         shell: bash
-        run: npx tauri build --bundles nsis --target ${{ matrix.target }} --config '{"bundle":{"resources":{"python-runtime":"python/runtime"}}}'
+        run: npx tauri build --bundles nsis --target ${{ matrix.target }} --config '{"bundle":{"externalBin":["binaries/kernest-cli"],"resources":{"python-runtime":"python/runtime"}}}'
 
       - uses: actions/upload-artifact@v4
         with:

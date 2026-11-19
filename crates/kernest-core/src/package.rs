@@ -39,11 +39,11 @@ use crate::model::{
 /// palette overrides and per-master colour paints (older versions would drop the
 /// variation and export every master with the default colour); version 10 adds
 /// alignment zones, stems, manual hints and hinting settings (older versions
-/// would drop them on save).
+/// would drop them on save); version 11 adds saved export presets.
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 10;
+pub const FORMAT_VERSION: u32 = 11;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -70,6 +70,8 @@ struct FontFile {
     filters: Vec<crate::smartfilter::Filter>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     variable_fonts: Vec<crate::model::VariableFontSetting>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    export_presets: Vec<crate::presets::ExportPreset>,
     glyph_order: Vec<String>,
 }
 
@@ -238,8 +240,10 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
             .iter()
             .any(|g| g.layers.iter().any(|l| !l.hints.is_empty()));
     let file = FontFile {
-        format_version: if has_phase10 {
+        format_version: if !font.export_presets.is_empty() {
             FORMAT_VERSION
+        } else if has_phase10 {
+            10
         } else if has_var_color {
             9
         } else if has_phase9 {
@@ -270,6 +274,7 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
         feature_settings: font.feature_settings.clone(),
         filters: font.filters.clone(),
         variable_fonts: font.variable_fonts.clone(),
+        export_presets: font.export_presets.clone(),
         glyph_order: font.glyphs.iter().map(|g| g.name.clone()).collect(),
     };
     write_atomic(&font_path, &to_json(&file, &font_path)?)
@@ -350,6 +355,7 @@ pub fn open(dir: &Path) -> Result<Font> {
         feature_settings: file.feature_settings,
         filters: file.filters,
         variable_fonts: file.variable_fonts,
+        export_presets: file.export_presets,
     };
     font.validate()?;
     Ok(font)
@@ -359,6 +365,49 @@ pub fn open(dir: &Path) -> Result<Font> {
 mod tests {
     use super::*;
     use crate::sample::sample_font;
+
+    #[test]
+    fn presets_round_trip_and_gate_only_fonts_that_use_them() {
+        let original = sample_font();
+        let mut json = serde_json::to_value(&original).unwrap();
+        json["exportPresets"] = serde_json::json!([{
+            "name": "web", "formats": ["woff2"], "instances": [],
+            "options": {"variable": false, "statics": true, "autohint": true},
+            "folder": "build/web"
+        }]);
+        let font: Font = serde_json::from_value(json).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        save(&font, dir.path()).unwrap();
+        let saved: serde_json::Value = read_json(&dir.path().join("font.json")).unwrap();
+        assert_eq!(saved["formatVersion"], 11);
+        assert_eq!(saved["exportPresets"][0]["folder"], "build/web");
+        assert_eq!(saved["exportPresets"][0]["formats"][0], "woff2");
+        let back = open(dir.path()).unwrap();
+        assert_eq!(
+            serde_json::to_value(back).unwrap()["exportPresets"][0]["name"],
+            "web"
+        );
+        save(&original, dir.path()).unwrap();
+        let saved: serde_json::Value = read_json(&dir.path().join("font.json")).unwrap();
+        assert_eq!(saved["formatVersion"], 1);
+        assert!(saved.get("exportPresets").is_none());
+    }
+
+    #[test]
+    fn invalid_preset_settings_cannot_be_saved() {
+        let cases = [
+            serde_json::json!([{"name":" ","formats":["ttf"],"options":{}}]),
+            serde_json::json!([{"name":"web","formats":[],"options":{}}]),
+            serde_json::json!([{"name":"web","formats":["ttf"],"options":{"variable":false,"statics":false}}]),
+            serde_json::json!([{"name":"web","formats":["ttf"]},{"name":"web","formats":["otf"]}]),
+        ];
+        for presets in cases {
+            let mut json = serde_json::to_value(sample_font()).unwrap();
+            json["exportPresets"] = presets;
+            let font: Font = serde_json::from_value(json).unwrap();
+            assert!(font.validate().is_err());
+        }
+    }
 
     #[test]
     fn file_names_are_unique_on_windows() {

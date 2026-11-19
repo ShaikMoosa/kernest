@@ -34,6 +34,7 @@ pub mod order;
 pub mod overlap;
 pub mod package;
 pub mod pathops;
+pub mod presets;
 pub mod rename;
 pub mod sample;
 pub mod smart;
@@ -41,6 +42,7 @@ pub mod smartfilter;
 pub mod structure;
 pub mod text;
 pub mod transform;
+pub mod wizard;
 
 pub use error::{Error, Result};
 pub use geometry::Rect;

@@ -39,6 +39,11 @@ export function openExternal(url: string): Promise<void> {
   return Promise.resolve();
 }
 
+export async function pickQualityReportPath(familyName: string): Promise<string | null> {
+  if (!isTauri) return null;
+  return save({ title: t("Save font check report"), defaultPath: `${familyName.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")}-checks.json`, filters: [{ name: "JSON", extensions: ["json"] }] });
+}
+
 /** A `.kernest` font is a folder, so Open picks a directory. */
 export async function pickFontToOpen(): Promise<string | null> {
   if (!isTauri) return null;

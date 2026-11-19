@@ -382,6 +382,16 @@ export interface Instance {
   styleLink?: StyleLink;
 }
 
+export interface NewFontSetup {
+  familyName: string;
+  glyphSets: string[];
+  unitsPerEm?: number;
+  metrics?: Metrics;
+  axes?: Axis[];
+  masters?: { name: string; location: Location }[];
+  instances?: Instance[];
+}
+
 export interface StyleLink {
   bold: boolean;
   italic: boolean;
@@ -505,6 +515,7 @@ export interface FontInfo {
   instances: Instance[];
   /** Extra variable fonts to export from this family, beyond the full one. */
   variableFonts: VariableFontSetting[];
+  exportPresets: ExportPreset[];
   /** TrueType autohinting settings. */
   hinting: Hinting;
   /** TTFAutohint control instructions, applied to TrueType exports. */
@@ -699,7 +710,7 @@ export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in
 
 export interface Backend {
   glyphSets(): Promise<GlyphSetInfo[]>;
-  newFont(familyName: string, glyphSets: string[]): Promise<FontView>;
+  newFont(setup: NewFontSetup): Promise<FontView>;
   openSample(): Promise<FontView>;
   openFont(path: string): Promise<FontView>;
   saveFont(path?: string): Promise<string>;
@@ -793,11 +804,15 @@ export interface Backend {
   setInstances(instances: Instance[]): Promise<FontInfo>;
   /** Replaces the list of extra variable fonts built from this family. */
   setVariableFonts(variableFonts: VariableFontSetting[]): Promise<FontInfo>;
+  setExportPresets(presets: ExportPreset[]): Promise<FontInfo>;
+  exportPreset(name: string, outDir?: string): Promise<ExportReport>;
+  checkFonts(paths: string[], profile?: "opentype" | "universal"): Promise<QualityReport>;
+  saveQualityReport(path: string, report: QualityReport): Promise<string>;
   /** Reorders the working glyphs; export follows the new order. */
   setGlyphOrder(order: string[]): Promise<FontInfo>;
   compatibility(): Promise<{ glyph: string; issues: string[] }[]>;
   /** Compiles a variable font and/or static fonts (TrueType) into `outDir`. */
-  exportFont(variable: boolean, statics: boolean, outDir: string, options?: ExportFormats): Promise<ExportReport>;
+  exportFont(variable: boolean, statics: boolean, outDir: string, options?: ExportFormats, instances?: string[]): Promise<ExportReport>;
   /** Writes editable UFO sources and a designspace into `outDir`. */
   exportUfo(outDir: string, options?: UfoExportOptions): Promise<UfoExportReport>;
   /** Sets (or clears, with null) a metrics key such as "=n" and applies it. */
@@ -881,6 +896,11 @@ export interface Backend {
   /** Paths Kernest was started with (Explorer's "Open in Kernest", "Open with"); once. */
   takeLaunchPaths(): Promise<string[]>;
   getSettings(): Promise<Settings>;
+  setAppearance(appearance: Appearance): Promise<Settings>;
+  setOnboarding(onboarding: Onboarding): Promise<Settings>;
+  recordMilestone(milestone: Milestone): Promise<Settings>;
+  setUpdateCheck(enabled: boolean): Promise<Settings>;
+  checkUpdates(): Promise<UpdateInfo>;
   setPluginEnabled(name: string, enabled: boolean): Promise<Settings>;
   setShortcut(action: string, shortcut: string): Promise<Settings>;
   resetShortcuts(): Promise<Settings>;
@@ -985,6 +1005,34 @@ export interface MetricsResult {
   status: DocStatus;
 }
 
+export type CheckSeverity = "PASS" | "WARN" | "FAIL" | "SKIP" | "INFO" | "ERROR";
+export interface QualityCheck {
+  id: string;
+  title: string;
+  status: CheckSeverity;
+  file: string | null;
+  glyphs: string[];
+  messages: { code: string | null; message: string }[];
+}
+export interface QualityReport {
+  profile: string;
+  files: number;
+  checks: QualityCheck[];
+  failed: number;
+  warnings: number;
+  passed: number;
+  skipped: number;
+  errors: number;
+}
+
+export interface ExportPreset {
+  name: string;
+  formats: ("ttf" | "otf" | "woff2")[];
+  instances: string[];
+  options: { variable: boolean; statics: boolean; removeOverlaps: boolean; applyMetricsKeys: boolean; autohint: boolean; productionNames: boolean };
+  folder: string;
+}
+
 export interface ExportFormats {
   ttf: boolean;
   otf: boolean;
@@ -1018,6 +1066,39 @@ export interface UfoExportReport {
 
 // ---------- Scripts, plug-ins and settings (phase 6) ----------
 
+export type Milestone = "created" | "drawn" | "spaced" | "kerned" | "instance" | "exported";
+export type CanvasElement = "cornerNode" | "smoothNode" | "zones" | "stroke" | "background" | "otherLayers" | "canvas" | "kerningNegative" | "kerningPositive";
+export interface Appearance {
+  theme: "system" | "light" | "dark" | null;
+  language: "en" | "es" | "ar" | null;
+  handleSize: "small" | "medium" | "large";
+  textWidth: number;
+  colors: { light: Partial<Record<CanvasElement, string>>; dark: Partial<Record<CanvasElement, string>> };
+}
+export interface Onboarding {
+  welcomeDone: boolean;
+  experience: "beginner" | "experienced" | null;
+  tourEnabled: boolean;
+  tourStep: number;
+  completed: Milestone[];
+}
+export interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string | null;
+  available: boolean;
+  checkedAt: number | null;
+  error: string | null;
+}
+
+export function initialSettings(): Settings {
+  return {
+    pluginEnabled: {}, shortcuts: {}, pythonPath: null,
+    appearance: { theme: null, language: null, handleSize: "medium", textWidth: 16000, colors: { light: {}, dark: {} } },
+    onboarding: { welcomeDone: false, experience: null, tourEnabled: false, tourStep: 0, completed: [] },
+    updates: { enabled: false, lastChecked: null, latestVersion: null, error: null },
+  };
+}
+
 export interface Settings {
   /** Plug-in name → enabled; a name absent here is enabled. */
   pluginEnabled: Record<string, boolean>;
@@ -1025,6 +1106,9 @@ export interface Settings {
   shortcuts: Record<string, string>;
   /** Overrides the bundled Python when set. */
   pythonPath: string | null;
+  appearance: Appearance;
+  onboarding: Onboarding;
+  updates: { enabled: boolean; lastChecked: number | null; latestVersion: string | null; error: string | null };
 }
 
 export interface PythonInfo {
@@ -1100,7 +1184,7 @@ export interface RunFilterPluginOptions {
 
 const tauriBackend: Backend = {
   glyphSets: () => invoke("glyph_sets"),
-  newFont: (familyName, glyphSets) => invoke("new_font", { familyName, glyphSets }),
+  newFont: (setup) => invoke("new_font", { setup }),
   openSample: () => invoke("open_sample"),
   openFont: (path) => invoke("open_font", { path }),
   saveFont: (path) => invoke("save_font", { path: path ?? null }),
@@ -1160,9 +1244,13 @@ const tauriBackend: Backend = {
   removeMaster: (id) => invoke("remove_master", { id }),
   setInstances: (instances) => invoke("set_instances", { instances }),
   setVariableFonts: (variableFonts) => invoke("set_variable_fonts", { variableFonts }),
+  setExportPresets: (presets) => invoke("set_export_presets", { presets }),
+  exportPreset: (name, outDir) => invoke("export_preset", { name, outDir }),
+  checkFonts: (paths, profile) => invoke("check_fonts", { paths, profile }),
+  saveQualityReport: (path, report) => invoke("save_quality_report", { path, report }),
   setGlyphOrder: (order) => invoke("set_glyph_order", { order }),
   compatibility: () => invoke("compatibility"),
-  exportFont: (variable, statics, outDir, options) => invoke("export_font", { variable, statics, outDir, ...options }),
+  exportFont: (variable, statics, outDir, options, instances) => invoke("export_font", { variable, statics, outDir, ...options, instances }),
   exportUfo: (outDir, options) => invoke("export_ufo", { outDir, ...options }),
   setMetricsKey: (glyph, masterId, metric, key) => invoke("set_metrics_key", { glyph, masterId, metric, key }),
   updateMetrics: () => invoke("update_metrics"),
@@ -1211,6 +1299,11 @@ const tauriBackend: Backend = {
   setComponentAlign: (glyph, masterId, index, align) => invoke("set_component_align", { glyph, masterId, index, align }),
   createComposites: (names) => invoke("create_composites", { names }),
   getSettings: () => invoke("get_settings"),
+  setAppearance: (appearance) => invoke("set_appearance", { appearance }),
+  setOnboarding: (onboarding) => invoke("set_onboarding", { onboarding }),
+  recordMilestone: (milestone) => invoke("record_milestone", { milestone }),
+  setUpdateCheck: (enabled) => invoke("set_update_check", { enabled }),
+  checkUpdates: () => invoke("check_updates"),
   setPluginEnabled: (name, enabled) => invoke("set_plugin_enabled", { name, enabled }),
   setShortcut: (action, shortcut) => invoke("set_shortcut", { action, shortcut }),
   resetShortcuts: () => invoke("reset_shortcuts"),
@@ -1293,6 +1386,7 @@ interface MockMeta {
   masters: MasterView[];
   instances: Instance[];
   variableFonts: VariableFontSetting[];
+  exportPresets: ExportPreset[];
   hinting?: Hinting;
   controlInstructions?: string;
   psHinting?: PsHinting | null;
@@ -1332,7 +1426,7 @@ function mockDoc(familyName: string, codepoints: number[], withOutlines: boolean
   });
   const kerning = withOutlines ? [{ left: "T", right: "o", value: -60 }, { left: "L", right: "T", value: -80 }] : [];
   return {
-    familyName, unitsPerEm: 1000, versionMajor: 1, versionMinor: 0, names: { ...EMPTY_NAMES }, notes: "", axes: [], instances: [], variableFonts: [],
+    familyName, unitsPerEm: 1000, versionMajor: 1, versionMinor: 0, names: { ...EMPTY_NAMES }, notes: "", axes: [], instances: [], variableFonts: [], exportPresets: [],
     masters: [{ id: "m01", name: "Regular", location: {}, metrics: { ...METRICS }, alignmentZones: [], stems: [] }],
     glyphs, kerning, undo: [], redo: [], revision: 0, savedRevision: 0,
   };
@@ -1478,7 +1572,7 @@ function undoStep(d: MockDoc, c: MockChange, forward: boolean): UndoResult {
 
 const metaCopy = (m: MockMeta): MockMeta => JSON.parse(JSON.stringify({
   familyName: m.familyName, unitsPerEm: m.unitsPerEm, versionMajor: m.versionMajor, versionMinor: m.versionMinor,
-  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, variableFonts: m.variableFonts, hinting: m.hinting, controlInstructions: m.controlInstructions, psHinting: m.psHinting, grid: m.grid,
+  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, variableFonts: m.variableFonts, exportPresets: m.exportPresets, hinting: m.hinting, controlInstructions: m.controlInstructions, psHinting: m.psHinting, grid: m.grid,
 }));
 
 function mockInfo(d: MockDoc): FontInfo {
@@ -1536,12 +1630,8 @@ const MOCK_LANGUAGES: [string, string[]][] = [
 
 const hexCp = (cp: number) => cp.toString(16).toUpperCase().padStart(4, "0");
 
-const mockSettings: Settings = { pluginEnabled: {}, shortcuts: {}, pythonPath: null };
-const mockSettingsView = (): Settings => ({
-  pluginEnabled: { ...mockSettings.pluginEnabled },
-  shortcuts: { ...mockSettings.shortcuts },
-  pythonPath: mockSettings.pythonPath,
-});
+const mockSettings: Settings = initialSettings();
+const mockSettingsView = (): Settings => structuredClone(mockSettings);
 
 const mockBackend: Backend = {
   async glyphSets() {
@@ -1558,10 +1648,17 @@ const mockBackend: Backend = {
       { id: "hebrew", name: "Hebrew", count: 57 },
     ];
   },
-  async newFont(familyName, sets) {
-    if (!familyName.trim()) throw "Enter a family name.";
-    mock = mockDoc(familyName.trim(), [...new Set(sets.flatMap((s) => MOCK_SETS[s] ?? []))], false);
-    return mockFontView(mock);
+  async newFont(setup) {
+    if (!setup.familyName.trim()) throw "Enter a family name.";
+    const doc = mockDoc(setup.familyName.trim(), [...new Set(setup.glyphSets.flatMap((s) => MOCK_SETS[s] ?? []))], false);
+    doc.unitsPerEm = setup.unitsPerEm ?? 1000;
+    doc.axes = structuredClone(setup.axes ?? []);
+    doc.instances = structuredClone(setup.instances ?? []);
+    doc.masters = (setup.masters ?? [{ name: "Regular", location: {} }]).map((m, i) => ({ ...m, id: `m${String(i + 1).padStart(2, "0")}`, metrics: { ...(setup.metrics ?? METRICS) }, alignmentZones: [], stems: [] }));
+    for (const glyph of doc.glyphs) glyph.width *= doc.unitsPerEm / 1000;
+    doc.revision = 1;
+    mock = doc;
+    return mockFontView(doc);
   },
   async openSample() {
     mock = mockDoc("Kernest Sample", range(0x20, 0x7e), true);
@@ -1786,6 +1883,19 @@ const mockBackend: Backend = {
   },
   async setGlyphOrder() {
     throw "Glyph order needs the desktop app (npm run tauri dev).";
+  },
+  async setExportPresets(presets) {
+    const d = need();
+    return editMeta(d, (m) => { m.exportPresets = structuredClone(presets); });
+  },
+  async exportPreset() {
+    throw "Exporting fonts needs the desktop app (npm run tauri dev).";
+  },
+  async checkFonts() {
+    throw "Font quality checks need the desktop app (npm run tauri dev).";
+  },
+  async saveQualityReport() {
+    throw "Saving needs the desktop app (npm run tauri dev).";
   },
   async exportFont() {
     throw "Exporting fonts needs the desktop app (npm run tauri dev).";
@@ -2071,6 +2181,25 @@ const mockBackend: Backend = {
   },
   async getSettings() {
     return mockSettingsView();
+  },
+  async setAppearance(appearance) {
+    mockSettings.appearance = structuredClone(appearance);
+    return mockSettingsView();
+  },
+  async setOnboarding(onboarding) {
+    mockSettings.onboarding = structuredClone(onboarding);
+    return mockSettingsView();
+  },
+  async recordMilestone(milestone) {
+    if (!mockSettings.onboarding.completed.includes(milestone)) mockSettings.onboarding.completed.push(milestone);
+    return mockSettingsView();
+  },
+  async setUpdateCheck(enabled) {
+    mockSettings.updates.enabled = enabled;
+    return mockSettingsView();
+  },
+  async checkUpdates() {
+    return { currentVersion: __APP_VERSION__, latestVersion: null, available: false, checkedAt: null, error: null };
   },
   async setPluginEnabled(name, enabled) {
     mockSettings.pluginEnabled[name] = enabled;

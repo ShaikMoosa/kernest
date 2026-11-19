@@ -10,11 +10,14 @@ mod glyphs;
 mod import;
 mod launch;
 mod layers;
+mod preferences;
 mod preview;
+mod quality;
 mod script;
 mod settings;
 mod spacing;
 mod tools;
+mod updates;
 
 fn main() {
     let launch_paths = launch::paths_from_args(std::env::args());
@@ -72,6 +75,7 @@ fn main() {
             fontinfo::remove_master,
             fontinfo::set_instances,
             fontinfo::set_variable_fonts,
+            fontinfo::set_export_presets,
             fontinfo::set_glyph_order,
             fontinfo::set_font_names,
             fontinfo::set_notes,
@@ -83,6 +87,9 @@ fn main() {
             features::import_features,
             features::shape_text,
             export::export_font,
+            export::export_preset,
+            quality::check_fonts,
+            quality::save_quality_report,
             export::export_ufo,
             import::import_font,
             import::save_glyphs,
@@ -140,6 +147,11 @@ fn main() {
             tools::update_background,
             tools::measure,
             settings::get_settings,
+            settings::set_appearance,
+            settings::set_onboarding,
+            settings::record_milestone,
+            settings::set_update_check,
+            updates::check_updates,
             settings::set_plugin_enabled,
             settings::set_shortcut,
             settings::reset_shortcuts,

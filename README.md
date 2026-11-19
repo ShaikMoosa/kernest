@@ -137,7 +137,7 @@ The rest of the plan, in order. Each phase is built, tested, checked in the app,
 | 8 | 2.2 | Font View list view with sortable, editable columns; cell size slider; languages sidebar with missing glyphs and Add Missing; smart filters and saved lists; tags and groups; production names; batch rename and batch commands; copy glyph names and Paste Special; drag or text glyph order | ✅ v2.2 |
 | 9 | 2.3 | Axis mappings (avar) and STAT axis values, several variable fonts per family, add masters from other fonts with a compatibility report, compare fonts, Generate Instances as a new font, colour that varies between masters (variable COLRv1) | ✅ v2.3 |
 | 10 | 2.4 | Alignment zones and stems per master, PostScript hints in OTF exports (blue controls, automatic and manual glyph hints), TrueType control instructions, hinted vs unhinted pixel preview | ✅ v2.4 |
-| 11 | 2.5 | Welcome screen, new font wizard, guided tour, font quality check, command line | ⏳ planned |
+| 11 | 2.5 | Welcome screen, new font wizard, guided tour, font quality check, command line | ✅ next release |
 
 Later, not scheduled yet: strokes, brushes, corner and cap components, sbix and SVG colour, test install, kerning compress, manual TrueType instructions.
 

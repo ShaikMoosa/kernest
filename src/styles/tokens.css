@@ -43,6 +43,25 @@
   --k-status-success: #65a30d;
   --k-status-success-subtle: #ecfccb;
 
+  --k-default-light-cornerNode: #594fee;
+  --k-default-dark-cornerNode: #8a83ff;
+  --k-default-light-smoothNode: #65a30d;
+  --k-default-dark-smoothNode: #8fd42a;
+  --k-default-light-zones: #594fee;
+  --k-default-dark-zones: #5f56f0;
+  --k-default-light-stroke: #020617;
+  --k-default-dark-stroke: #e5eaf2;
+  --k-default-light-background: #ff9087;
+  --k-default-dark-background: #ff9087;
+  --k-default-light-otherLayers: #cbd5e1;
+  --k-default-dark-otherLayers: #36445c;
+  --k-default-light-canvas: #ffffff;
+  --k-default-dark-canvas: #0f1726;
+  --k-default-light-kerningNegative: #9c0015;
+  --k-default-dark-kerningNegative: #ff9b9b;
+  --k-default-light-kerningPositive: #3f6212;
+  --k-default-dark-kerningPositive: #b0e36a;
+
   /* Editor */
   --k-editor-canvas: #ffffff;
   --k-editor-outline: #020617;

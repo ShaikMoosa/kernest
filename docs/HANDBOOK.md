@@ -2,6 +2,7 @@
 
 Kernest is a font editor for Windows. It works offline, and your fonts are plain files on your disk. This handbook covers everything the app can do today. Press **F1** in the app to open it.
 
+- [Getting started](#getting-started)
 - [Fonts and files](#fonts-and-files)
 - [Font View](#font-view)
 - [Edit View](#edit-view)
@@ -14,6 +15,24 @@ Kernest is a font editor for Windows. It works offline, and your fonts are plain
 - [Scripting and plug-ins](#scripting-and-plug-ins)
 - [Theme and language](#theme-and-language)
 - [Keyboard shortcuts](#keyboard-shortcuts)
+- [Command line](#command-line)
+
+## Getting started
+
+The first time you open Kernest it shows a **Welcome** window. Pick what describes you best — *New to type design* turns on the guided tour, *I've used other font editors* skips it — then choose how to start: a new font, an existing `.kernest` font, the sample font, or an import from another app. You can reopen the Welcome window later from **Help › Welcome to Kernest**.
+
+### The New Font wizard
+
+**New Font** opens a four-step setup:
+
+1. **Family & metrics** — the family name, units per em, and the vertical proportions (x-height, cap height, ascender, descender).
+2. **Scripts & glyph sets** — tick the scripts and glyph sets to start with; overlapping sets are combined. You can add more later.
+3. **Masters & axes** — choose *Single style*, *Weight* (Light→Bold), *Weight × Width* (four corners), or *Custom* to define your own axes and masters. Suggested instances are offered; tick the ones to export. One master must sit at the default of every axis.
+4. **Review & create** — a summary of everything above. Nothing is created until you press **Create Font**; the new font opens as an unsaved document with empty glyphs, ready to draw.
+
+### Guided tour and checklist
+
+If you chose the guided tour, a short six-step overlay walks the real screens: Font View, Edit View, Text View, kerning, instances and export. Each step points at the control to use; **Next** moves on without doing the work for you. A **Getting started** checklist ticks itself off as you actually create a font, draw a glyph, space glyphs, kern a pair, preview an instance and export. **Show me** jumps to the relevant screen; **End tour** hides the overlay. Restart or reset both from the **Help** menu.
 
 ## Fonts and files
 
@@ -316,6 +335,14 @@ And what happens before building:
 
 Kerning and kerning groups are compiled into GPOS, and your feature code — generated and hand-written (see [Features](#features)) — is included. Glyphs that aren't set to export are left out.
 
+### Presets
+
+The left rail of the Export window holds **presets**: named bundles of formats, options, chosen instances and destination folder. **Save preset** stores the current choices under a name; picking a preset restores them; **Remove preset** deletes it. Presets are saved inside the `.kernest` font (so they travel with it) and are shared with the [command line](#command-line) (`kernest-cli export … --preset name`). A font that uses presets saves at format version 11; older files without presets keep their own version.
+
+### Check font
+
+After exporting, **Check font** runs [Fontspector](https://github.com/fonttools/fontspector) over the files you just wrote and opens a report: **FAIL / WARN / PASS / SKIP / ERROR** per check, grouped by category (names, vertical metrics, outlines, features, hinting, variable font), with a plain explanation and the original checker output under *Technical details*. Filter by category or severity, switch between the *OpenType and general quality* and *OpenType specification* profiles, or check a single exported file. **Save report…** writes the report as JSON. Checks run entirely on your computer; no font data is sent anywhere, and network-dependent checks are skipped. **Open Font Info** / **Show glyph** jump to the place to fix a problem.
+
 ### Editable sources
 
 - **File › Export › UFO…** writes editable sources instead of compiled fonts: one `.ufo` per chosen master, plus a `.designspace` tying them together, for editing in other font tools. Tick the masters to write (the default one is marked), and choose whether to **decompose smart components** (flatten smart glyphs to outlines; otherwise they stay plain components) and write **colour layers** as named UFO layers.
@@ -431,6 +458,18 @@ code — is in [docs/PYTHON_API.md](PYTHON_API.md).
   - The Handbook is in English.
 - The installer can also be run in English, Spanish or Arabic.
 
+### Appearance
+
+**Window › Settings… › Appearance** tunes the editor beyond the theme:
+
+- **Handle size** (Small / Medium / Large) scales the node and anchor handles on the canvas.
+- **Text View width** (in 1/1000 em) sets how wide a line of text may run before it wraps in the Text View.
+- **Canvas colours** gives a Light and a Dark value for each drawing element — corner nodes, smooth nodes, hints and zones, foreground stroke, background layer, components, canvas, and negative/positive kerning. Changes apply immediately; **Restore standard appearance** resets them.
+
+### Updates
+
+**Window › Settings… › Updates** controls update checking. It is **off by default**: Kernest sends no update requests. When you turn it on, Kernest reads the latest stable release from GitHub at most once a day and only shows a notice (with a link to the release); it never downloads or installs anything automatically. **Check now** runs a check immediately.
+
 ## Keyboard shortcuts
 
 | Action | Shortcut |
@@ -459,3 +498,14 @@ code — is in [docs/PYTHON_API.md](PYTHON_API.md).
 
 Most of these can be changed in **Settings › Shortcuts**; the menus then show your
 shortcut. Undo and Redo also work as Ctrl+Z and Ctrl+Shift+Z.
+
+## Command line
+
+The installer puts `kernest-cli.exe` next to the app. It uses the same engine as the editor, so builds and checks match what you see in the app. Add the install folder to your `PATH`, or call it by full path.
+
+- `kernest-cli export <font> [--format ttf,otf,woff2,variable] [--out dir] [--preset name]` — build fonts. `<font>` is a `.kernest` package or any importable source. Without `--preset`, `--format` picks the formats (default `ttf`); `variable` adds the variable font. `--preset` uses a preset saved in the font (see [Export › Presets](#presets)); `--out` overrides its folder.
+- `kernest-cli check <dir|file> [--profile universal|opentype]` — run the same offline Fontspector checks as **Check font**. Exit code `0` = no failures, `1` = at least one FAIL, `2` = a check error or bad input. Warnings alone do not fail the build.
+- `kernest-cli convert <in> --to kernest|glyphs|ufo [--out path]` — convert between formats without overwriting an existing output.
+- `kernest-cli info <font>` — print the family, glyph count, masters, axes, instances and presets.
+
+Add `--json` to any command for machine-readable output (handy in CI). The command line is English-only; the app interface is translated.

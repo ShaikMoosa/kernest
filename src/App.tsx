@@ -3,13 +3,16 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
-import { backend, errorMessage, isTauri, type BatchOperation, type ClipGlyph, type CompareView, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PasteMode, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement } from "./lib/backend";
-import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, loadRecents, openExternal, pickCompareSource, pickFeaFile, pickFontToOpen, pickGlyphsSavePath, pickMetricsSource, pickSavePath, pickScript, pickSourceToImport, pickSvgFiles, rememberRecent, type RecentFont } from "./lib/desktop";
+import { backend, errorMessage, initialSettings, isTauri, type Appearance, type Milestone, type Onboarding, type UpdateInfo, type BatchOperation, type ClipGlyph, type CompareView, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PasteMode, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement } from "./lib/backend";
+import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, REPO_URL, loadRecents, openExternal, pickCompareSource, pickFeaFile, pickFontToOpen, pickGlyphsSavePath, pickMetricsSource, pickSavePath, pickScript, pickSourceToImport, pickSvgFiles, rememberRecent, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu, type MenuItem } from "./components/TitleBar";
 import { SHORTCUT_ACTIONS, effectiveShortcut, matchShortcut, parseShortcut } from "./lib/shortcuts";
 import { loadTheme, saveTheme, type ThemePref } from "./lib/theme";
+import { applyCanvasColors } from "./lib/appearance";
 import { StartWindow } from "./components/StartWindow";
 import { NewFontDialog } from "./components/NewFontDialog";
+import { WelcomeDialog, type StartAction } from "./components/WelcomeDialog";
+import { GuidedTour } from "./components/GuidedTour";
 import { AddGlyphsDialog } from "./components/AddGlyphsDialog";
 import { CompositesDialog } from "./components/CompositesDialog";
 import { PasteSpecialDialog } from "./components/PasteSpecialDialog";
@@ -100,8 +103,8 @@ export default function App() {
   const [theme, setThemeState] = useState<ThemePref>(loadTheme);
   // The UI language; changing it re-renders everything (t() reads the current one).
   const [lang, setLangState] = useState<Lang>(language);
-  const setLang = (l: Lang) => { saveLanguage(l); setLangState(l); };
-  const setTheme = (t: ThemePref) => { saveTheme(t); setThemeState(t); };
+  const setLang = (l: Lang) => { changeAppearance({ ...settings.appearance, language: l }).catch(fail); };
+  const setTheme = (theme: ThemePref) => { changeAppearance({ ...settings.appearance, theme }).catch(fail); };
   const [showMetrics, toggleMetrics] = useViewToggle("kernest.showMetrics", true);
   const [showAnchors, toggleAnchors] = useViewToggle("kernest.showAnchors", true);
   const [showNodes, toggleNodes] = useViewToggle("kernest.showNodes", true);
@@ -114,7 +117,11 @@ export default function App() {
   // ---------- Scripts, plug-ins and settings (phase 6) ----------
   const [scripts, setScripts] = useState<ScriptEntry[]>([]);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
-  const [settings, setSettings] = useState<Settings>({ pluginEnabled: {}, shortcuts: {}, pythonPath: null });
+  const [settings, setSettings] = useState<Settings>(initialSettings);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [dismissedUpdate, setDismissedUpdate] = useState<string | null>(null);
+  useEffect(() => applyCanvasColors(settings.appearance, theme), [settings.appearance, theme]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [compare, setCompare] = useState<CompareView | null>(null);
   const [scriptDialog, setScriptDialog] = useState<{ mode: "macro" | "script"; name?: string } | null>(null);
@@ -137,13 +144,50 @@ export default function App() {
   useEffect(() => {
     backend.listScripts().then(setScripts, () => {});
     backend.listPlugins().then(setPlugins, () => {});
-    backend.getSettings().then(setSettings, () => {});
+    backend.getSettings().then(s => {
+      setSettings(s);
+      if (s.appearance.theme) { saveTheme(s.appearance.theme); setThemeState(s.appearance.theme); }
+      if (s.appearance.language) { saveLanguage(s.appearance.language); setLangState(s.appearance.language); }
+      setSettingsReady(true);
+    }, e => setToast({ kind: "danger", text: errorMessage(e) }));
     const off = backend.onScriptOutput((line) => setScriptOutput((prev) => [...prev, line]));
     return () => { off.then((f) => f()); };
   }, []);
 
   const fail = useCallback((e: unknown) => setToast({ kind: "danger", text: errorMessage(e) }), []);
   const openHandbook = useCallback(() => { openExternal(HANDBOOK_URL).catch(fail); }, [fail]);
+  const changeAppearance = useCallback(async (appearance: Appearance) => {
+    const next = await backend.setAppearance(appearance);
+    setSettings(s => ({ ...s, appearance: next.appearance }));
+    if (appearance.theme) { saveTheme(appearance.theme); setThemeState(appearance.theme); }
+    if (appearance.language) { saveLanguage(appearance.language); setLangState(appearance.language); }
+  }, []);
+  const changeOnboarding = useCallback(async (onboarding: Onboarding) => {
+    const next = await backend.setOnboarding(onboarding);
+    setSettings(s => ({ ...s, onboarding: next.onboarding }));
+  }, []);
+  const checkForUpdates = useCallback(async () => {
+    const info = await backend.checkUpdates();
+    setUpdateInfo(info);
+    setSettings(s => ({ ...s, updates: { ...s.updates, lastChecked: info.checkedAt, latestVersion: info.latestVersion, error: info.error } }));
+  }, []);
+  const toggleUpdates = useCallback(async (enabled: boolean) => {
+    const next = await backend.setUpdateCheck(enabled);
+    setSettings(s => ({ ...s, updates: next.updates }));
+  }, []);
+  useEffect(() => {
+    if (!settingsReady || !settings.updates.enabled) { setUpdateInfo(null); return; }
+    checkForUpdates().catch(fail);
+    const timer = setInterval(() => checkForUpdates().catch(fail), 3600000);
+    return () => clearInterval(timer);
+  }, [settingsReady, settings.updates.enabled, checkForUpdates, fail]);
+  const completedMilestones = useRef(settings.onboarding.completed);
+  completedMilestones.current = settings.onboarding.completed;
+  const recordMilestone = useCallback((milestone: Milestone) => {
+    if (completedMilestones.current.includes(milestone)) return;
+    completedMilestones.current = [...completedMilestones.current, milestone];
+    backend.recordMilestone(milestone).then(s => setSettings(current => ({ ...current, onboarding: { ...current.onboarding, completed: s.onboarding.completed } })), fail);
+  }, [fail]);
 
   const show = useCallback((view: FontView) => {
     setFont(view);
@@ -156,7 +200,8 @@ export default function App() {
     setTabs([]);
     setActive(null);
     setVersions({});
-  }, [show]);
+    recordMilestone("created");
+  }, [show, recordMilestone]);
 
   /** Asks before throwing away unsaved changes. Resolves true when it is OK to continue. */
   const confirmDiscard = useCallback(async () => {
@@ -257,6 +302,14 @@ export default function App() {
     if (await confirmDiscard()) backend.openSample().then(loadDocument, fail);
   }, [confirmDiscard, loadDocument, fail]);
 
+  const finishWelcome = useCallback(async (action: StartAction | null, experience: "beginner" | "experienced") => {
+    await changeOnboarding({ ...settings.onboarding, welcomeDone: true, experience, tourEnabled: action !== null && experience === "beginner", tourStep: 0 });
+    if (action === "new") await showNewFont();
+    if (action === "open") await open();
+    if (action === "sample") await openSample();
+    if (action === "import") await importSource(false);
+  }, [settings.onboarding, changeOnboarding, showNewFont, open, openSample, importSource]);
+
   const refreshStatusAfterSave = useCallback(async () => {
     const view = await backend.fontView(font?.masterId);
     show(view);
@@ -321,6 +374,20 @@ export default function App() {
   const textCounter = useRef(0);
   const newTextTab = useCallback(() => openTab(`text:${++textCounter.current}`), [openTab]);
   const openKerning = useCallback(() => openTab("kerning"), [openTab]);
+  const navigateTour = useCallback((step: number) => {
+    if (!font) return;
+    if (step !== 5) setExporting(false);
+    if (step === 0) setActive(null);
+    if (step === 1) {
+      const glyph = font.glyphs.find(g => g.name === "n") ?? font.glyphs.find(g => g.name !== "space");
+      if (glyph) openGlyph(glyph.name);
+      else setToast({ kind: "info", text: t("Add a glyph before starting to draw.") });
+    }
+    if (step === 2) { const text = tabs.find(id => id.startsWith("text:")); if (text) setActive(text); else newTextTab(); }
+    if (step === 3) openKerning();
+    if (step === 4) openTab("info");
+    if (step === 5) setExporting(true);
+  }, [font, tabs, openGlyph, newTextTab, openKerning, openTab]);
 
   const closeTab = useCallback((name: string) => {
     setTabs((t) => {
@@ -992,6 +1059,9 @@ export default function App() {
       label: t("Help"),
       items: [
         { label: t("Kernest Handbook"), shortcut: "F1", onSelect: openHandbook },
+        { label: t("Welcome to Kernest"), onSelect: () => changeOnboarding({ ...settings.onboarding, welcomeDone: false }).catch(fail) },
+        { label: t("Restart guided tour"), onSelect: font ? () => changeOnboarding({ ...settings.onboarding, tourEnabled: true, tourStep: 0 }).then(() => navigateTour(0)).catch(fail) : undefined },
+        { label: t("Reset getting-started checklist"), onSelect: () => changeOnboarding({ ...settings.onboarding, completed: [], tourEnabled: true, tourStep: 0 }).then(() => navigateTour(0)).catch(fail) },
         { label: t("About Kernest"), onSelect: () => setAbout(true), separatorBefore: true },
       ],
     },
@@ -1002,6 +1072,7 @@ export default function App() {
   return (
     <div className="app">
       <TitleBar title={title} menus={menus} />
+      {settings.updates.enabled && updateInfo?.available && updateInfo.latestVersion !== dismissedUpdate && <div className="update-notice" role="status"><span>{t("Kernest {version} is available.", { version: updateInfo.latestVersion ?? "" })}</span><button type="button" className="btn btn-secondary btn-sm" onClick={() => openExternal(`${REPO_URL}/releases/latest`).catch(fail)}>{t("View release")}</button><button type="button" className="icon-btn" aria-label={t("Dismiss")} onClick={() => setDismissedUpdate(updateInfo.latestVersion)}><CloseIcon size={14} /></button></div>}
       {font ? (
         <>
           <div className="commandbar">
@@ -1035,13 +1106,13 @@ export default function App() {
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showBoundingBox={showBoundingBox} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} reporters={enabledReporters} />
+                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showBoundingBox={showBoundingBox} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} handleSize={settings.appearance.handleSize} onDrawn={() => recordMilestone("drawn")} reporters={enabledReporters} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} onGenerateInstances={generateInstances} />
               ) : id === "kerning" ? (
-                <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={onCommitted} onError={fail} />
+                <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={s => { onCommitted(s); recordMilestone("kerned"); }} onError={fail} />
               ) : (
-                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} />
+                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} textWidth={settings.appearance.textWidth} onMilestone={recordMilestone} />
               )}
             </div>
           ))}
@@ -1064,7 +1135,7 @@ export default function App() {
         </div>
       )}
       {importNotes && <ImportNotesDialog {...importNotes} onClose={() => setImportNotes(null)} />}
-      {exporting && font && <ExportDialog fontPath={font.path} onClose={() => setExporting(false)} />}
+      {exporting && font && <ExportDialog fontPath={font.path} version={docVersion} onChanged={onStructureChanged} onClose={() => setExporting(false)} onExported={() => recordMilestone("exported")} onFontInfo={() => { setExporting(false); openTab("info"); }} onGlyph={name => { setExporting(false); openGlyph(name); }} />}
       {exportingUfo && font && <UfoExportDialog fontPath={font.path} onClose={() => setExportingUfo(false)} />}
       {filterDialog && font && filterGlyph && (
         <FilterDialog
@@ -1101,12 +1172,14 @@ export default function App() {
           onApply={applyFeatureImport}
         />
       )}
+      {settingsReady && !settings.onboarding.welcomeDone && <WelcomeDialog onComplete={finishWelcome} />}
+      {settingsReady && settings.onboarding.welcomeDone && settings.onboarding.tourEnabled && font && !glyphSets && !settingsOpen && (!exporting || settings.onboarding.tourStep === 5) && <GuidedTour onboarding={settings.onboarding} onChange={changeOnboarding} onNavigate={navigateTour} />}
       {glyphSets && (
         <NewFontDialog
           sets={glyphSets}
           onCancel={() => setGlyphSets(null)}
-          onCreate={async (name, sets) => {
-            loadDocument(await backend.newFont(name, sets));
+          onCreate={async setup => {
+            loadDocument(await backend.newFont(setup));
             setGlyphSets(null);
           }}
         />
@@ -1171,6 +1244,12 @@ export default function App() {
       {settingsOpen && (
         <SettingsDialog
           settings={settings}
+          theme={theme}
+          language={lang}
+          updateInfo={updateInfo}
+          onAppearance={changeAppearance}
+          onToggleUpdates={toggleUpdates}
+          onCheckUpdates={checkForUpdates}
           plugins={plugins}
           onClose={() => setSettingsOpen(false)}
           onSetPluginEnabled={setPluginEnabled}

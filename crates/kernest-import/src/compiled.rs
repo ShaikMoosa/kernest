@@ -197,6 +197,7 @@ fn build(font: &FontRef) -> Result<Imported, String> {
             master_palettes: Default::default(),
             filters: Vec::new(),
             variable_fonts: Vec::new(),
+            export_presets: Vec::new(),
         },
         warnings,
     })

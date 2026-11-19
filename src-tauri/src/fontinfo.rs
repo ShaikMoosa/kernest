@@ -96,6 +96,7 @@ pub struct FontInfoView {
     instances: Vec<Instance>,
     /// Several variable fonts cut from this family; empty means one at full range.
     variable_fonts: Vec<VariableFontSetting>,
+    export_presets: Vec<kernest_core::presets::ExportPreset>,
     /// TrueType autohinting settings (the defaults if the font has none).
     hinting: Hinting,
     /// TTFAutohint control instructions, applied to TrueType exports.
@@ -142,6 +143,7 @@ fn info_view(doc: &Document) -> FontInfoView {
             .collect(),
         instances: f.instances.clone(),
         variable_fonts: f.variable_fonts.clone(),
+        export_presets: f.export_presets.clone(),
         hinting: f.info.hinting.unwrap_or_default(),
         control_instructions: f.info.control_instructions.clone(),
         ps_hinting: f.info.ps_hinting.unwrap_or_default(),
@@ -434,6 +436,14 @@ pub fn set_variable_fonts(
     variable_fonts: Vec<VariableFontSetting>,
 ) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_variable_fonts(f, variable_fonts))
+}
+
+#[tauri::command]
+pub fn set_export_presets(
+    state: State<AppState>,
+    presets: Vec<kernest_core::presets::ExportPreset>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| kernest_core::presets::set_presets(f, presets))
 }
 
 /// Sets the working glyph order (Font View drag or the Font Info text); export follows it.

@@ -663,15 +663,9 @@ pub fn glyph_sets() -> Vec<GlyphSetInfo> {
 #[tauri::command]
 pub fn new_font(
     state: State<AppState>,
-    family_name: String,
-    glyph_sets: Vec<String>,
+    setup: kernest_core::wizard::NewFontSetup,
 ) -> CmdResult<FontView> {
-    let family = kernest_core::structure::check_family(&family_name)?;
-    let ids: Vec<&str> = glyph_sets.iter().map(String::as_str).collect();
-    replace(
-        &state,
-        Document::new(Font::new(family, codepoints_for(&ids)), None),
-    )
+    replace_dirty(&state, kernest_core::wizard::create_font(&setup)?)
 }
 
 #[tauri::command]

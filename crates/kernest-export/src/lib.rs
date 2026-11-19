@@ -89,6 +89,45 @@ pub struct ExportReport {
     pub problems: Vec<String>,
 }
 
+pub fn export_preset(
+    font: &Font,
+    name: &str,
+    source_dir: &Path,
+    out_dir: Option<&Path>,
+) -> Result<ExportReport, String> {
+    use kernest_core::presets::{self, ExportFormat};
+    presets::validate(&font.export_presets)?;
+    let preset = font
+        .export_presets
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("There is no export preset named \"{name}\"."))?;
+    let selected = presets::select_instances(font, &preset.instances)?;
+    let destination = out_dir.map(Path::to_path_buf).unwrap_or_else(|| {
+        source_dir.join(if preset.folder.is_empty() {
+            "build"
+        } else {
+            &preset.folder
+        })
+    });
+    let options = &preset.options;
+    export(
+        &selected,
+        &ExportOptions {
+            variable: options.variable,
+            statics: options.statics,
+            ttf: preset.formats.contains(&ExportFormat::Ttf),
+            otf: preset.formats.contains(&ExportFormat::Otf),
+            woff2: preset.formats.contains(&ExportFormat::Woff2),
+            remove_overlaps: options.remove_overlaps,
+            apply_metrics_keys: options.apply_metrics_keys,
+            autohint: options.autohint,
+            production_names: options.production_names,
+            out_dir: destination,
+        },
+    )
+}
+
 /// A file name part: letters, digits and hyphens only (e.g. "Kernest Sans" → "KernestSans").
 pub fn file_stem(s: &str) -> String {
     let out: String = s
@@ -971,6 +1010,55 @@ pub(crate) mod tests {
         let h = f.glyph_mut("H").unwrap().layer_mut(&bold).unwrap();
         h.width += 100.0;
         f
+    }
+
+    #[test]
+    fn preset_exports_only_selected_instances_and_honours_destination() {
+        let mut f = two_masters();
+        f.instances = [400.0, 700.0]
+            .into_iter()
+            .map(|weight| Instance {
+                name: if weight == 400.0 { "Regular" } else { "Bold" }.into(),
+                location: BTreeMap::from([("wght".into(), weight)]),
+                export: false,
+                weight_class: None,
+                width_class: None,
+                style_link: None,
+            })
+            .collect();
+        f.export_presets = vec![kernest_core::presets::ExportPreset {
+            name: "proof".into(),
+            formats: vec![kernest_core::presets::ExportFormat::Ttf],
+            instances: vec!["Bold".into()],
+            options: kernest_core::presets::ExportSettings {
+                autohint: false,
+                ..Default::default()
+            },
+            folder: "build/proof".into(),
+        }];
+        let dir = tempfile::tempdir().unwrap();
+        let report = export_preset(&f, "proof", dir.path(), None).unwrap();
+        assert!(report.problems.is_empty(), "{:?}", report.problems);
+        assert_eq!(report.files.len(), 1);
+        assert_eq!(
+            Path::new(&report.files[0].path).parent().unwrap(),
+            dir.path().join("build/proof")
+        );
+        assert_eq!(report.files[0].style, "Bold");
+        assert_eq!(
+            advance(&std::fs::read(&report.files[0].path).unwrap(), 'H'),
+            780
+        );
+        let override_dir = dir.path().join("override");
+        let report = export_preset(&f, "proof", dir.path(), Some(&override_dir)).unwrap();
+        assert_eq!(
+            Path::new(&report.files[0].path).parent().unwrap(),
+            override_dir
+        );
+        assert!(!f.instances[1].export);
+        f.instances.clear();
+        assert!(export_preset(&f, "proof", dir.path(), None).is_err());
+        assert!(export_preset(&f, "missing", dir.path(), None).is_err());
     }
 
     #[test]

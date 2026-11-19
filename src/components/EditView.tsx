@@ -173,6 +173,8 @@ interface Props {
   /** All glyph names and widths in the font, for Add Component. */
   glyphs: { name: string; width: number }[];
   onCommitted: (status: DocStatus) => void;
+  onDrawn?: () => void;
+  handleSize?: "small" | "medium" | "large";
   onError: (e: unknown) => void;
   /** Non-fatal notices, e.g. an edit that only reached the current master. */
   onWarning?: (text: string) => void;
@@ -200,8 +202,9 @@ interface Props {
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, masterKey, onPickLayer, reporters = [] }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, masterKey, onPickLayer, reporters = [] }: Props) {
   const master = masterKey ?? masterId;
+  const nodeScale = handleSize === "small" ? 0.75 : handleSize === "large" ? 1.5 : 1;
   // ---------- Reporter plug-ins ----------
   const [reporterItems, setReporterItems] = useState<DrawItem[]>([]);
   const reporterSeq = useRef(0);
@@ -513,13 +516,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         accept(bg
           ? await backend.updateBackground(glyph, masterId, next, cs, l.background?.anchors ?? [])
           : await backend.updateLayer(glyph, masterId, width ?? l.width, next, cs));
+        if (!bg && next.some(path => path.nodes.length > 0)) onDrawn?.();
       } catch (e) {
         setPaths(bg ? l.background?.paths ?? [] : l.paths);
         setComps(fromView(bg ? l.background?.components ?? [] : l.components));
         onError(e);
       }
     });
-  }, [glyph, masterId, accept, onError]);
+  }, [glyph, masterId, accept, onError, onDrawn]);
 
   /** Path operations (knife, corners, connecting, tidy…) as one undoable step. */
   const runPathEdit = useCallback((operation: PathEditOperation, opts?: { paths?: number[]; nodes?: [number, number][]; points?: [number, number][] }) => {
@@ -785,7 +789,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   function hitNode(sp: Pt): string | null {
     if (!showNodes) return null;
     let best: string | null = null;
-    let bestD = HIT;
+    let bestD = HIT * nodeScale;
     paths.forEach((p, pi) => {
       if (p.locked) return;
       p.nodes.forEach((n, ni) => {
@@ -1627,7 +1631,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             }))}
             {pendingOut && lastPen && (() => {
               const a = toScreen(lastPen.x, lastPen.y), b = toScreen(pendingOut.x, pendingOut.y);
-              return <g><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="handle-line" /><circle cx={b.x} cy={b.y} r={3} className="node-off" /></g>;
+              return <g><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="handle-line" /><circle cx={b.x} cy={b.y} r={3 * nodeScale} className="node-off" /></g>;
             })()}
             {paths.map((p, pi) => p.nodes.map((n, ni) => {
               const at = toScreen(n.x, n.y);
@@ -1637,7 +1641,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                 const b = toScreen(p.nodes[1].x, p.nodes[1].y);
                 if (b.x !== at.x || b.y !== at.y) dir = Math.atan2(b.y - at.y, b.x - at.x);
               }
-              return <NodeMark key={`n${pi}:${ni}`} n={n} at={at} selected={selection.has(nodeKey(pi, ni))} first={ni === 0} dir={dir} duplicate={dupNodes.has(nodeKey(pi, ni))} dim={focusPath !== null && pi !== focusPath} />;
+              return <NodeMark key={`n${pi}:${ni}`} n={n} at={at} scale={nodeScale} selected={selection.has(nodeKey(pi, ni))} first={ni === 0} dir={dir} duplicate={dupNodes.has(nodeKey(pi, ni))} dim={focusPath !== null && pi !== focusPath} />;
             }))}
           </>}
           {/* Anchors: diamonds with their names, over the points. */}
@@ -2059,19 +2063,19 @@ function hint(tool: Tool): string {
   }
 }
 
-function NodeMark({ n, at, selected, first, dir, duplicate, dim }: { n: EditNode; at: Pt; selected: boolean; first: boolean; dir?: number; duplicate?: boolean; dim?: boolean }) {
+function NodeMark({ n, at, scale, selected, first, dir, duplicate, dim }: { n: EditNode; at: Pt; scale: number; selected: boolean; first: boolean; dir?: number; duplicate?: boolean; dim?: boolean }) {
   const cls = selected ? " is-selected" : "";
-  const mark = !isOn(n) ? <circle cx={at.x} cy={at.y} r={3} className={`node-off${cls}`} />
-    : n.smooth ? <circle cx={at.x} cy={at.y} r={4.5} className={`node-smooth${cls}${first ? " is-first" : ""}`} />
-    : <rect x={at.x - 4} y={at.y - 4} width={8} height={8} className={`node-corner${cls}${first ? " is-first" : ""}`} />;
+  const mark = !isOn(n) ? <circle cx={at.x} cy={at.y} r={3 * scale} className={`node-off${cls}`} />
+    : n.smooth ? <circle cx={at.x} cy={at.y} r={4.5 * scale} className={`node-smooth${cls}${first ? " is-first" : ""}`} />
+    : <rect x={at.x - 4 * scale} y={at.y - 4 * scale} width={8 * scale} height={8 * scale} className={`node-corner${cls}${first ? " is-first" : ""}`} />;
   return (
     <g opacity={dim ? 0.3 : undefined}>
       {mark}
       {dir !== undefined && (
         <path d="M0 -3.2L7 0L0 3.2Z" className="node-start-arrow"
-          transform={`translate(${at.x + Math.cos(dir) * 11} ${at.y + Math.sin(dir) * 11}) rotate(${(dir * 180) / Math.PI})`} />
+          transform={`translate(${at.x + Math.cos(dir) * 11 * scale} ${at.y + Math.sin(dir) * 11 * scale}) rotate(${(dir * 180) / Math.PI})`} />
       )}
-      {duplicate && <circle cx={at.x} cy={at.y} r={7.5} className="node-duplicate" />}
+      {duplicate && <circle cx={at.x} cy={at.y} r={7.5 * scale} className="node-duplicate" />}
     </g>
   );
 }
