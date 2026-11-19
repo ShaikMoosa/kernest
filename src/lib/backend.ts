@@ -53,6 +53,8 @@ export interface GlyphSummary {
   svg: string;
   /** False when this glyph's masters can't be interpolated. */
   compatible: boolean;
+  /** Compatible masters that would morph badly (start points, direction, order, kinks). */
+  interpolationWarnings?: boolean;
   /** A locked glyph refuses every edit and is skipped by filters. */
   locked?: boolean;
   /** Colour layers in this master, bottom to top (colour glyphs only). */
@@ -104,6 +106,7 @@ export type FilterRule =
   | { type: "hasAnchors"; value: boolean }
   | { type: "hasUnicode"; value: boolean }
   | { type: "compatible"; value: boolean }
+  | { type: "interpolationWarnings"; value: boolean }
   | { type: "export"; value: boolean }
   | { type: "metricsKeysOutOfSync"; value: boolean }
   | { type: "colorGlyph"; value: boolean }
@@ -228,6 +231,9 @@ export interface LayerView {
   smartAxes?: SmartAxis[];
   /** Why this glyph's masters can't be interpolated (empty when they can). */
   issues: string[];
+  /** Compatible masters that would morph badly, and whether Fix can repair them. */
+  interpolationWarnings?: string[];
+  canFixInterpolation?: boolean;
   /** True when the whole glyph is locked against edits. */
   glyphLocked: boolean;
   /** This master's colour layers, bottom to top, and the default palette. */
@@ -716,6 +722,8 @@ export interface Backend {
   saveFont(path?: string): Promise<string>;
   closeFont(): Promise<void>;
   fontView(masterId?: string): Promise<FontView>;
+  /** Lines up contour order, direction and start points with the default master. */
+  fixInterpolation(glyph: string): Promise<{ changed: number; status: DocStatus }>;
   glyphLayer(glyph: string, masterId: string): Promise<LayerView>;
   /** Replaces outlines and width; components are replaced too when given. */
   updateLayer(glyph: string, masterId: string, width: number, paths: EditPath[], components?: ComponentEdit[]): Promise<LayerView>;
@@ -1190,6 +1198,7 @@ const tauriBackend: Backend = {
   saveFont: (path) => invoke("save_font", { path: path ?? null }),
   closeFont: () => invoke("close_font"),
   fontView: (masterId) => invoke("font_view", { masterId: masterId ?? null }),
+  fixInterpolation: (glyph) => invoke("fix_interpolation", { glyph }),
   glyphLayer: (glyph, masterId) => invoke("glyph_layer", { glyph, masterId }),
   updateLayer: (glyph, masterId, width, paths, components) =>
     invoke("update_layer", { glyph, masterId, width, paths, components: components ?? null }),
@@ -1672,6 +1681,9 @@ const mockBackend: Backend = {
   },
   async closeFont() {
     mock = null;
+  },
+  async fixInterpolation() {
+    throw "Fixing interpolation needs the desktop app (npm run tauri dev).";
   },
   async fontView(masterId) {
     return mockFontView(need(), masterId);

@@ -74,22 +74,58 @@ impl RuleGroup {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Rule {
-    Category { value: String },
-    Subcategory { value: String },
-    Case { value: String },
-    Script { value: String },
-    HasComponents { value: bool },
-    HasAnchors { value: bool },
-    HasUnicode { value: bool },
-    Compatible { value: bool },
-    Export { value: bool },
-    MetricsKeysOutOfSync { value: bool },
-    ColorGlyph { value: bool },
-    SmartGlyph { value: bool },
-    NameContains { value: String },
-    NameStarts { value: String },
-    NameEnds { value: String },
-    TagsContain { value: String },
+    Category {
+        value: String,
+    },
+    Subcategory {
+        value: String,
+    },
+    Case {
+        value: String,
+    },
+    Script {
+        value: String,
+    },
+    HasComponents {
+        value: bool,
+    },
+    HasAnchors {
+        value: bool,
+    },
+    HasUnicode {
+        value: bool,
+    },
+    Compatible {
+        value: bool,
+    },
+    /// Compatible masters that would morph badly (see `interpolation_quality`).
+    InterpolationWarnings {
+        value: bool,
+    },
+    Export {
+        value: bool,
+    },
+    MetricsKeysOutOfSync {
+        value: bool,
+    },
+    ColorGlyph {
+        value: bool,
+    },
+    SmartGlyph {
+        value: bool,
+    },
+    NameContains {
+        value: String,
+    },
+    NameStarts {
+        value: String,
+    },
+    NameEnds {
+        value: String,
+    },
+    TagsContain {
+        value: String,
+    },
 }
 
 /// Whether `glyph` matches `filter` in `font`.
@@ -181,6 +217,9 @@ impl<'a> Context<'a> {
             Rule::HasAnchors { value } => g.layers.iter().any(|l| !l.anchors.is_empty()) == *value,
             Rule::HasUnicode { value } => (!g.unicodes.is_empty()) == *value,
             Rule::Compatible { value } => check_glyph(self.font, &g.name).is_empty() == *value,
+            Rule::InterpolationWarnings { value } => {
+                crate::interpolation_quality::has_warnings(self.font, &g.name) == *value
+            }
             Rule::Export { value } => g.export == *value,
             Rule::MetricsKeysOutOfSync { value } => self.out_of_sync(g) == *value,
             Rule::ColorGlyph { value } => g.is_color() == *value,

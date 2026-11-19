@@ -156,7 +156,13 @@ pub fn offset_curve(
             let index = pi;
             pi += 1;
             if !p.locked && in_scope(index, only) {
-                if let Some(parts) = offset_path(p, h, v, make_stroke) {
+                if let Some(mut parts) = offset_path(p, h, v, make_stroke) {
+                    // The offset outline is rebuilt from scratch and may start at any
+                    // corner or run the other way: keep the original's start and
+                    // direction, so masters offset alike still interpolate cleanly.
+                    if !make_stroke && parts.len() == 1 {
+                        keep_start_and_direction(p, &mut parts[0]);
+                    }
                     changed = true;
                     out.extend(parts.into_iter().map(Shape::Path));
                     continue;
@@ -167,6 +173,39 @@ pub fn offset_curve(
     }
     layer.shapes = out;
     changed
+}
+
+/// Makes `new` (an offset of `old`) run the same way as `old` and start at the
+/// on-curve point nearest to `old`'s start.
+fn keep_start_and_direction(old: &Path, new: &mut Path) {
+    if !old.closed || !new.closed || new.nodes.is_empty() {
+        return;
+    }
+    let area = |p: &Path| {
+        let n = p.nodes.len();
+        (0..n)
+            .map(|i| {
+                let (a, b) = (&p.nodes[i], &p.nodes[(i + 1) % n]);
+                a.x * b.y - b.x * a.y
+            })
+            .sum::<f64>()
+    };
+    if area(old).signum() != area(new).signum() {
+        *new = crate::pathops::reverse(new);
+    }
+    let Some(start) = old.nodes.iter().find(|n| n.on_curve()) else {
+        return;
+    };
+    let nearest = (0..new.nodes.len())
+        .filter(|&i| new.nodes[i].on_curve())
+        .min_by(|&a, &b| {
+            let d =
+                |i: usize| (new.nodes[i].x - start.x).powi(2) + (new.nodes[i].y - start.y).powi(2);
+            d(a).total_cmp(&d(b))
+        });
+    if let Some(i) = nearest {
+        new.nodes.rotate_left(i);
+    }
 }
 
 fn offset_path(p: &Path, h: f64, v: f64, make_stroke: bool) -> Option<Vec<Path>> {

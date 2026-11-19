@@ -400,4 +400,12 @@ export const ENGINE_MESSAGES = [
   "Importing SVG needs the desktop app (npm run tauri dev).",
   "Importing metrics needs the desktop app (npm run tauri dev).",
   "Importing features needs the desktop app (npm run tauri dev).",
+  // Interpolation quality
+  "{who}: path {n} runs the other way round than in {ref}",
+  "{who}: path {n} starts at a different point than in {ref}",
+  "{who}: path {n} looks like path {m} of {ref}; the paths may be in a different order",
+  "{who}: a kink appears near {x}, {y} on path {n} when interpolating with {ref}",
+  "{n} glyph{s} may not interpolate cleanly ({list}). See Interpolation warnings in Font View.",
+  "This glyph's masters can't be interpolated yet; make them compatible first.",
+  "Fixing would make the masters incompatible; fix this glyph by hand.",
 ];

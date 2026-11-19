@@ -298,6 +298,17 @@ Open **Font Info** (Ctrl+I) to set:
 
 Switch the master you're editing with the buttons at the top right. Previews interpolate live. Kernest checks that every glyph can be interpolated, meaning the same number of paths, nodes and components in each master, and lists the glyphs that can't be in the **Incompatible** category of Font View.
 
+### Interpolation warnings
+
+A glyph can be compatible and still morph badly between masters. Kernest compares every master and intermediate layer with the default master and warns when:
+
+- **a path runs the other way round:** it turns inside out halfway;
+- **a closed path starts at a different point:** its points slide round the outline;
+- **two similar paths are in a different order:** they swap places halfway;
+- **a smooth point kinks:** its handles are straight in both masters but bend between them.
+
+These glyphs get an amber dot and are listed in the **Interpolation warnings** category of Font View; the smart filter rule **Interpolation** finds them too. In the glyph editor, a banner lists each warning. **Fix order, direction and start points** lines those up with the default master in one undoable step. Kinks need fixing by hand: give the handles the same length ratio in every master. Exporting a variable font lists the glyphs that still have warnings, without stopping the export.
+
 ## Names and notes
 
 Font Info › **General** holds the names that go into the exported font's name table: designer and designer URL, manufacturer and manufacturer URL, copyright, vendor ID, license and license URL, trademark, description and sample text. Leave a field empty to leave it out of the export. The family name stays at the top of Font Info.

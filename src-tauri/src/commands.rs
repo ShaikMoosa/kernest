@@ -125,6 +125,9 @@ pub struct GlyphSummary {
     svg: String,
     /// False when this glyph's masters can't be interpolated.
     compatible: bool,
+    /// Compatible masters that would morph badly (start points, direction, order, kinks).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    interpolation_warnings: bool,
     /// A locked glyph refuses every edit until it is unlocked.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     locked: bool,
@@ -320,6 +323,10 @@ pub struct LayerView {
     smart_axes: Vec<SmartAxis>,
     /// Why this glyph's masters can't be interpolated (empty when they can).
     issues: Vec<String>,
+    /// Compatible masters that would morph badly, and whether Fix can repair them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    interpolation_warnings: Vec<String>,
+    can_fix_interpolation: bool,
     /// Whether the whole glyph is locked against editing.
     pub(crate) glyph_locked: bool,
     /// This master's colour layers, bottom to top, and the default palette.
@@ -387,6 +394,8 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
                 production_name: g.production_name.clone(),
                 svg: layer.map(|l| svg_path(font, l)).unwrap_or_default(),
                 compatible: check_glyph(font, &g.name).is_empty(),
+                interpolation_warnings: font.masters.len() > 1
+                    && kernest_core::interpolation_quality::has_warnings(font, &g.name),
                 locked: g.locked,
                 color: color_views(font, g, &master.id),
             }
@@ -490,6 +499,8 @@ fn layer_view_font(
         metrics_keys: layer.metrics_keys.clone(),
         smart_axes: g.smart_axes.clone(),
         issues: check_glyph(font, glyph),
+        interpolation_warnings: kernest_core::interpolation_quality::warnings(font, glyph),
+        can_fix_interpolation: kernest_core::interpolation_quality::fixable(font, glyph),
         glyph_locked: g.locked,
         color_layers: color_views(font, g, &layer.master_id),
         palette: css_palette_at(font, &layer.master_id),
@@ -2193,4 +2204,32 @@ mod path_edit_tests {
         };
         assert!(filter_preview_in(&doc, "H", "m01", "round-corners", &bad).is_err());
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InterpolationFixed {
+    /// How many paths changed.
+    changed: usize,
+    status: DocStatus,
+}
+
+/// Lines up contour order, direction and start points in every master and
+/// intermediate layer with the default master (one undo step).
+#[tauri::command]
+pub fn fix_interpolation(state: State<AppState>, glyph: String) -> CmdResult<InterpolationFixed> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let (next, changed) = kernest_core::interpolation_quality::fix(&doc.font, &glyph)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(InterpolationFixed {
+        changed,
+        status: status(doc),
+    })
 }

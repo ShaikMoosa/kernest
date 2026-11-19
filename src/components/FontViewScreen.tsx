@@ -29,6 +29,7 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen, drag, dragging, dr
         )}
       </span>
       {!glyph.compatible && <span className="glyph-incompatible" title={t("Masters can't be interpolated (open the glyph to see why)")} aria-label={t("Incompatible masters")} />}
+      {glyph.compatible && glyph.interpolationWarnings && <span className="glyph-interp-warning" title={t("Masters may not interpolate cleanly (open the glyph to see why)")} aria-label={t("Interpolation warnings")} />}
       {glyph.locked && (
         <span className="glyph-locked" title={t("This glyph is locked. Unlock it to edit.")} aria-label={t("Locked")}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
@@ -101,6 +102,7 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
   }, [selection, font.glyphs, onSelectionChange]);
 
   const incompatibleCount = useMemo(() => font.glyphs.filter((g) => !g.compatible).length, [font.glyphs]);
+  const warningCount = useMemo(() => font.glyphs.filter((g) => g.compatible && g.interpolationWarnings).length, [font.glyphs]);
   const counts = useMemo(() => {
     const m = new Map<string, number>();
     for (const g of font.glyphs) m.set(g.category, (m.get(g.category) ?? 0) + 1);
@@ -112,6 +114,7 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
     return font.glyphs.filter((g) => {
       if (filterMatch && !filterMatch.has(g.name)) return false;
       if (category === "Incompatible") { if (g.compatible) return false; }
+      else if (category === "Interpolation warnings") { if (!g.compatible || !g.interpolationWarnings) return false; }
       else if (category !== "All" && g.category !== category) return false;
       if (!q) return true;
       return g.name.toLowerCase().includes(q) || g.unicode?.toLowerCase() === q.replace(/^u\+/, "") || g.character === query.trim();
@@ -250,7 +253,7 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
         </label>
         <p className="k-overline muted sidebar-heading">{t("Categories")}</p>
         <ul className="list">
-          {[["All", font.glyphs.length] as const, ...counts, ...(incompatibleCount ? [["Incompatible", incompatibleCount] as const] : [])].map(([c, n]) => (
+          {[["All", font.glyphs.length] as const, ...counts, ...(incompatibleCount ? [["Incompatible", incompatibleCount] as const] : []), ...(warningCount ? [["Interpolation warnings", warningCount] as const] : [])].map(([c, n]) => (
             <li key={c}>
               <button className={`list-item${category === c ? " is-selected" : ""}`} onClick={() => setCategory(c)}>
                 <span>{t(c)}</span>

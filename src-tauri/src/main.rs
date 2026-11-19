@@ -41,6 +41,7 @@ fn main() {
             commands::save_font,
             commands::close_font,
             commands::font_view,
+            commands::fix_interpolation,
             commands::doc_status,
             commands::glyph_layer,
             commands::update_layer,

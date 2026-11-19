@@ -25,6 +25,7 @@ pub mod glyphdata;
 pub mod glyphset;
 pub mod hinting;
 pub mod interpolate;
+pub mod interpolation_quality;
 pub mod kerning;
 pub mod layers;
 pub mod measure;

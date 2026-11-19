@@ -864,3 +864,8 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .info-field .text-input, .info-groups .text-input { flex: none; width: 100%; height: var(--k-control-md); min-width: 0; }
 .info-groups { gap: var(--k-space-8); margin-top: var(--k-space-8); }
 .info-groups .field { flex: 1; min-width: 0; }
+
+/* Interpolation quality: compatible masters that may morph badly. */
+.glyph-interp-warning { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--k-status-warning); box-shadow: 0 0 0 2px var(--k-bg-surface); }
+.interp-banner { background: var(--k-status-warning-subtle); color: var(--k-text-primary); border: 1px solid var(--k-status-warning); }
+.interp-banner .btn { margin-top: var(--k-space-8); }

@@ -1947,4 +1947,20 @@ export const ar: Dict = {
   "could not write control instructions: {e}": "تعذّرت كتابة تعليمات التحكم: {e}",
   "could not write glyph names: {e}": "تعذّرت كتابة أسماء الحروف: {e}",
   "The pixel preview needs the desktop app (npm run tauri dev).": "معاينة البكسل تتطلب تطبيق سطح المكتب (npm run tauri dev).",
+
+  // ---------- Interpolation quality ----------
+  "This glyph's masters may not interpolate cleanly:": "قد لا يكون الاستيفاء بين النسخ الرئيسية لهذا الحرف سليمًا:",
+  "Line up contour order, direction and start points with the default master. Kinks need fixing by hand.": "مطابقة ترتيب المحيطات واتجاهها ونقاط بدايتها مع النسخة الرئيسية الافتراضية. أما الانكسارات فتحتاج إلى إصلاح يدوي.",
+  "Fix order, direction and start points": "إصلاح الترتيب والاتجاه ونقاط البداية",
+  "Masters may not interpolate cleanly (open the glyph to see why)": "قد لا يكون الاستيفاء بين النسخ الرئيسية سليمًا (افتح الحرف لمعرفة السبب)",
+  "Interpolation warnings": "تحذيرات الاستيفاء",
+  "Interpolation": "الاستيفاء",
+  "No interpolation warnings": "لا توجد تحذيرات استيفاء",
+  "{who}: path {n} runs the other way round than in {ref}": "{who}: المسار {n} يسير في الاتجاه المعاكس لما في {ref}",
+  "{who}: path {n} starts at a different point than in {ref}": "{who}: المسار {n} يبدأ من نقطة مختلفة عما في {ref}",
+  "{who}: path {n} looks like path {m} of {ref}; the paths may be in a different order": "{who}: المسار {n} يشبه المسار {m} في {ref}؛ قد تكون المسارات بترتيب مختلف",
+  "{who}: a kink appears near {x}, {y} on path {n} when interpolating with {ref}": "{who}: يظهر انكسار قرب {x}، {y} في المسار {n} عند الاستيفاء مع {ref}",
+  "{n} glyph{s} may not interpolate cleanly ({list}). See Interpolation warnings in Font View.": {"zero": "قد لا يكون استيفاء {n} حرف سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط.", "one": "قد لا يكون استيفاء حرف واحد سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط.", "two": "قد لا يكون استيفاء حرفين سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط.", "few": "قد لا يكون استيفاء {n} أحرف سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط.", "many": "قد لا يكون استيفاء {n} حرفًا سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط.", "other": "قد لا يكون استيفاء {n} حرف سليمًا ({list}). راجع «تحذيرات الاستيفاء» في عرض الخط."},
+  "This glyph's masters can't be interpolated yet; make them compatible first.": "لا يمكن الاستيفاء بين النسخ الرئيسية لهذا الحرف بعد؛ اجعلها متوافقة أولًا.",
+  "Fixing would make the masters incompatible; fix this glyph by hand.": "الإصلاح سيجعل النسخ الرئيسية غير متوافقة؛ أصلح هذا الحرف يدويًا.",
 };

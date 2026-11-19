@@ -335,4 +335,7 @@ export const DYNAMIC_KEYS = [
   "Replaces the layers of glyphs with the same names. Names not in this font are ignored.",
   "Pastes the copied glyphs into the selected glyphs, in order. Names and unicodes stay as they are.",
   "Adds the copied glyphs as components in each selected glyph. Glyphs missing from this font are added first.",
+  // Interpolation quality
+  "Interpolation",
+  "No interpolation warnings",
 ];

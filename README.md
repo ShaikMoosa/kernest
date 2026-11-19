@@ -139,6 +139,12 @@ The rest of the plan, in order. Each phase is built, tested, checked in the app,
 | 10 | 2.4 | Alignment zones and stems per master, PostScript hints in OTF exports (blue controls, automatic and manual glyph hints), TrueType control instructions, hinted vs unhinted pixel preview | ✅ v2.4 |
 | 11 | 2.5 | Welcome screen, new font wizard, guided tour, font quality check, command line | ✅ v2.5 |
 
+### After the roadmap
+
+| Release | What it adds | Status |
+|---|---|---|
+| 2.6 | Interpolation warnings: paths that run the other way, start points, contour order and kinks between masters, with a one-click fix | ✅ v2.6 |
+
 Later, not scheduled yet: strokes, brushes, corner and cap components, sbix and SVG colour, test install, kerning compress, manual TrueType instructions.
 
 ## Licence

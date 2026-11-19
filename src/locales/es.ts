@@ -1738,4 +1738,20 @@ export const es: Dict = {
   "could not write control instructions: {e}": "no se pudieron escribir las instrucciones de control: {e}",
   "could not write glyph names: {e}": "no se pudieron escribir los nombres de los glifos: {e}",
   "The pixel preview needs the desktop app (npm run tauri dev).": "La vista previa de píxeles necesita la app de escritorio (npm run tauri dev).",
+
+  // ---------- Interpolation quality ----------
+  "This glyph's masters may not interpolate cleanly:": "Los másteres de este glifo pueden no interpolar bien:",
+  "Line up contour order, direction and start points with the default master. Kinks need fixing by hand.": "Alinea el orden de los contornos, la dirección y los puntos de inicio con el máster predeterminado. Los quiebres hay que corregirlos a mano.",
+  "Fix order, direction and start points": "Corregir orden, dirección y puntos de inicio",
+  "Masters may not interpolate cleanly (open the glyph to see why)": "Los másteres pueden no interpolar bien (abre el glifo para ver por qué)",
+  "Interpolation warnings": "Avisos de interpolación",
+  "Interpolation": "Interpolación",
+  "No interpolation warnings": "Sin avisos de interpolación",
+  "{who}: path {n} runs the other way round than in {ref}": "{who}: el trazado {n} va en sentido contrario que en {ref}",
+  "{who}: path {n} starts at a different point than in {ref}": "{who}: el trazado {n} empieza en otro punto que en {ref}",
+  "{who}: path {n} looks like path {m} of {ref}; the paths may be in a different order": "{who}: el trazado {n} se parece al trazado {m} de {ref}; puede que los trazados estén en otro orden",
+  "{who}: a kink appears near {x}, {y} on path {n} when interpolating with {ref}": "{who}: aparece un quiebre cerca de {x}, {y} en el trazado {n} al interpolar con {ref}",
+  "{n} glyph{s} may not interpolate cleanly ({list}). See Interpolation warnings in Font View.": {"one": "{n} glifo puede no interpolar bien ({list}). Consulta Avisos de interpolación en la vista de fuente.", "other": "{n} glifos pueden no interpolar bien ({list}). Consulta Avisos de interpolación en la vista de fuente."},
+  "This glyph's masters can't be interpolated yet; make them compatible first.": "Los másteres de este glifo aún no se pueden interpolar; primero hazlos compatibles.",
+  "Fixing would make the masters incompatible; fix this glyph by hand.": "Corregirlo haría incompatibles los másteres; corrige este glifo a mano.",
 };

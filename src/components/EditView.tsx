@@ -305,6 +305,16 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     backend.glyphLayer(glyph, masterId).then(setLayer, onError);
   }, [glyph, masterId, onCommitted, onError]);
 
+  const fixInterpolation = useCallback(async () => {
+    try {
+      const r = await backend.fixInterpolation(glyph);
+      onCommitted(r.status);
+      backend.glyphLayer(glyph, masterId).then((l) => { setLayer(l); setPaths(l.paths); setComps(fromView(l.components)); }, onError);
+    } catch (e) {
+      onError(e);
+    }
+  }, [glyph, masterId, onCommitted, onError]);
+
   const removeCurrentLayer = useCallback(async () => {
     try {
       const s = await backend.removeLayer(glyph, masterId);
@@ -1796,6 +1806,18 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           <div className="notice notice-warning issues-banner k-label" role="status">
             ⚠ {t("This glyph's masters can't be interpolated:")}
             <ul>{layer.issues.map((i) => <li key={i}>{translateMessage(i)}</li>)}</ul>
+          </div>
+        )}
+        {layer.issues.length === 0 && (layer.interpolationWarnings?.length ?? 0) > 0 && (
+          <div className="notice interp-banner issues-banner k-label" role="status">
+            {t("This glyph's masters may not interpolate cleanly:")}
+            <ul>{layer.interpolationWarnings!.map((i) => <li key={i}>{translateMessage(i)}</li>)}</ul>
+            {layer.canFixInterpolation && (
+              <button type="button" className="btn btn-secondary btn-sm" onClick={fixInterpolation}
+                title={t("Line up contour order, direction and start points with the default master. Kinks need fixing by hand.")}>
+                {t("Fix order, direction and start points")}
+              </button>
+            )}
           </div>
         )}
         {paths.length === 0 && comps.length === 0 && !preview && (

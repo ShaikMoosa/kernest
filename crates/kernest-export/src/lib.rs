@@ -478,6 +478,26 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
         Ok(())
     };
 
+    if opts.variable && font.masters.len() > 1 {
+        let warned: Vec<&str> = font
+            .glyphs
+            .iter()
+            .filter(|g| {
+                g.export && kernest_core::interpolation_quality::has_warnings(font, &g.name)
+            })
+            .map(|g| g.name.as_str())
+            .collect();
+        if !warned.is_empty() {
+            let shown: Vec<&str> = warned.iter().take(8).copied().collect();
+            report.problems.push(format!(
+                "{} glyph{} may not interpolate cleanly ({}{}). See Interpolation warnings in Font View.",
+                warned.len(),
+                if warned.len() == 1 { "" } else { "s" },
+                shown.join(", "),
+                if warned.len() > 8 { ", \u{2026}" } else { "" }
+            ));
+        }
+    }
     if opts.variable {
         let emit_variable = |report: &mut ExportReport,
                              stat_font: &Font,
@@ -3102,6 +3122,28 @@ pub(crate) mod tests {
         let rec = colr.base_glyph_records().unwrap().unwrap()[0];
         assert_eq!(rec.glyph_id().to_u32(), gid.to_u32());
         assert_eq!(rec.num_layers(), 1);
+    }
+
+    #[test]
+    fn variable_export_notes_interpolation_warnings() {
+        let mut f = two_masters();
+        let bold = f.masters[1].id.clone();
+        // Start Bold's O one segment later: still compatible, but it would morph badly.
+        let l = f.glyph_mut("O").unwrap().layer_mut(&bold).unwrap();
+        let Shape::Path(p) = &mut l.shapes[0] else {
+            panic!("O starts with a path")
+        };
+        let on: Vec<usize> = (0..p.nodes.len())
+            .filter(|&i| p.nodes[i].on_curve())
+            .collect();
+        p.nodes.rotate_left(on[1] - on[0]);
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert_eq!(r.files.len(), 1, "the variable font is still built");
+        assert_eq!(
+            r.problems,
+            ["1 glyph may not interpolate cleanly (O). See Interpolation warnings in Font View."]
+        );
     }
 
     #[test]
