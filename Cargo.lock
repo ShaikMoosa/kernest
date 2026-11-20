@@ -2630,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "kernest"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "kernest-check",
  "kernest-core",
@@ -2653,7 +2653,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-check"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "fontspector-checkapi",
  "fontspector-profile-opentype",
@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-cli"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "clap",
  "kernest-check",
@@ -2682,7 +2682,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-core"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "fea-rs",
  "kurbo",
@@ -2695,7 +2695,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-export"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "brotli",
  "fontbe",
@@ -2711,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-import"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "brotli-decompressor",
  "glyphs-reader",
@@ -2728,7 +2728,7 @@ dependencies = [
 
 [[package]]
 name = "kernest-script"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "kernest-core",
  "serde",
