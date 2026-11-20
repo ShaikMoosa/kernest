@@ -61,6 +61,8 @@ pub fn glyph_layers(state: State<AppState>, glyph: String) -> CmdResult<Vec<Laye
             key: l.key().to_string(),
             kind: if l.location.is_some() {
                 "brace"
+            } else if l.backup.is_some() {
+                "backup"
             } else if l.smart.is_some() {
                 "smart"
             } else if l.color.is_some() {
@@ -75,7 +77,7 @@ pub fn glyph_layers(state: State<AppState>, glyph: String) -> CmdResult<Vec<Laye
                     .position(|x| x.key() == l.key())
                     .map(|i| (i + 1).to_string())
                     .unwrap_or_default(),
-                None => l.label().unwrap_or_default(),
+                None => l.backup.clone().or_else(|| l.label()).unwrap_or_default(),
             },
             master_id: l.master_id.clone(),
             master_name: master_name(&l.master_id),
@@ -189,6 +191,32 @@ pub fn add_smart_pole(
 pub fn remove_layer(state: State<AppState>, glyph: String, key: String) -> CmdResult<DocStatus> {
     let r = apply(&state, &glyph, |f| {
         Ok((layers::remove_layer(f, &glyph, &key)?, String::new()))
+    })?;
+    Ok(r.status)
+}
+
+/// Saves the master layer's drawing as a backup named `name`.
+#[tauri::command]
+pub fn add_backup_layer(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    name: String,
+) -> CmdResult<LayerAdded> {
+    apply(&state, &glyph, |f| {
+        layers::add_backup(f, &glyph, &master_id, &name)
+    })
+}
+
+/// Swaps a backup's drawing with its master's.
+#[tauri::command]
+pub fn use_backup_layer(
+    state: State<AppState>,
+    glyph: String,
+    key: String,
+) -> CmdResult<DocStatus> {
+    let r = apply(&state, &glyph, |f| {
+        Ok((layers::use_backup(f, &glyph, &key)?, String::new()))
     })?;
     Ok(r.status)
 }

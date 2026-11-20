@@ -148,6 +148,22 @@ pub fn set_vertical_metrics(
     Ok(f)
 }
 
+/// Replaces the kept custom parameters. Names are trimmed and can't be empty; the
+/// same name may appear more than once (Glyphs allows it, e.g. "Name Table Entry").
+pub fn set_custom_parameters(font: &Font, list: Vec<crate::CustomParameter>) -> R<Font> {
+    let mut clean = Vec::with_capacity(list.len());
+    for mut p in list {
+        p.name = p.name.trim().to_string();
+        if p.name.is_empty() {
+            return Err("A custom parameter needs a name.".into());
+        }
+        clean.push(p);
+    }
+    let mut f = font.clone();
+    f.info.custom_parameters = clean;
+    Ok(f)
+}
+
 /// Turns "Use Typo Metrics" (OS/2 fsSelection bit 7) on or off for the whole font.
 pub fn set_use_typo_metrics(font: &Font, on: bool) -> R<Font> {
     let mut f = font.clone();

@@ -16,11 +16,33 @@ pub fn default_master(font: &Font) -> &Master {
 fn describe(shape: &Shape) -> String {
     match shape {
         Shape::Path(p) => format!(
-            "{} path with {} points",
+            "{} {}path with {} points",
             if p.closed { "closed" } else { "open" },
+            if p.stroke.is_some() { "stroked " } else { "" },
             p.nodes.len()
         ),
         Shape::Component { base, .. } => format!("component \"{base}\""),
+    }
+}
+
+/// Whether two paths are stroked alike, so they expand to the same outline structure:
+/// both or neither stroked, with the same joins, caps, fill, pen points and smooth
+/// nodes. Widths and position may differ; they interpolate.
+fn same_stroke_shape(a: &crate::model::Path, b: &crate::model::Path) -> bool {
+    match (&a.stroke, &b.stroke) {
+        (None, None) => true,
+        (Some(x), Some(y)) => {
+            x.join == y.join
+                && x.start_cap == y.start_cap
+                && x.end_cap == y.end_cap
+                && x.fill == y.fill
+                && x.widths.keys().eq(y.widths.keys())
+                && a.nodes
+                    .iter()
+                    .zip(&b.nodes)
+                    .all(|(m, n)| m.smooth == n.smooth)
+        }
+        _ => false,
     }
 }
 
@@ -43,6 +65,7 @@ pub(crate) fn compare(name: &str, reference: &Layer, ref_name: &str, layer: &Lay
                     && pa.nodes.iter().zip(&pb.nodes).all(|(x, y)| {
                         (x.kind == NodeKind::OffCurve) == (y.kind == NodeKind::OffCurve)
                     })
+                    && same_stroke_shape(pa, pb)
             }
             (
                 Shape::Component {
@@ -69,6 +92,21 @@ pub(crate) fn compare(name: &str, reference: &Layer, ref_name: &str, layer: &Lay
     }
     if anchor_names(layer) != anchor_names(reference) {
         issues.push(format!("{name}: anchors differ from {ref_name}"));
+    }
+    // Corner, cap and segment components must sit at the same places.
+    let parts = |l: &Layer| -> Vec<(crate::parts::PartKind, String, usize, usize)> {
+        let mut v: Vec<_> = l
+            .parts
+            .iter()
+            .map(|p| (p.kind, p.glyph.clone(), p.path, p.node))
+            .collect();
+        v.sort_by(|a, b| (a.2, a.3, &a.1).cmp(&(b.2, b.3, &b.1)));
+        v
+    };
+    if parts(layer) != parts(reference) {
+        issues.push(format!(
+            "{name}: corner, cap or segment components differ from {ref_name}"
+        ));
     }
     issues
 }
@@ -165,7 +203,13 @@ pub(crate) fn values(layer: &Layer) -> Vec<f64> {
     let mut v = vec![layer.width];
     for s in &layer.shapes {
         match s {
-            Shape::Path(p) => p.nodes.iter().for_each(|n| v.extend([n.x, n.y])),
+            Shape::Path(p) => {
+                p.nodes.iter().for_each(|n| v.extend([n.x, n.y]));
+                if let Some(s) = &p.stroke {
+                    v.extend([s.width, s.position]);
+                    v.extend(s.widths.values());
+                }
+            }
             Shape::Component {
                 transform, smart, ..
             } => {
@@ -188,10 +232,17 @@ pub(crate) fn rebuild(template: &Layer, vals: &[f64]) -> Layer {
     out.width = next();
     for s in &mut out.shapes {
         match s {
-            Shape::Path(p) => p.nodes.iter_mut().for_each(|n| {
-                n.x = next();
-                n.y = next();
-            }),
+            Shape::Path(p) => {
+                p.nodes.iter_mut().for_each(|n| {
+                    n.x = next();
+                    n.y = next();
+                });
+                if let Some(s) = &mut p.stroke {
+                    s.width = next();
+                    s.position = next();
+                    s.widths.values_mut().for_each(|w| *w = next());
+                }
+            }
             Shape::Component {
                 transform, smart, ..
             } => {
@@ -556,6 +607,7 @@ mod tests {
             .shapes
             .push(Shape::Path(Path {
                 locked: false,
+                stroke: None,
                 closed: true,
                 nodes: vec![],
             }));

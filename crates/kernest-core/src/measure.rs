@@ -127,6 +127,7 @@ mod tests {
         let mut l = Layer::new("m01", 600.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 Node::new(0.0, 0.0, NodeKind::Line),

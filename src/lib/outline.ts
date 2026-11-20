@@ -11,11 +11,27 @@ export interface EditNode {
   smooth: boolean;
 }
 
+/** A path drawn with a pen (see Rust `stroke::PathStroke`). */
+export interface PathStroke {
+  width: number;
+  position?: number;
+  join?: "miter" | "round" | "bevel";
+  startCap?: "butt" | "round" | "square";
+  endCap?: "butt" | "round" | "square";
+  fill?: boolean;
+  /** Pen points: width by on-curve node number. */
+  widths?: Record<string, number>;
+  /** A brush glyph drawn along the path instead of a pen. */
+  brush?: string;
+}
+
 export interface EditPath {
   closed: boolean;
   nodes: EditNode[];
   /** A locked path refuses every edit until unlocked. */
   locked?: boolean;
+  /** Drawn with a pen instead of filled. */
+  stroke?: PathStroke;
 }
 
 export const isOn = (n: EditNode) => n.kind !== "offcurve";
@@ -56,7 +72,7 @@ export function pathsToSvg(paths: EditPath[]): string {
   return d;
 }
 
-export const clonePaths = (paths: EditPath[]): EditPath[] => paths.map((p) => ({ closed: p.closed, locked: p.locked, nodes: p.nodes.map((n) => ({ ...n })) }));
+export const clonePaths = (paths: EditPath[]): EditPath[] => paths.map((p) => ({ closed: p.closed, locked: p.locked, stroke: p.stroke, nodes: p.nodes.map((n) => ({ ...n })) }));
 
 /** Index of the node before/after `i` in a path, or -1 at the ends of an open path. */
 export function neighbour(p: EditPath, i: number, dir: 1 | -1): number {
@@ -121,7 +137,7 @@ export function deleteSelection(base: EditPath[], selection: Set<string>): EditP
     if (drop.size === 0) return result.push(p);
     const kept = p.nodes.filter((_, i) => !drop.has(i)).map((n) => ({ ...n }));
     const nodes = normalizeSegments({ closed: p.closed, nodes: kept });
-    if (nodes.filter(isOn).length >= 2) result.push({ closed: p.closed, locked: p.locked, nodes });
+    if (nodes.filter(isOn).length >= 2) result.push({ closed: p.closed, locked: p.locked, stroke: p.stroke, nodes });
   });
   return result;
 }
@@ -190,6 +206,7 @@ export function transformPaths(paths: EditPath[], t: number[]): EditPath[] {
   return paths.map((p) => ({
     closed: p.closed,
     locked: p.locked,
+    stroke: p.stroke,
     nodes: p.nodes.map((n) => ({ ...n, x: t[0] * n.x + t[2] * n.y + t[4], y: t[1] * n.x + t[3] * n.y + t[5] })),
   }));
 }

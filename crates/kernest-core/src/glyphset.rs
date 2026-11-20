@@ -300,6 +300,7 @@ fn flatten(
         match s {
             Shape::Path(p) => out.push(Shape::Path(Path {
                 locked: false,
+                stroke: None,
                 closed: p.closed,
                 nodes: p
                     .nodes

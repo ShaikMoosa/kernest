@@ -138,6 +138,7 @@ fn push_flat(
         match s {
             Shape::Path(p) => out.push(Shape::Path(Path {
                 locked: false,
+                stroke: p.stroke.clone(),
                 closed: p.closed,
                 nodes: p
                     .nodes
@@ -221,6 +222,7 @@ fn push_decomposed(
         match s {
             Shape::Path(p) => out.push(Shape::Path(Path {
                 locked: false,
+                stroke: p.stroke.clone(),
                 closed: p.closed,
                 nodes: p
                     .nodes
@@ -419,6 +421,79 @@ pub fn set_component_values(
     Ok(out)
 }
 
+/// A handle for setting a smart axis on the canvas (S57): the smart glyph's anchor
+/// named after the axis, where it sits at the current value and at the axis' ends,
+/// in the coordinates of the glyph that uses the component.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartHandle {
+    pub axis: String,
+    pub at: [f64; 2],
+    pub at_min: [f64; 2],
+    pub at_max: [f64; 2],
+    pub min: f64,
+    pub max: f64,
+    pub value: f64,
+}
+
+/// The handles of a smart component: one per smart axis whose name is also the name
+/// of an anchor in the smart glyph. `owner` is the layer using the component (for
+/// its master and location), `transform` the component's own.
+pub fn handles(
+    font: &Font,
+    base: &str,
+    owner: &Layer,
+    smart: &BTreeMap<String, f64>,
+    transform: &[f64; 6],
+) -> Vec<SmartHandle> {
+    let Some(g) = font.glyph(base) else {
+        return Vec::new();
+    };
+    let place = |vals: &BTreeMap<String, f64>, name: &str| -> Option<[f64; 2]> {
+        let l = instance_for(font, base, owner, vals)?;
+        let a = l.anchors.iter().find(|a| a.name == name)?;
+        let t = transform;
+        Some([
+            t[0] * a.x + t[2] * a.y + t[4],
+            t[1] * a.x + t[3] * a.y + t[5],
+        ])
+    };
+    g.smart_axes
+        .iter()
+        .filter_map(|axis| {
+            let value = smart.get(&axis.name).copied().unwrap_or(axis.min);
+            let mut lo = smart.clone();
+            lo.insert(axis.name.clone(), axis.min);
+            let mut hi = smart.clone();
+            hi.insert(axis.name.clone(), axis.max);
+            let at_min = place(&lo, &axis.name)?;
+            let at_max = place(&hi, &axis.name)?;
+            let at = place(smart, &axis.name)?;
+            Some(SmartHandle {
+                axis: axis.name.clone(),
+                at,
+                at_min,
+                at_max,
+                min: axis.min,
+                max: axis.max,
+                value,
+            })
+        })
+        .collect()
+}
+
+/// The axis value a handle dragged to `(x, y)` gives: the point projected onto the
+/// line from the handle's minimum to its maximum position, kept within the axis.
+pub fn handle_value(h: &SmartHandle, x: f64, y: f64) -> f64 {
+    let (dx, dy) = (h.at_max[0] - h.at_min[0], h.at_max[1] - h.at_min[1]);
+    let len2 = dx * dx + dy * dy;
+    if len2 < 1e-12 {
+        return h.value;
+    }
+    let t = (((x - h.at_min[0]) * dx + (y - h.at_min[1]) * dy) / len2).clamp(0.0, 1.0);
+    h.min + t * (h.max - h.min)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,6 +504,7 @@ mod tests {
     fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Shape {
         Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
                 .into_iter()
@@ -548,5 +624,48 @@ mod tests {
         let f2 = set_smart_axes(&f, "_stem", vec![]).unwrap();
         assert_eq!(f2.glyph("_stem").unwrap().smart_layers().count(), 0);
         f2.validate().unwrap();
+    }
+
+    #[test]
+    fn handles_follow_an_anchor_named_after_the_axis() {
+        let mut f = with_stem();
+        // An anchor "Height" on top of the stem in both poles.
+        let g = f.glyph_mut("_stem").unwrap();
+        for l in &mut g.layers {
+            let top = match &l.shapes[0] {
+                Shape::Path(p) => p.nodes.iter().map(|n| n.y).fold(f64::MIN, f64::max),
+                _ => 0.0,
+            };
+            l.anchors = vec![crate::model::Anchor {
+                name: "Height".into(),
+                x: 40.0,
+                y: top,
+            }];
+        }
+        let owner = f.glyph("I").unwrap().layer("m01").unwrap().clone();
+        let t = [1.0, 0.0, 0.0, 1.0, 85.0, 0.0];
+        let hs = handles(
+            &f,
+            "_stem",
+            &owner,
+            &BTreeMap::from([("Height".into(), 50.0)]),
+            &t,
+        );
+        assert_eq!(hs.len(), 1);
+        let h = &hs[0];
+        assert_eq!(
+            (h.at, h.at_min, h.at_max),
+            ([125.0, 500.0], [125.0, 300.0], [125.0, 700.0])
+        );
+        // Dragging to 600 high is three quarters of the way: Height 75.
+        assert!((handle_value(h, 130.0, 600.0) - 75.0).abs() < 1e-9);
+        assert_eq!(handle_value(h, 0.0, 9999.0), 100.0, "kept within the axis");
+        // A smart glyph without such an anchor has no handle.
+        f.glyph_mut("_stem")
+            .unwrap()
+            .layers
+            .iter_mut()
+            .for_each(|l| l.anchors.clear());
+        assert!(handles(&f, "_stem", &owner, &BTreeMap::new(), &t).is_empty());
     }
 }

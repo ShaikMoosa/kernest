@@ -754,6 +754,42 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           />
         </section>
 
+        <section className="fi-section" aria-labelledby="fi-params">
+          <div className="fi-head">
+            <h2 id="fi-params" className="k-subtitle">{t("Custom parameters")}</h2>
+            <span className="k-caption muted">{t("Settings from a Glyphs source that Kernest doesn't use itself. They're kept with the font and written back by Save As .glyphs, but not applied when Kernest exports.")}</span>
+            <span className="spacer" />
+            <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setCustomParameters([...info.customParameters, { name: t("New parameter"), value: "1" }]))}>
+              <AddIcon size={14} /> {t("Add parameter")}
+            </button>
+          </div>
+          {info.customParameters.length === 0 ? (
+            <p className="k-caption muted">{t("None. Parameters appear here when you import a Glyphs file that has them.")}</p>
+          ) : (
+            <div className="fi-params" role="table" aria-label={t("Custom parameters")}>
+              <div className="fi-params-row fi-params-head" role="row">
+                <span className="k-caption muted" role="columnheader">{t("Property")}</span>
+                <span className="k-caption muted" role="columnheader">{t("Value")}</span>
+                <span className="k-caption muted" role="columnheader">{t("On")}</span>
+                <span />
+              </div>
+              {info.customParameters.map((p, i) => {
+                const save = (patch: Partial<typeof p>) => apply(() => backend.setCustomParameters(info.customParameters.map((x, j) => (j === i ? { ...x, ...patch } : x))));
+                return (
+                  <div key={`${i}:${p.name}`} className="fi-params-row" role="row">
+                    <Field label={t("Parameter name")} value={p.name} width={220} mono={false} numeric={false} onCommit={(v) => save({ name: v })} />
+                    <textarea className="metric-input fi-param-value" aria-label={t("{name} value", { name: p.name })} defaultValue={p.value} key={p.value} rows={Math.min(6, p.value.split("\n").length)}
+                      onBlur={(e) => { const el = e.currentTarget; const v = el.value; if (v !== p.value) save({ value: v }).then((ok) => { if (!ok) el.value = p.value; }); }} />
+                    <input type="checkbox" checked={!p.disabled} aria-label={t("Use {name}", { name: p.name })} onChange={(e) => save({ disabled: !e.target.checked })} />
+                    <button className="icon-btn" aria-label={t("Remove {name}", { name: p.name })} title={t("Remove parameter")}
+                      onClick={() => apply(() => backend.setCustomParameters(info.customParameters.filter((_, j) => j !== i)))}><CloseIcon size={14} /></button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
         <section className="fi-section" aria-labelledby="fi-hinting">
           <div className="fi-head">
             <h2 id="fi-hinting" className="k-subtitle">{t("Hinting")}</h2>

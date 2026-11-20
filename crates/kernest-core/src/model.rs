@@ -120,6 +120,22 @@ pub struct FontInfo {
     /// spacing ("Use Typo Metrics" in Glyphs).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub use_typo_metrics: bool,
+    /// Source settings Kernest doesn't use itself (Glyphs custom parameters), kept so
+    /// they survive a trip back to `.glyphs`. Not applied on export.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_parameters: Vec<CustomParameter>,
+}
+
+/// A custom parameter: its name and its value as Glyphs writes it (plist text, such
+/// as `1`, `"text"` or `(a, b)`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomParameter {
+    pub name: String,
+    pub value: String,
+    /// Switched off in Glyphs (kept, but not applied there either).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
 }
 
 /// A snap grid in font units: nodes snap to `spacing / subdivision` steps.
@@ -541,6 +557,13 @@ pub struct Layer {
     /// A reference drawing behind the outline (a previous version or a scan).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<Background>,
+    /// A backup layer: a saved version of this master's drawing, by name. It isn't
+    /// exported, interpolated or checked; it's kept for reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<String>,
+    /// Corner, cap and segment components placed on this layer's paths.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<crate::parts::PathPart>,
 }
 
 /// A straight guide line through `(x, y)` at `angle` degrees from horizontal.
@@ -590,6 +613,8 @@ impl Layer {
             guides: Vec::new(),
             hints: Vec::new(),
             background: None,
+            backup: None,
+            parts: Vec::new(),
         }
     }
 
@@ -759,6 +784,10 @@ pub struct Path {
     /// Locked paths can't be selected for editing; the flag travels with the file.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locked: bool,
+    /// Drawn with a pen of this stroke instead of filled (expanded to outlines on
+    /// export).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<crate::stroke::PathStroke>,
 }
 
 /// A point on an outline. Serialised compactly as `"x y kind [smooth]"`,
@@ -975,6 +1004,7 @@ impl Font {
                 control_instructions: String::new(),
                 grid: None,
                 use_typo_metrics: false,
+                custom_parameters: Vec::new(),
             },
             axes: Vec::new(),
             masters: vec![master],
@@ -1048,10 +1078,11 @@ impl Font {
                     let kinds = usize::from(l.location.is_some())
                         + usize::from(!l.bracket.is_empty())
                         + usize::from(l.smart.is_some())
-                        + usize::from(l.color.is_some());
+                        + usize::from(l.color.is_some())
+                        + usize::from(l.backup.is_some());
                     if kinds != 1 {
                         return bad(format!(
-                            "layer \"{id}\" of \"{}\" must be one of a brace, bracket, smart pole or colour layer",
+                            "layer \"{id}\" of \"{}\" must be one of a brace, bracket, smart pole, colour or backup layer",
                             g.name
                         ));
                     }

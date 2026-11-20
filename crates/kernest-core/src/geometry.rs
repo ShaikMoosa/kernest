@@ -59,6 +59,7 @@ fn compose(outer: &[f64; 6], inner: &[f64; 6]) -> [f64; 6] {
 }
 
 /// Calls `f` for every path in the layer, with components resolved and transformed.
+/// A stroked path is given as the outlines it draws.
 pub(crate) fn for_each_path(
     font: &Font,
     layer: &Layer,
@@ -69,8 +70,18 @@ pub(crate) fn for_each_path(
     if depth > MAX_DEPTH {
         return;
     }
+    // Corner, cap and segment components first change the outline itself.
+    if !layer.parts.is_empty() {
+        let applied = crate::parts::apply(font, layer);
+        return for_each_path(font, &applied, t, depth, f);
+    }
     for shape in &layer.shapes {
         match shape {
+            Shape::Path(p) if p.stroke.is_some() => {
+                for q in crate::stroke::expand_in(font, &layer.master_id, p).unwrap_or_default() {
+                    f(&q, t);
+                }
+            }
             Shape::Path(p) => f(p, t),
             Shape::Component {
                 base,

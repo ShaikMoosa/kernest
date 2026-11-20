@@ -871,3 +871,25 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .interp-banner { background: var(--k-status-warning-subtle); color: var(--k-text-primary); border: 1px solid var(--k-status-warning); }
 .interp-banner .btn { margin-top: var(--k-space-8); }
 .fi-spacing-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--k-space-8); }
+.fi-params { display: flex; flex-direction: column; border: 1px solid var(--k-border-default); border-radius: var(--k-radius-lg); overflow: hidden; }
+.fi-params-row { display: grid; grid-template-columns: 240px 1fr 40px 32px; gap: var(--k-space-8); align-items: start; padding: var(--k-space-6) var(--k-space-12); border-top: 1px solid var(--k-border-default); }
+.fi-params-head { border-top: 0; background: var(--k-bg-app); }
+.fi-param-value { width: 100%; height: auto; min-height: 28px; resize: vertical; font: 400 12px/1.5 var(--k-font-code); text-align: start; padding: var(--k-space-4) var(--k-space-6); white-space: pre; overflow: auto; }
+.stroke-centre { stroke: var(--k-accent-default); }
+.stroke-body { display: flex; flex-direction: column; gap: var(--k-space-6); align-items: stretch; }
+.stroke-seg { display: flex; }
+.stroke-seg .segment { flex: 1; }
+.stroke-note { padding: 0 var(--k-space-12) var(--k-space-8); }
+.pen-point { display: flex; align-items: end; gap: var(--k-space-6); flex-wrap: wrap; border-top: 1px solid var(--k-border-default); padding-top: var(--k-space-6); }
+.pixel-draft { fill: var(--k-accent-default); opacity: 0.45; }
+.pixel-draft.is-erase { fill: var(--k-status-danger); opacity: 0.3; }
+.part-marker { fill: none; stroke: var(--k-status-warning); }
+.part-marker.is-cap { stroke: var(--k-accent-default); }
+.part-marker.is-segment { stroke: var(--k-status-success); }
+.part-row { display: flex; flex-direction: column; gap: var(--k-space-4); border-top: 1px solid var(--k-border-default); padding-top: var(--k-space-6); }
+.part-row:first-child { border-top: 0; padding-top: 0; }
+.part-head { display: flex; align-items: center; justify-content: space-between; }
+.part-scale { display: flex; gap: var(--k-space-6); }
+.smart-diamond { fill: var(--k-status-danger); stroke: var(--k-bg-surface); cursor: grab; }
+.smart-track { stroke: var(--k-status-danger); stroke-dasharray: 4 3; opacity: 0.7; }
+.smart-label { font: 600 12px/1 var(--k-font-ui, sans-serif); fill: var(--k-status-danger); paint-order: stroke; stroke: var(--k-bg-surface); stroke-width: 3px; }

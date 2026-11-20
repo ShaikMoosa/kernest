@@ -4,7 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { clonePaths, pathsToSvg, pointBounds, rectPath, transformPaths, type EditPath } from "./outline";
+import { type PathStroke, clonePaths, pathsToSvg, pointBounds, rectPath, transformPaths, type EditPath } from "./outline";
 import { translateMessage } from "./i18n";
 import { designBounds } from "./axisMap";
 
@@ -139,8 +139,21 @@ export interface ComponentEdit {
   transform: number[];
   /** Values on the base glyph's smart axes (smart components only). */
   smart?: Record<string, number>;
+  /** Smart handles to drag on the canvas (anchors named after smart axes). */
+  handles?: SmartHandle[];
   /** Whether anchors place this component; false once it is moved by hand (default true). */
   align?: boolean;
+}
+
+/** A smart handle: where an axis' anchor sits now and at the axis' ends. */
+export interface SmartHandle {
+  axis: string;
+  at: [number, number];
+  atMin: [number, number];
+  atMax: [number, number];
+  min: number;
+  max: number;
+  value: number;
 }
 
 /** An axis of a smart glyph, such as Width 0–100. */
@@ -182,6 +195,7 @@ export interface BackgroundView {
   anchors: { name: string; x: number; y: number }[];
 }
 
+
 /** Which parts of a layer an edit touches; all empty means the whole layer. */
 export interface Selection {
   /** [path index, node index] pairs. */
@@ -222,6 +236,12 @@ export interface LayerView {
   components: ComponentView[];
   /** All components resolved to outlines, SVG path data in font units. */
   componentSvg: string;
+  /** The outlines the engine draws for stroked paths and paths with parts (missing in the browser preview). */
+  strokeSvg?: string;
+  /** Paths (counting paths only) drawn by the engine rather than filled by the editor. */
+  enginePaths?: number[];
+  /** Corner, cap and segment components on this layer's paths. */
+  parts?: PathPart[];
   anchors: { name: string; x: number; y: number }[];
   /** This layer's manual PostScript hints (empty means auto stems are used). */
   hints: Hint[];
@@ -266,7 +286,7 @@ export interface AxisRange {
 export interface LayerInfo {
   /** Pass as `masterId` to the layer commands to edit this layer. */
   key: string;
-  kind: "master" | "brace" | "bracket" | "smart" | "color";
+  kind: "master" | "brace" | "bracket" | "smart" | "color" | "backup";
   label: string;
   /** A colour layer's paint. */
   paint?: Paint;
@@ -300,6 +320,24 @@ export interface AxisValue {
   elidable?: boolean;
   /** A linked user value (a format 3 axis value), e.g. Bold linking to Regular. */
   linkedValue?: number | null;
+}
+
+/** A Glyphs custom parameter kept from the source; `value` is Glyphs syntax. */
+export interface CustomParameter {
+  name: string;
+  value: string;
+  disabled?: boolean;
+}
+
+/** A corner, cap or segment component placed on a path node. */
+export interface PathPart {
+  kind: "corner" | "cap" | "segment";
+  glyph: string;
+  path: number;
+  node: number;
+  scale?: [number, number];
+  align?: "out" | "in" | "middle" | "unaligned";
+  fit?: boolean;
 }
 
 /** OpenType line spacing and underline values; a missing one is worked out on export. */
@@ -550,6 +588,8 @@ export interface FontInfo {
   grid: Grid | null;
   /** Applications use the typo metrics for line spacing (OS/2 fsSelection bit 7). */
   useTypoMetrics: boolean;
+  /** Source parameters Kernest keeps but doesn't use (written back to .glyphs). */
+  customParameters: CustomParameter[];
   /** Colour palettes (CSS colours #rrggbbaa); every palette has the same length. */
   palettes: string[][];
   /** Per-master palette overrides keyed by master id; empty means none. */
@@ -795,6 +835,7 @@ export interface Backend {
   setMasterGuides(masterId: string, guides: Guide[]): Promise<FontInfo>;
   setVerticalMetrics(masterId: string, vertical: VerticalMetrics): Promise<FontInfo>;
   setUseTypoMetrics(on: boolean): Promise<FontInfo>;
+  setCustomParameters(parameters: CustomParameter[]): Promise<FontInfo>;
   /** Replaces a layer's local guides. */
   setGuides(glyph: string, masterId: string, guides: Guide[]): Promise<LayerView>;
   /** Moves guide `index` between the layer's local list and the master's global list. */
@@ -900,6 +941,14 @@ export interface Backend {
   pathEdit(glyph: string, masterId: string, operation: PathEditOperation, opts?: { paths?: number[]; nodes?: [number, number][]; points?: [number, number][] }): Promise<PathEditResult>;
   /** Locks or unlocks one path (index among the layer's paths, not components). */
   setPathLocked(glyph: string, masterId: string, path: number, locked: boolean): Promise<LayerView>;
+  setPathStroke(glyph: string, masterId: string, path: number, stroke: PathStroke | null): Promise<LayerView>;
+  setPenWidth(glyph: string, masterId: string, path: number, node: number, width: number | null): Promise<LayerView>;
+  expandStrokes(glyph: string, masterId: string): Promise<LayerView>;
+  addPixelGlyph(size: number): Promise<DocStatus>;
+  addPathPart(glyph: string, masterId: string, part: PathPart): Promise<LayerView>;
+  setPathPart(glyph: string, masterId: string, index: number, part: PathPart | null): Promise<LayerView>;
+  decomposeParts(glyph: string, masterId: string): Promise<LayerView>;
+  setPixels(glyph: string, masterId: string, cells: [number, number][], on: boolean): Promise<LayerView>;
   /** Locks or unlocks a whole glyph against edits. */
   setGlyphLocked(glyph: string, locked: boolean): Promise<DocStatus>;
   /** Runs a filter over the chosen glyphs (empty = the current one) as one undo step. */
@@ -912,6 +961,8 @@ export interface Backend {
   addBracketLayers(glyph: string, masterId: string, ranges: AxisRange[]): Promise<{ key: string; status: DocStatus }>;
   updateLayerPosition(glyph: string, key: string, location?: Location, ranges?: AxisRange[]): Promise<{ key: string; status: DocStatus }>;
   removeLayer(glyph: string, key: string): Promise<DocStatus>;
+  addBackupLayer(glyph: string, masterId: string, name: string): Promise<{ key: string; status: DocStatus }>;
+  useBackupLayer(glyph: string, key: string): Promise<DocStatus>;
   /** Gives a glyph smart axes (an empty list makes it ordinary again). */
   setSmartAxes(glyph: string, axes: SmartAxis[]): Promise<DocStatus>;
   /** Adds a smart pole layer at a position on the glyph's smart axes. */
@@ -1256,6 +1307,7 @@ const tauriBackend: Backend = {
   setMasterGuides: (masterId, guides) => invoke("set_master_guides", { masterId, guides }),
   setVerticalMetrics: (masterId, vertical) => invoke("set_vertical_metrics", { masterId, vertical }),
   setUseTypoMetrics: (on) => invoke("set_use_typo_metrics", { on }),
+  setCustomParameters: (parameters) => invoke("set_custom_parameters", { parameters }),
   setGuides: (glyph, masterId, guides) => invoke("set_guides", { glyph, masterId, guides }),
   setGuideScope: (glyph, masterId, index, toGlobal) => invoke("set_guide_scope", { glyph, masterId, index, toGlobal }),
   transform: (glyph, masterId, selection, affine, origin, allMasters, onBackground) =>
@@ -1316,6 +1368,14 @@ const tauriBackend: Backend = {
   pathOperation: (glyph, masterId, operation, paths) => invoke("path_operation", { glyph, masterId, operation, paths }),
   pathEdit: (glyph, masterId, operation, opts) => invoke("path_edit", { glyph, masterId, operation, paths: opts?.paths, nodes: opts?.nodes, points: opts?.points }),
   setPathLocked: (glyph, masterId, path, locked) => invoke("set_path_locked", { glyph, masterId, path, locked }),
+  setPathStroke: (glyph, masterId, path, stroke) => invoke("set_path_stroke", { glyph, masterId, path, stroke }),
+  setPenWidth: (glyph, masterId, path, node, width) => invoke("set_pen_width", { glyph, masterId, path, node, width }),
+  expandStrokes: (glyph, masterId) => invoke("expand_strokes", { glyph, masterId }),
+  addPixelGlyph: (size) => invoke("add_pixel_glyph", { size }),
+  addPathPart: (glyph, masterId, part) => invoke("add_path_part", { glyph, masterId, part }),
+  setPathPart: (glyph, masterId, index, part) => invoke("set_path_part", { glyph, masterId, index, part }),
+  decomposeParts: (glyph, masterId) => invoke("decompose_parts", { glyph, masterId }),
+  setPixels: (glyph, masterId, cells, on) => invoke("set_pixels", { glyph, masterId, cells, on }),
   setGlyphLocked: (glyph, locked) => invoke("set_glyph_locked", { glyph, locked }),
   runFilter: (current, masterId, glyphs, name, params, allMasters) => invoke("run_filter", { current, masterId, glyphs, name, params, allMasters }),
   filterPreview: (glyph, masterId, name, params) => invoke("filter_preview", { glyph, masterId, name, params }),
@@ -1324,6 +1384,8 @@ const tauriBackend: Backend = {
   addBracketLayers: (glyph, masterId, ranges) => invoke("add_bracket_layers", { glyph, masterId, ranges }),
   updateLayerPosition: (glyph, key, location, ranges) => invoke("update_layer_position", { glyph, key, location, ranges }),
   removeLayer: (glyph, key) => invoke("remove_layer", { glyph, key }),
+  addBackupLayer: (glyph, masterId, name) => invoke("add_backup_layer", { glyph, masterId, name }),
+  useBackupLayer: (glyph, key) => invoke("use_backup_layer", { glyph, key }),
   takeLaunchPaths: () => invoke("take_launch_paths"),
   setSmartAxes: (glyph, axes) => invoke("set_smart_axes", { glyph, axes }),
   addSmartPole: (glyph, masterId, pole) => invoke("add_smart_pole", { glyph, masterId, pole }),
@@ -1618,7 +1680,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, grid: d.grid ?? null, useTypoMetrics: false, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, grid: d.grid ?? null, useTypoMetrics: false, customParameters: [], palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -1807,6 +1869,9 @@ const mockBackend: Backend = {
   },
   async setUseTypoMetrics() {
     throw "Line spacing needs the desktop app (npm run tauri dev).";
+  },
+  async setCustomParameters() {
+    throw "Custom parameters need the desktop app (npm run tauri dev).";
   },
   async setGuides() {
     throw "Guides need the desktop app (npm run tauri dev).";
@@ -2037,6 +2102,30 @@ const mockBackend: Backend = {
   async pathEdit() {
     throw "Path operations need the desktop app (npm run tauri dev).";
   },
+  async setPathStroke() {
+    throw "Strokes need the desktop app (npm run tauri dev).";
+  },
+  async setPenWidth() {
+    throw "Strokes need the desktop app (npm run tauri dev).";
+  },
+  async expandStrokes() {
+    throw "Strokes need the desktop app (npm run tauri dev).";
+  },
+  async addPathPart() {
+    throw "Corner components need the desktop app (npm run tauri dev).";
+  },
+  async setPathPart() {
+    throw "Corner components need the desktop app (npm run tauri dev).";
+  },
+  async decomposeParts() {
+    throw "Corner components need the desktop app (npm run tauri dev).";
+  },
+  async addPixelGlyph() {
+    throw "The pixel tool needs the desktop app (npm run tauri dev).";
+  },
+  async setPixels() {
+    throw "The pixel tool needs the desktop app (npm run tauri dev).";
+  },
   async setPathLocked() {
     throw "Locking paths needs the desktop app (npm run tauri dev).";
   },
@@ -2061,6 +2150,12 @@ const mockBackend: Backend = {
   },
   async updateLayerPosition() {
     throw "Intermediate and alternate layers need the desktop app (npm run tauri dev).";
+  },
+  async addBackupLayer() {
+    throw "Backups need the desktop app (npm run tauri dev).";
+  },
+  async useBackupLayer() {
+    throw "Backups need the desktop app (npm run tauri dev).";
   },
   async removeLayer() {
     throw "Intermediate and alternate layers need the desktop app (npm run tauri dev).";

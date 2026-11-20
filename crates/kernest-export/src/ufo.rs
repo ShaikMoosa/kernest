@@ -24,9 +24,33 @@ fn point_type(kind: NodeKind) -> PointType {
 
 /// A UFO glyph for one Kernest layer. `gname` may also be a generated glyph (such as a
 /// bracket alternate), which has no code points.
+/// Kernest guides as UFO guidelines: angle 0 is horizontal, 90 vertical.
+fn guidelines(list: &[kernest_core::Guide]) -> Vec<norad::Guideline> {
+    use norad::Line;
+    list.iter()
+        .map(|g| {
+            let a = g.angle.rem_euclid(180.0);
+            let line = if a == 0.0 {
+                Line::Horizontal(g.y)
+            } else if a == 90.0 {
+                Line::Vertical(g.x)
+            } else {
+                Line::Angle {
+                    x: g.x,
+                    y: g.y,
+                    degrees: g.angle.rem_euclid(360.0),
+                }
+            };
+            let name = g.name.as_deref().and_then(|n| norad::Name::new(n).ok());
+            norad::Guideline::new(line, name, None, None)
+        })
+        .collect()
+}
+
 pub fn glyph(font: &Font, gname: &str, layer: &Layer) -> Result<Glyph, String> {
     let mut out = Glyph::new(gname);
     out.width = layer.width;
+    out.guidelines = guidelines(&layer.guides);
     if let Some(g) = font.glyph(gname) {
         out.codepoints = Codepoints::new(g.unicodes.iter().filter_map(|c| c.char()));
     }
@@ -283,6 +307,9 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
         .iter()
         .find(|m| m.location == src.location)
         .unwrap_or_else(|| kernest_core::interpolate::default_master(font));
+    if !master.guides.is_empty() {
+        info.guidelines = Some(guidelines(&master.guides));
+    }
     let (blue, other) = kernest_core::hinting::blues_from_zones(&master.alignment_zones);
     if !blue.is_empty() {
         info.postscript_blue_values = Some(blue);
@@ -383,6 +410,31 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
         ufo.default_layer_mut()
             .insert_glyph(glyph(font, gname, layer)?);
         order.push(gname.clone());
+    }
+    // Reference drawings go to the "public.background" layer, as other UFO editors do.
+    let backgrounds: Vec<(&String, &kernest_core::Background)> = src
+        .layers
+        .iter()
+        .filter_map(|(n, l)| {
+            l.background
+                .as_ref()
+                .filter(|b| !b.is_empty())
+                .map(|b| (n, b))
+        })
+        .collect();
+    if !backgrounds.is_empty() {
+        let bl = ufo
+            .layers
+            .new_layer("public.background")
+            .map_err(|e| format!("could not add the background layer: {e}"))?;
+        for (gname, bg) in backgrounds {
+            let mut probe = Layer::new("", 0.0);
+            probe.shapes = bg.shapes.clone();
+            probe.anchors = bg.anchors.clone();
+            let mut g = glyph(font, gname, &probe)?;
+            g.codepoints = Default::default();
+            bl.insert_glyph(g);
+        }
     }
     ufo.lib.insert(
         "public.glyphOrder".into(),

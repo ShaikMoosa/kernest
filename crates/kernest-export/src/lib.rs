@@ -395,6 +395,9 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     } else {
         font
     };
+    // Stroked paths are drawn as the outlines they make.
+    let stroked = kernest_core::stroke::expand_font(font);
+    let font = &stroked;
     // Colour layers become ordinary glyphs; COLR and CPAL are added to each file.
     let (split, colored) = kernest_core::color::split_color_layers(font);
     let font = &split;
@@ -857,11 +860,12 @@ pub fn export_ufo(
 ) -> Result<UfoExportReport, String> {
     use std::collections::HashSet;
     std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-    let mut work = if opts.decompose_smart {
+    // UFO has no strokes: stroked paths are written as the outlines they draw.
+    let mut work = kernest_core::stroke::expand_font(&if opts.decompose_smart {
         kernest_core::smart::flatten_font(font)
     } else {
         font.clone()
-    };
+    });
     let selected: Vec<Master> = if opts.masters.is_empty() {
         work.masters.clone()
     } else {
@@ -1015,6 +1019,35 @@ pub(crate) mod tests {
         let f = FontRef::new(bytes).expect("a valid font");
         let gid = f.cmap().unwrap().map_codepoint(ch).expect("mapped");
         f.hmtx().unwrap().advance(gid).expect("advance")
+    }
+
+    #[test]
+    fn stroked_paths_export_in_static_and_variable_fonts() {
+        use kernest_core::stroke::{PathStroke, StrokeCap, StrokeJoin};
+        let mut f = two_masters();
+        // Stroke H's first path, thin in one master and heavy in the other.
+        for (key, w) in [("m01", 20.0), ("m02", 90.0)] {
+            if let Some(Shape::Path(p)) = f
+                .glyph_mut("H")
+                .unwrap()
+                .layer_mut(key)
+                .unwrap()
+                .shapes
+                .first_mut()
+            {
+                p.stroke = Some(PathStroke {
+                    width: w,
+                    join: StrokeJoin::Miter,
+                    end_cap: StrokeCap::Round,
+                    ..Default::default()
+                });
+            }
+        }
+        assert!(kernest_core::interpolate::check_glyph(&f, "H").is_empty());
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(r.files.iter().any(|x| x.kind == "variable"));
     }
 
     fn two_masters() -> Font {
@@ -2022,6 +2055,7 @@ pub(crate) mod tests {
             let mark = |x0: f64, x1: f64| {
                 Shape::Path(kernest_core::Path {
                     locked: false,
+                    stroke: None,
                     closed: true,
                     nodes: [
                         (x0, 720.0),
@@ -2231,6 +2265,7 @@ pub(crate) mod tests {
             Shape::Path(Path {
                 closed: true,
                 locked: false,
+                stroke: None,
                 nodes: points
                     .iter()
                     .map(|&(x, y)| Node::new(x, y, NodeKind::Line))
@@ -2273,6 +2308,7 @@ pub(crate) mod tests {
             Shape::Path(Path {
                 closed: true,
                 locked: false,
+                stroke: None,
                 nodes,
             })
         };
@@ -2659,6 +2695,7 @@ pub(crate) mod tests {
         let rect = |h: f64| {
             Shape::Path(kernest_core::Path {
                 locked: false,
+                stroke: None,
                 closed: true,
                 nodes: [(0.0, 0.0), (80.0, 0.0), (80.0, h), (0.0, h)]
                     .into_iter()
@@ -2796,6 +2833,7 @@ pub(crate) mod tests {
             if l.shapes.is_empty() {
                 l.shapes = vec![Shape::Path(kernest_core::Path {
                     locked: false,
+                    stroke: None,
                     closed: true,
                     nodes: [(0.0, 300.0), (600.0, 300.0), (600.0, 400.0), (0.0, 400.0)]
                         .into_iter()
@@ -3187,6 +3225,7 @@ pub(crate) mod tests {
         let rect = |x0: f64, y0: f64, x1: f64, y1: f64| {
             Shape::Path(kernest_core::Path {
                 locked: false,
+                stroke: None,
                 closed: true,
                 nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
                     .into_iter()
@@ -3267,6 +3306,7 @@ pub(crate) mod tests {
         let stem = |x: f64| {
             Shape::Path(kernest_core::Path {
                 locked: false,
+                stroke: None,
                 closed: true,
                 nodes: [(x, 0.0), (x + 100.0, 0.0), (x + 100.0, 700.0), (x, 700.0)]
                     .into_iter()
@@ -3331,6 +3371,7 @@ pub(crate) mod tests {
             let l = f.glyph_mut(n).unwrap().layer_mut("m01").unwrap();
             l.shapes = vec![Shape::Path(kernest_core::Path {
                 locked: false,
+                stroke: None,
                 closed: true,
                 nodes: [(x0, 0.0), (x1, 0.0), (x1, 500.0), (x0, 500.0)]
                     .into_iter()

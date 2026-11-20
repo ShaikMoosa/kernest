@@ -275,6 +275,7 @@ mod tests {
         Shape::Path(Path {
             closed: true,
             locked: false,
+            stroke: None,
             nodes: vec![
                 crate::model::Node::new(x0, y0, crate::model::NodeKind::Line),
                 crate::model::Node::new(x1, y0, crate::model::NodeKind::Line),
@@ -436,6 +437,8 @@ mod tests {
             guides: Vec::new(),
             hints: Vec::new(),
             background: None,
+            backup: None,
+            parts: Vec::new(),
         };
         assert_eq!(outline_counts(&l), (1, 4));
     }

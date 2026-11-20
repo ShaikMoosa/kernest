@@ -142,6 +142,7 @@ mod tests {
         let rect = |x0: f64| {
             Shape::Path(Path {
                 locked: false,
+                stroke: None,
                 closed: true,
                 nodes: vec![
                     Node::new(x0, 0.0, NodeKind::Line),
@@ -280,6 +281,7 @@ mod tests {
         let f = sample_font();
         let rect = Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 Node::new(0.0, 0.0, NodeKind::Line),

@@ -127,6 +127,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         control_instructions: String::new(),
         grid: None,
         use_typo_metrics: g.custom_parameters.use_typo_metrics.unwrap_or(false),
+        custom_parameters: Vec::new(),
     };
 
     // Glyphs in the file's order, then any the order doesn't mention.
@@ -380,12 +381,15 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             .map(|g| format!("@{g}"))
             .unwrap_or_else(|| s.to_string())
     };
+    // Right-to-left pairs (kerningRTL) join the same list, in the order Glyphs stores
+    // them: fontc and glyphsLib compile them that way, flipping only the group sides,
+    // which Kernest's `@group` names don't record. An RTL pair wins over the same LTR one.
     let mut kerning = BTreeMap::new();
-    for (mid, pairs) in g.kerning_ltr.iter() {
+    for (mid, ltr) in g.kerning_ltr.iter() {
         let Some(id) = ids.get(mid.as_str()) else {
             continue;
         };
-        let pairs: Vec<KernPair> = pairs
+        let pairs: Vec<KernPair> = ltr
             .iter()
             .map(|((l, r), v)| KernPair {
                 left: side(l),
@@ -394,25 +398,35 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             })
             .collect();
         if !pairs.is_empty() {
-            kerning.insert(id.clone(), sorted_pairs(pairs));
+            kerning.insert(id.clone(), pairs);
         }
     }
-    if g.kerning_rtl.iter().any(|(_, p)| !p.is_empty()) {
-        warnings.push(
-            "Right-to-left kerning was left out; Kernest supports left-to-right kerning only."
-                .into(),
-        );
+    for (mid, rtl) in g.kerning_rtl.iter() {
+        let Some(id) = ids.get(mid.as_str()) else {
+            continue;
+        };
+        let list: &mut Vec<KernPair> = kerning.entry(id.clone()).or_default();
+        for ((l, r), v) in rtl.iter() {
+            let (left, right) = (side(l), side(r));
+            list.retain(|p| !(p.left == left && p.right == right));
+            list.push(KernPair {
+                left,
+                right,
+                value: v.0,
+            });
+        }
     }
+    let kerning: BTreeMap<String, Vec<KernPair>> = kerning
+        .into_iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(k, v)| (k, sorted_pairs(v)))
+        .collect();
 
-    let mut variable_settings = 0;
+    // Variable font settings are read from the source later (variable_settings_from).
     let instances: Vec<Instance> = g
         .instances
         .iter()
-        .filter(|i| {
-            let single = i.type_ == InstanceType::Single;
-            variable_settings += usize::from(!single);
-            single
-        })
+        .filter(|i| i.type_ == InstanceType::Single)
         .map(|i| Instance {
             name: i.name.clone(),
             location: location(&i.axes_values),
@@ -430,9 +444,6 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             },
         })
         .collect();
-    if variable_settings > 0 {
-        warnings.push("Variable font export settings were left out.".into());
-    }
 
     let features = g
         .features
@@ -507,22 +518,38 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             if font.glyphs.iter().any(|g| g.is_smart()) {
                 restore_smart_components(&mut font, &dicts, &master_ids);
             }
-            read_extras(&mut font, &dicts, &layer_keys);
+            let skipped = read_extras(&mut font, &dicts, &layer_keys, &master_ids);
+            if skipped > 0 {
+                warnings.push(format!(
+                    "{skipped} cap or segment component{} from Glyphs {} left out (Kernest places corner components only from Glyphs files).",
+                    plural(skipped),
+                    if skipped == 1 { "was" } else { "were" }
+                ));
+            }
         }
         Err(e) => warnings.push(format!(
             "Guides, backgrounds and tags couldn't be read: {e}"
         )),
     }
-    match read_master_guides(path) {
-        Ok(guides) => {
-            for (gid, list) in guides {
-                if let Some(m) = master_ids
-                    .get(&gid)
-                    .and_then(|id| font.masters.iter_mut().find(|m| &m.id == id))
+    match read_root(path) {
+        Ok(root) => {
+            for m in root
+                .get("fontMaster")
+                .and_then(|m| m.as_array())
+                .unwrap_or(&[])
+            {
+                let Some(gid) = m.get("id").and_then(|i| i.as_str()) else {
+                    continue;
+                };
+                if let Some(km) = master_ids
+                    .get(gid)
+                    .and_then(|id| font.masters.iter_mut().find(|k| &k.id == id))
                 {
-                    m.guides = list;
+                    km.guides = guides_in(m);
                 }
             }
+            font.info.custom_parameters = custom_parameters(&root);
+            font.variable_fonts = variable_settings_from(&root, &font, &mut warnings);
         }
         Err(e) => warnings.push(format!("Master guides couldn't be read: {e}")),
     }
@@ -672,7 +699,9 @@ fn read_extras(
     font: &mut Font,
     dicts: &HashMap<String, glyphs_reader::Plist>,
     layer_keys: &HashMap<(String, String), String>,
-) {
+    master_ids: &HashMap<String, String>,
+) -> usize {
+    let mut skipped_parts = 0;
     for g in &mut font.glyphs {
         let Some(d) = dicts.get(&g.name) else {
             continue;
@@ -693,16 +722,20 @@ fn read_extras(
             g.locked = true;
         }
         for ld in d.get("layers").and_then(|l| l.as_array()).unwrap_or(&[]) {
-            let Some(key) = ld
-                .get("layerId")
-                .and_then(|i| i.as_str())
-                .and_then(|i| layer_keys.get(&(g.name.clone(), i.to_string())))
-            else {
+            let lid = ld.get("layerId").and_then(|i| i.as_str()).unwrap_or("");
+            let Some(key) = layer_keys.get(&(g.name.clone(), lid.to_string())) else {
+                if let Some(b) = backup_layer(ld, master_ids) {
+                    let mut b = b;
+                    b.id = Some(g.new_layer_id(&b.master_id));
+                    g.layers.push(b);
+                }
                 continue;
             };
             let Some(l) = g.layer_mut(key) else {
                 continue;
             };
+            skipped_parts += restore_corners(l, ld);
+            restore_strokes(l, ld);
             l.guides = guides_in(ld);
             if let Some(bg) = ld.get("background") {
                 let shapes: Vec<Shape> = match bg.get("shapes").and_then(|s| s.as_array()) {
@@ -716,25 +749,381 @@ fn read_extras(
             }
         }
     }
+    skipped_parts
 }
 
-/// Each master's global guides, by Glyphs master id.
-fn read_master_guides(path: &Path) -> Result<Vec<(String, Vec<kernest_core::Guide>)>, String> {
+/// A layer glyphs-reader leaves out as a draft (a backup such as "legacy" or a dated
+/// copy): one tied to a master that isn't a colour, intermediate, alternate or smart
+/// layer. `None` for anything else.
+fn backup_layer(ld: &glyphs_reader::Plist, master_ids: &HashMap<String, String>) -> Option<Layer> {
+    let master = master_ids.get(ld.get("associatedMasterId")?.as_str()?)?;
+    let name = ld
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if let Some(attr) = ld.get("attr") {
+        if ["color", "colorPalette", "coordinates", "axisRules"]
+            .iter()
+            .any(|k| attr.get(k).is_some())
+        {
+            return None;
+        }
+    }
+    let smart = ld.get("partSelection").is_some()
+        || ld
+            .get("userData")
+            .and_then(|u| u.get("PartSelection"))
+            .is_some();
+    // Glyphs 2 marks intermediate, alternate and colour layers by their names.
+    let v2_special = name.contains('{')
+        || name.contains('[')
+        || name.contains(']')
+        || name.starts_with("Color ")
+        || name == "Color";
+    if smart || v2_special {
+        return None;
+    }
+    let width = ld.get("width").and_then(num).unwrap_or(0.0);
+    let mut l = Layer::new(master.clone(), width);
+    l.shapes = match ld.get("shapes").and_then(|s| s.as_array()) {
+        Some(list) => list.iter().filter_map(shape_v3).collect(),
+        None => shapes_v2(ld),
+    };
+    l.anchors = anchors_in(ld);
+    l.guides = guides_in(ld);
+    if let Some(bg) = ld.get("background") {
+        let shapes: Vec<Shape> = match bg.get("shapes").and_then(|s| s.as_array()) {
+            Some(list) => list.iter().filter_map(shape_v3).collect(),
+            None => shapes_v2(bg),
+        };
+        let anchors = anchors_in(bg);
+        if !shapes.is_empty() || !anchors.is_empty() {
+            l.background = Some(kernest_core::Background { shapes, anchors });
+        }
+    }
+    l.backup = Some(if name.is_empty() {
+        "Backup".into()
+    } else {
+        name
+    });
+    Some(l)
+}
+
+/// Glyphs corner components as live Kernest corners: glyphs-reader has already
+/// drawn them into the outline, so a layer with corner hints takes its own paths
+/// back from the source and gets the hints as parts. Returns how many cap or
+/// segment hints were left out.
+fn restore_corners(l: &mut Layer, ld: &glyphs_reader::Plist) -> usize {
+    let Some(hints) = ld.get("hints").and_then(|h| h.as_array()) else {
+        return 0;
+    };
+    let kind = |h: &glyphs_reader::Plist| h.get("type").and_then(|t| t.as_str()).map(String::from);
+    let others = hints
+        .iter()
+        .filter(|h| matches!(kind(h).as_deref(), Some("Cap") | Some("Segment")))
+        .count();
+    let corners: Vec<&glyphs_reader::Plist> = hints
+        .iter()
+        .filter(|h| kind(h).as_deref() == Some("Corner"))
+        .collect();
+    if corners.is_empty() {
+        return others;
+    }
+    // The layer's own shapes, before glyphs-reader inserted the corners.
+    let (raw, v3): (Vec<Shape>, bool) = match ld.get("shapes").and_then(|s| s.as_array()) {
+        Some(list) => (list.iter().filter_map(shape_v3).collect(), true),
+        None => (shapes_v2(ld), false),
+    };
+    let raw_shapes = ld.get("shapes").and_then(|s| s.as_array());
+    let pair =
+        |h: &glyphs_reader::Plist, key: &str| -> Option<(f64, f64)> { h.get(key).and_then(point) };
+    let mut parts = Vec::new();
+    for h in corners {
+        let Some(name) = h.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        let Some((si, ni)) = pair(h, "origin") else {
+            continue;
+        };
+        let (si, ni) = (si as usize, ni as usize);
+        // Glyphs 3 counts paths and components together; Kernest counts paths.
+        let path = if v3 {
+            let Some(list) = raw_shapes else { continue };
+            if list.get(si).and_then(|s| s.get("ref")).is_some() {
+                continue;
+            }
+            list[..si.min(list.len())]
+                .iter()
+                .filter(|s| s.get("ref").is_none())
+                .count()
+        } else {
+            si
+        };
+        let mut part = kernest_core::parts::PathPart::new(
+            kernest_core::parts::PartKind::Corner,
+            name,
+            path,
+            ni,
+        );
+        if let Some((x, y)) = pair(h, "scale") {
+            part.scale = [x, y];
+        }
+        part.align = match h.get("options").and_then(num).map(|v| v as i64) {
+            Some(1) => kernest_core::parts::CornerAlign::In,
+            Some(2) => kernest_core::parts::CornerAlign::Middle,
+            Some(4) => kernest_core::parts::CornerAlign::Unaligned,
+            _ => kernest_core::parts::CornerAlign::Out,
+        };
+        parts.push(part);
+    }
+    if !parts.is_empty() {
+        // Keep the components Kernest already has (smart ones restored), take the
+        // paths from the source.
+        let comps: Vec<Shape> = l
+            .shapes
+            .iter()
+            .filter(|s| matches!(s, Shape::Component { .. }))
+            .cloned()
+            .collect();
+        let mut shapes: Vec<Shape> = raw
+            .into_iter()
+            .filter(|s| matches!(s, Shape::Path(_)))
+            .collect();
+        shapes.extend(comps);
+        l.shapes = shapes;
+        l.parts = parts;
+    }
+    others
+}
+
+/// Puts back the stroke settings Kernest keeps in a layer's userData (see
+/// `glyphs_write::stroke_data`), by path number.
+fn restore_strokes(l: &mut Layer, ld: &glyphs_reader::Plist) {
+    let Some(text) = ld
+        .get("userData")
+        .and_then(|u| u.get(crate::glyphs_write::STROKE_KEY))
+        .and_then(|v| v.as_str())
+    else {
+        return;
+    };
+    let Ok(list) = serde_json::from_str::<Vec<(usize, kernest_core::stroke::PathStroke)>>(text)
+    else {
+        return;
+    };
+    let mut paths: Vec<&mut KPath> = l
+        .shapes
+        .iter_mut()
+        .filter_map(|s| match s {
+            Shape::Path(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+    for (i, s) in list {
+        if let Some(p) = paths.get_mut(i) {
+            p.stroke = Some(s);
+        }
+    }
+}
+
+/// The font-level dictionary of a `.glyphs` file (or a package's `fontinfo.plist`).
+fn read_root(path: &Path) -> Result<glyphs_reader::Plist, String> {
     let file = if path.is_dir() {
         path.join("fontinfo.plist")
     } else {
         path.to_path_buf()
     };
     let text = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
-    let root =
-        glyphs_reader::Plist::parse(&text).map_err(|e| format!("{}: {e}", file.display()))?;
-    Ok(root
-        .get("fontMaster")
-        .and_then(|m| m.as_array())
+    glyphs_reader::Plist::parse(&text).map_err(|e| format!("{}: {e}", file.display()))
+}
+
+/// Font custom parameters Kernest reads into its own settings; every other one is
+/// kept as it is in Font Info › Custom parameters.
+pub(crate) const HANDLED_PARAMETERS: &[&str] = &[
+    "glyphOrder",
+    "Variable Font Origin",
+    "vendorID",
+    "openTypeOS2VendorID",
+    "TTFAutohint options",
+    "TTFAutohint control instructions",
+    "BlueScale",
+    "BlueShift",
+    "BlueFuzz",
+    "Axis Mappings",
+    "Axis Location",
+    "Use Typo Metrics",
+    "Color Palettes",
+    "typoAscender",
+    "typoDescender",
+    "typoLineGap",
+    "hheaAscender",
+    "hheaDescender",
+    "hheaLineGap",
+    "winAscent",
+    "winDescent",
+    "underlineThickness",
+    "underlinePosition",
+    "openTypeOS2TypoAscender",
+    "openTypeOS2TypoDescender",
+    "openTypeOS2TypoLineGap",
+    "openTypeHheaAscender",
+    "openTypeHheaDescender",
+    "openTypeHheaLineGap",
+    "openTypeOS2WinAscent",
+    "openTypeOS2WinDescent",
+    "postscriptUnderlineThickness",
+    "postscriptUnderlinePosition",
+    // Glyphs 2 keeps axes and name fields as font parameters; Kernest reads them into
+    // its axes and Font Info names.
+    "Axes",
+    "copyright",
+    "description",
+    "designer",
+    "designerURL",
+    "license",
+    "licenseURL",
+    "manufacturer",
+    "manufacturerURL",
+    "trademark",
+    "sampleText",
+];
+
+/// The font's custom parameters that Kernest has no setting for, value text intact.
+fn custom_parameters(root: &glyphs_reader::Plist) -> Vec<kernest_core::CustomParameter> {
+    root.get("customParameters")
+        .and_then(|p| p.as_array())
         .unwrap_or(&[])
         .iter()
-        .filter_map(|m| Some((m.get("id")?.as_str()?.to_string(), guides_in(m))))
-        .collect())
+        .filter_map(|p| {
+            let name = p.get("name")?.as_str()?.to_string();
+            if HANDLED_PARAMETERS.contains(&name.as_str()) {
+                return None;
+            }
+            Some(kernest_core::CustomParameter {
+                value: p.get("value").map(|v| v.to_string()).unwrap_or_default(),
+                disabled: p.get("disabled").and_then(num).is_some_and(|v| v != 0.0),
+                name,
+            })
+        })
+        .collect()
+}
+
+/// Whether `name` matches a Glyphs glyph pattern (`*` for any run of characters).
+fn glob(pattern: &str, name: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == name,
+        Some((head, tail)) => {
+            name.starts_with(head)
+                && (0..=name.len() - head.len())
+                    .filter(|&i| name.is_char_boundary(head.len() + i))
+                    .any(|i| glob(tail, &name[head.len() + i..]))
+        }
+    }
+}
+
+/// Glyphs "Variable Font Setting" instances as Kernest variable fonts: the name, the
+/// `fileName` parameter and the glyphs kept by "Keep Glyphs" / "Remove Glyphs".
+fn variable_settings_from(
+    root: &glyphs_reader::Plist,
+    font: &Font,
+    warnings: &mut Vec<String>,
+) -> Vec<kernest_core::VariableFontSetting> {
+    let family: String = font.info.family_name.split_whitespace().collect();
+    let mut out: Vec<kernest_core::VariableFontSetting> = Vec::new();
+    let mut ignored: Vec<String> = Vec::new();
+    for inst in root
+        .get("instances")
+        .and_then(|i| i.as_array())
+        .unwrap_or(&[])
+    {
+        if inst.get("type").and_then(|t| t.as_str()) != Some("variable") {
+            continue;
+        }
+        let name = inst
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("Variable")
+            .to_string();
+        let mut file_name = None;
+        let mut glyphs: Vec<String> = Vec::new();
+        for p in inst
+            .get("customParameters")
+            .and_then(|p| p.as_array())
+            .unwrap_or(&[])
+        {
+            if p.get("disabled").and_then(num).is_some_and(|v| v != 0.0) {
+                continue;
+            }
+            let Some(pname) = p.get("name").and_then(|n| n.as_str()) else {
+                continue;
+            };
+            let list = || -> Vec<String> {
+                p.get("value")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            match pname {
+                "fileName" => file_name = p.get("value").and_then(|v| v.as_str()).map(String::from),
+                "Keep Glyphs" => {
+                    let keep = list();
+                    glyphs = font
+                        .glyphs
+                        .iter()
+                        .filter(|g| keep.iter().any(|k| glob(k, &g.name)))
+                        .map(|g| g.name.clone())
+                        .collect();
+                }
+                "Remove Glyphs" => {
+                    let remove = list();
+                    let base: Vec<String> = if glyphs.is_empty() {
+                        font.glyphs.iter().map(|g| g.name.clone()).collect()
+                    } else {
+                        glyphs.clone()
+                    };
+                    glyphs = base
+                        .into_iter()
+                        .filter(|n| !remove.iter().any(|r| glob(r, n)))
+                        .collect();
+                }
+                // The default master is the font's own origin in Kernest.
+                "Variable Font Origin" => {}
+                other => {
+                    if !ignored.iter().any(|x| x == other) {
+                        ignored.push(other.to_string());
+                    }
+                }
+            }
+        }
+        let file_name = file_name.unwrap_or_else(|| {
+            if out.is_empty() {
+                format!("{family}-VF")
+            } else {
+                format!(
+                    "{family}-{}-VF",
+                    name.split_whitespace().collect::<String>()
+                )
+            }
+        });
+        out.push(kernest_core::VariableFontSetting {
+            name,
+            file_name,
+            axes: Vec::new(),
+            glyphs,
+        });
+    }
+    if !ignored.is_empty() {
+        warnings.push(format!(
+            "Variable font settings: these parameters were left out: {}",
+            ignored.join(", ")
+        ));
+    }
+    out
 }
 
 /// Line spacing and underline values from a master's custom parameters, falling back
@@ -914,6 +1303,7 @@ fn shape_v3(d: &glyphs_reader::Plist) -> Option<Shape> {
         .collect();
     Some(Shape::Path(KPath {
         locked: false,
+        stroke: None,
         closed: d.get("closed").and_then(|c| c.as_i64()).unwrap_or(1) != 0,
         nodes,
     }))
@@ -947,6 +1337,7 @@ fn shapes_v2(d: &glyphs_reader::Plist) -> Vec<Shape> {
             .collect();
         out.push(Shape::Path(KPath {
             locked: false,
+            stroke: None,
             closed: p.get("closed").and_then(|c| c.as_i64()).unwrap_or(1) != 0,
             nodes,
         }));
@@ -1358,6 +1749,7 @@ fn layer(id: &str, l: &glyphs_reader::Layer) -> Layer {
                     .collect();
                 out.shapes.push(Shape::Path(KPath {
                     locked: false,
+                    stroke: None,
                     closed: p.closed,
                     nodes,
                 }));

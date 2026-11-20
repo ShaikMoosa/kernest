@@ -114,6 +114,7 @@ pub(crate) fn from_bez(b: &BezPath, closed: bool) -> Option<Path> {
     mark_smooth(&mut nodes, closed);
     Some(Path {
         locked: false,
+        stroke: None,
         closed,
         nodes,
     })
@@ -255,6 +256,7 @@ mod tests {
     fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Shape {
         Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
                 .into_iter()
@@ -331,6 +333,7 @@ mod tests {
             let n = |x: f64, y: f64, kind| Node::new(cx + x, 300.0 + y, kind);
             Shape::Path(Path {
                 locked: false,
+                stroke: None,
                 closed: true,
                 nodes: vec![
                     n(100.0, 0.0, NodeKind::Curve),

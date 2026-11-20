@@ -264,6 +264,9 @@ pub struct PathDto {
     nodes: Vec<NodeDto>,
     #[serde(default)]
     pub(crate) locked: bool,
+    /// The path's stroke, if it is drawn with a pen (kept through edits).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) stroke: Option<kernest_core::stroke::PathStroke>,
 }
 
 #[derive(Serialize)]
@@ -281,6 +284,9 @@ pub struct ComponentDto {
     smart_axes: Vec<SmartAxis>,
     /// This component's resolved outline, SVG path data in font units (y up).
     svg: String,
+    /// Smart handles: anchors named after smart axes, to drag on the canvas.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    handles: Vec<kernest_core::smart::SmartHandle>,
 }
 
 /// A component as sent back by the editor (move, add or remove).
@@ -313,6 +319,14 @@ pub struct LayerView {
     pub(crate) components: Vec<ComponentDto>,
     /// All components resolved to outlines, as SVG path data in font units (y up).
     component_svg: String,
+    /// The outlines the engine draws for this layer's stroked paths and paths with
+    /// corner, cap or segment components, as SVG path data.
+    stroke_svg: String,
+    /// Which paths (counting paths only) `stroke_svg` draws; the editor doesn't
+    /// fill these itself.
+    engine_paths: Vec<usize>,
+    /// Corner, cap and segment components placed on this layer's paths.
+    parts: Vec<kernest_core::parts::PathPart>,
     pub(crate) anchors: Vec<Anchor>,
     /// This layer's manual PostScript hints (empty means auto stems are used).
     pub(crate) hints: Vec<Hint>,
@@ -481,6 +495,9 @@ fn layer_view_font(
         paths,
         components,
         component_svg,
+        stroke_svg: engine_svg(font, layer),
+        engine_paths: engine_paths(layer),
+        parts: layer.parts.clone(),
         anchors: layer.anchors.clone(),
         hints: layer.hints.clone(),
         auto_hints: kernest_core::hinting::auto_stems(
@@ -533,6 +550,7 @@ fn outline_views(
             Shape::Path(p) => paths.push(PathDto {
                 closed: p.closed,
                 locked: p.locked,
+                stroke: p.stroke.clone(),
                 nodes: p
                     .nodes
                     .iter()
@@ -563,6 +581,7 @@ fn outline_views(
                         .map(|b| b.smart_axes.clone())
                         .unwrap_or_default(),
                     svg: svg_path(font, &single),
+                    handles: kernest_core::smart::handles(font, base, &single, smart, transform),
                 });
                 comp_only.shapes.push(s.clone());
             }
@@ -607,6 +626,7 @@ pub(crate) fn to_path(p: &PathDto) -> CmdResult<KPath> {
     }
     Ok(KPath {
         locked: p.locked,
+        stroke: p.stroke.clone(),
         closed: p.closed,
         nodes: p
             .nodes
@@ -1164,6 +1184,208 @@ fn set_path_locked_in(
         doc.revision += 1;
     }
     layer_view_of(doc, glyph, key)
+}
+
+/// Paths the engine draws: stroked ones and ones with corner, cap or segment
+/// components (counting paths only).
+fn engine_paths(layer: &Layer) -> Vec<usize> {
+    let mut v: Vec<usize> = layer
+        .shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Path(p) => Some(p.stroke.is_some()),
+            _ => None,
+        })
+        .enumerate()
+        .filter(|(_, stroked)| *stroked)
+        .map(|(i, _)| i)
+        .chain(layer.parts.iter().map(|p| p.path))
+        .collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// The outlines of [`engine_paths`], with parts applied and strokes expanded, plus
+/// the extra paths corner components bring.
+fn engine_svg(font: &Font, layer: &Layer) -> String {
+    let paths = engine_paths(layer);
+    if paths.is_empty() {
+        return String::new();
+    }
+    let own = layer
+        .shapes
+        .iter()
+        .filter(|s| matches!(s, Shape::Path(_)))
+        .count();
+    let applied = kernest_core::parts::apply(font, layer);
+    let mut only = Layer::new(layer.master_id.clone(), layer.width);
+    only.shapes = applied
+        .shapes
+        .iter()
+        .filter(|s| matches!(s, Shape::Path(_)))
+        .enumerate()
+        .filter(|(i, _)| paths.contains(i) || *i >= own)
+        .map(|(_, s)| s.clone())
+        .collect();
+    kernest_core::geometry::svg_path(font, &only)
+}
+
+/// Places a corner, cap or segment component on a path node, in every master.
+#[tauri::command]
+pub fn add_path_part(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    part: kernest_core::parts::PathPart,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    stroke_edit(doc, &glyph, &master_id, |f| {
+        kernest_core::parts::add_part(f, &glyph, &master_id, part)
+    })
+}
+
+/// Changes or (with `None`) removes one of the layer's parts, in every master.
+#[tauri::command]
+pub fn set_path_part(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    index: usize,
+    part: Option<kernest_core::parts::PathPart>,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    stroke_edit(doc, &glyph, &master_id, |f| {
+        kernest_core::parts::set_part(f, &glyph, &master_id, index, part)
+    })
+}
+
+/// Decompose: the glyph's corner, cap and segment components become outline.
+#[tauri::command]
+pub fn decompose_parts(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    stroke_edit(doc, &glyph, &master_id, |f| {
+        kernest_core::parts::decompose_parts(f, &glyph)
+    })
+}
+
+/// Applies a whole-glyph stroke change and returns the shown layer.
+fn stroke_edit(
+    doc: &mut Document,
+    glyph: &str,
+    key: &str,
+    f: impl FnOnce(&Font) -> Result<Font, String>,
+) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
+    let next = f(&doc.font)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    layer_view_of(doc, glyph, key)
+}
+
+/// Adds the `pixel` glyph the pixel tool draws with: a `size` square in every master.
+#[tauri::command]
+pub fn add_pixel_glyph(state: State<AppState>, size: f64) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let next = kernest_core::pixel::add_pixel_glyph(&doc.font, size)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
+/// Pixel tool: turns the pixels at `cells` (bottom-left corners) on or off in one
+/// layer, as one undoable step.
+#[tauri::command]
+pub fn set_pixels(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    cells: Vec<[f64; 2]>,
+    on: bool,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, &glyph)?;
+    let cells: Vec<(f64, f64)> = cells.iter().map(|c| (c[0], c[1])).collect();
+    let next = kernest_core::pixel::set_pixels(&doc.font, &glyph, &master_id, &cells, on)?;
+    let layer = next
+        .glyph(&glyph)
+        .and_then(|g| g.layer(&master_id))
+        .ok_or("That layer doesn't exist.")?
+        .clone();
+    if doc
+        .history
+        .apply(&mut doc.font, &glyph, &master_id, layer)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    layer_view_of(doc, &glyph, &master_id)
+}
+
+/// Strokes the `path`-th path (or fills it again with `None`), in every master.
+#[tauri::command]
+pub fn set_path_stroke(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    path: usize,
+    stroke: Option<kernest_core::stroke::PathStroke>,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    stroke_edit(doc, &glyph, &master_id, |f| {
+        kernest_core::stroke::set_stroke(f, &glyph, &master_id, path, stroke)
+    })
+}
+
+/// Sets or clears the pen width at an on-curve node of a stroked path.
+#[tauri::command]
+pub fn set_pen_width(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    path: usize,
+    node: usize,
+    width: Option<f64>,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    stroke_edit(doc, &glyph, &master_id, |f| {
+        kernest_core::stroke::set_pen_width(f, &glyph, &master_id, path, node, width)
+    })
+}
+
+/// Expand Outline: the glyph's stroked paths become outlines, in every layer.
+#[tauri::command]
+pub fn expand_strokes(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    stroke_edit(doc, &glyph, &master_id, |f| {
+        kernest_core::stroke::expand_glyph(f, &glyph)
+    })
 }
 
 #[tauri::command]
@@ -1817,6 +2039,7 @@ mod tests {
         use NodeKindDto::*;
         let ok = PathDto {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0., 0., Line),
@@ -1827,18 +2050,21 @@ mod tests {
         assert!(to_path(&ok).is_ok());
         let only_off = PathDto {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![node(0., 0., Offcurve), node(1., 1., Offcurve)],
         };
         assert!(to_path(&only_off).is_err());
         let open_off = PathDto {
             locked: false,
+            stroke: None,
             closed: false,
             nodes: vec![node(0., 0., Offcurve), node(1., 1., Line)],
         };
         assert!(to_path(&open_off).is_err());
         let three = PathDto {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0., 0., Line),
@@ -1851,6 +2077,7 @@ mod tests {
         assert!(to_path(&three).is_err());
         let cubic = PathDto {
             locked: false,
+            stroke: None,
             closed: false,
             nodes: vec![
                 node(0., 0., Line),
@@ -1862,6 +2089,7 @@ mod tests {
         assert!(to_path(&cubic).is_ok());
         let nan = PathDto {
             locked: false,
+            stroke: None,
             closed: false,
             nodes: vec![node(f64::NAN, 0., Line)],
         };

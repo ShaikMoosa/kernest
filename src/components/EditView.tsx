@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
+import { backend, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
 import {
@@ -12,7 +12,7 @@ import { ColorGlyph } from "./ColorGlyph";
 import { PaintDialog } from "./PaintDialog";
 import { PixelPreviewPanel } from "./PixelPreviewPanel";
 
-type Tool = "select" | "pen" | "rect" | "ellipse" | "knife" | "hand" | "measure";
+type Tool = "select" | "pen" | "rect" | "ellipse" | "knife" | "pixel" | "hand" | "measure";
 interface Pt { x: number; y: number }
 interface View { s: number; ox: number; oy: number }
 /** A component as drawn: the server's outline plus a live offset while dragging. */
@@ -26,6 +26,7 @@ const TOOLS: { id: Tool; key: string; shift?: boolean; label: string; icon: Reac
   { id: "rect", key: "f", label: "Rectangle (F)", icon: <rect x="5" y="6" width="14" height="12" rx="1" /> },
   { id: "ellipse", key: "e", shift: true, label: "Ellipse (Shift+E)", icon: <ellipse cx="12" cy="12" rx="7.5" ry="6.5" /> },
   { id: "knife", key: "e", label: "Knife (E)", icon: <><path d="M4 20l9-9" /><path d="M13 11l3.2-5.4a2.1 2.1 0 0 1 3.6 2.1L15 13z" /></> },
+  { id: "pixel", key: "x", label: "Pixel (X)", icon: <><rect x="4" y="4" width="7" height="7" /><rect x="13" y="13" width="7" height="7" /><rect x="4" y="13" width="7" height="7" opacity="0.4" /></> },
   { id: "measure", key: "l", label: "Measure (L)", icon: <><path d="M4 20L20 4" /><path d="M4 15v5h5" /><path d="M20 9V4h-5" /></> },
   { id: "hand", key: "h", label: "Hand (H) · or hold Space", icon: <path d="M8 12V6.5a1.5 1.5 0 0 1 3 0V11V5a1.5 1.5 0 0 1 3 0v6V6.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-1a6 6 0 0 1-4.6-2.2L4 15a1.5 1.5 0 0 1 2.2-2z" /> },
 ];
@@ -172,7 +173,7 @@ interface Props {
   active: boolean;
   /** All glyph names and widths in the font, for Add Component. */
   glyphs: { name: string; width: number }[];
-  onCommitted: (status: DocStatus) => void;
+  onCommitted: (status: DocStatus) => void; /** A change that adds glyphs (the pixel glyph): the app reloads the font. */ onStructureChanged?: (s: DocStatus) => unknown;
   onDrawn?: () => void;
   handleSize?: "small" | "medium" | "large";
   onError: (e: unknown) => void;
@@ -202,7 +203,7 @@ interface Props {
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, masterKey, onPickLayer, reporters = [] }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, masterKey, onPickLayer, reporters = [] }: Props) {
   const master = masterKey ?? masterId;
   const nodeScale = handleSize === "small" ? 0.75 : handleSize === "large" ? 1.5 : 1;
   // ---------- Reporter plug-ins ----------
@@ -315,6 +316,30 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     }
   }, [glyph, masterId, onCommitted, onError]);
 
+  /** Saves the master's drawing as a backup named after the time, and shows it. */
+  const addBackup = useCallback(async () => {
+    try {
+      const now = new Date();
+      const name = t("Backup {date}", { date: now.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) });
+      const r = await backend.addBackupLayer(glyph, master, name);
+      onCommitted(r.status);
+      setLayersVersion((n) => n + 1);
+    } catch (e) {
+      onError(e);
+    }
+  }, [glyph, master, onCommitted, onError]);
+
+  /** Swaps the shown backup with the master drawing, then shows the master. */
+  const useBackup = useCallback(async () => {
+    try {
+      onCommitted(await backend.useBackupLayer(glyph, masterId));
+      setLayersVersion((n) => n + 1);
+      onPickLayer?.(master);
+    } catch (e) {
+      onError(e);
+    }
+  }, [glyph, masterId, master, onCommitted, onPickLayer, onError]);
+
   const removeCurrentLayer = useCallback(async () => {
     try {
       const s = await backend.removeLayer(glyph, masterId);
@@ -344,6 +369,11 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [preview, setPreview] = useState<EditPath | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
   const [picking, setPicking] = useState(false);
+  // Choosing a corner, cap or segment glyph for a node.
+  const [partPick, setPartPick] = useState<{ kind: PathPart["kind"]; path: number; node: number } | null>(null);
+  const [partsOpen, setPartsOpen] = useState(true);
+  // A smart handle being dragged: which component, which handle, the value so far.
+  const [smartDrag, setSmartDrag] = useState<{ ci: number; h: SmartHandle; value: number } | null>(null);
   const [localGuides, setLocalGuides] = useState<Guide[]>([]);
   const [globalGuides, setGlobalGuides] = useState<Guide[]>([]);
   const [guideSel, setGuideSel] = useState<GuideRef | null>(null);
@@ -353,8 +383,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [measureLine, setMeasureLine] = useState<{ p0: Pt; p1: Pt } | null>(null);
   const [measurement, setMeasurement] = useState<Measurement | null>(null);
   const [knifeLine, setKnifeLine] = useState<{ p0: Pt; p1: Pt } | null>(null);
+  // Pixel tool: the cells painted (or erased) during the current drag.
+  const [pixelDraft, setPixelDraft] = useState<{ on: boolean; cells: [number, number][] } | null>(null);
+  const [askPixelGlyph, setAskPixelGlyph] = useState(false);
   const [transformOpen, setTransformOpen] = useState(false);
   const [hintsOpen, setHintsOpen] = useState(false);
+  const [strokeOpen, setStrokeOpen] = useState(true);
   const [tf, setTf] = useState({ sx: 100, sy: 100, rot: 0, kx: 0, ky: 0, mh: false, mv: false, origin: 4, allMasters: false });
   const [, rerender] = useState(0);
 
@@ -562,6 +596,17 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       }
     });
   }, [glyph, masterId, accept, onError]);
+
+  /** Runs a stroke command and shows the layer it returns. */
+  const strokeCall = useCallback((run: () => Promise<LayerView>) => {
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await run());
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [accept, onError]);
 
   const setMetricsKey = useCallback((metric: MetricName, key: string | null) => {
     chain.current = chain.current.then(async () => {
@@ -893,11 +938,46 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       return;
     }
 
+    if (activeTool === "pixel") {
+      const size = layer.grid?.spacing ?? 0;
+      if (size < 2) {
+        onWarning?.(t("The pixel tool needs a grid spacing of 2 or more (Font Info › Grid)."));
+        return;
+      }
+      if (!glyphNames.has("pixel")) {
+        setAskPixelGlyph(true);
+        return;
+      }
+      if (glyph === "pixel") {
+        onWarning?.(t("The pixel glyph can't be drawn with itself."));
+        return;
+      }
+      const c: [number, number] = [Math.floor(wp.x / size) * size, Math.floor(wp.y / size) * size];
+      const present = comps.some((k) => k.base === "pixel" && k.transform[4] === c[0] && k.transform[5] === c[1] && k.transform[0] === 1 && k.transform[3] === 1);
+      setPixelDraft({ on: !present, cells: [c] });
+      drag.current = { mode: "pixel", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
+      return;
+    }
+
     if (activeTool === "knife") {
       const p = round(wp);
       setKnifeLine({ p0: p, p1: p });
       drag.current = { mode: "knife", startScreen: sp, startWorld: p, base, baseComps, baseAnchors, moved: false };
       return;
+    }
+
+    if (activeTool === "select" && !editingBackground && !layer.glyphLocked) {
+      // Smart handles sit on top of everything else.
+      for (const [ci, c] of comps.entries()) {
+        for (const h of c.handles ?? []) {
+          const p = toScreen(h.at[0] + c.dx, h.at[1] + c.dy);
+          if (Math.hypot(p.x - sp.x, p.y - sp.y) <= HIT + 2) {
+            setSmartDrag({ ci, h, value: h.value });
+            drag.current = { mode: "smart", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
+            return;
+          }
+        }
+      }
     }
 
     if (activeTool === "select") {
@@ -1025,6 +1105,20 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     if (!d.moved && Math.hypot(sp.x - d.startScreen.x, sp.y - d.startScreen.y) < 3) return;
     d.moved = true;
 
+    if (d.mode === "smart") {
+      setSmartDrag((sd) => {
+        if (!sd) return sd;
+        const c = comps[sd.ci];
+        const { h } = sd;
+        const dx = h.atMax[0] - h.atMin[0], dy = h.atMax[1] - h.atMin[1];
+        const len2 = dx * dx + dy * dy;
+        if (len2 < 1e-9) return sd;
+        const tt = Math.min(1, Math.max(0, ((wp.x - (c?.dx ?? 0) - h.atMin[0]) * dx + (wp.y - (c?.dy ?? 0) - h.atMin[1]) * dy) / len2));
+        return { ...sd, value: Math.round((h.min + tt * (h.max - h.min)) * 10) / 10 };
+      });
+      return;
+    }
+
     if (d.mode === "pan" && d.startView) {
       setView({ ...d.startView, ox: d.startView.ox + sp.x - d.startScreen.x, oy: d.startView.oy + sp.y - d.startScreen.y });
     } else if (d.mode === "anchor") {
@@ -1086,6 +1180,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       const p1 = { x: Math.round(wp.x * 10) / 10, y: Math.round(wp.y * 10) / 10 };
       setMeasureLine({ p0: d.startWorld, p1 });
       runMeasure(d.startWorld, p1);
+    } else if (d.mode === "pixel") {
+      const size = layer?.grid?.spacing ?? 0;
+      if (size >= 2) {
+        const c: [number, number] = [Math.floor(wp.x / size) * size, Math.floor(wp.y / size) * size];
+        setPixelDraft((dr) => (dr && !dr.cells.some(([x, y]) => x === c[0] && y === c[1]) ? { ...dr, cells: [...dr.cells, c] } : dr));
+      }
     } else if (d.mode === "knife") {
       setKnifeLine({ p0: d.startWorld, p1: round(wp) });
     } else if (d.mode === "marquee") {
@@ -1120,6 +1220,15 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     const d = drag.current;
     drag.current = null;
     if (!d) return;
+    if (d.mode === "smart") {
+      const sd = smartDrag;
+      setSmartDrag(null);
+      if (sd && d.moved && sd.value !== sd.h.value) {
+        const c = comps[sd.ci];
+        setComponentSmart(sd.ci, { ...(c?.smart ?? {}), [sd.h.axis]: sd.value });
+      }
+      return;
+    }
     const sp = local(e);
     setSnapGuide(null);
     // Commit what the last pointer move computed (state may not have re-rendered yet).
@@ -1190,6 +1299,18 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     } else if (d.mode === "pen") {
       commit(d.lastPaths ?? d.base);
       rerender((n) => n + 1);
+    } else if (d.mode === "pixel") {
+      const draft = pixelDraft;
+      setPixelDraft(null);
+      if (draft && draft.cells.length) {
+        chain.current = chain.current.then(async () => {
+          try {
+            accept(await backend.setPixels(glyph, masterId, draft.cells, draft.on));
+          } catch (err) {
+            onError(err);
+          }
+        });
+      }
     } else if (d.mode === "knife") {
       const p1 = round(toWorld(sp.x, sp.y));
       setKnifeLine(null);
@@ -1432,7 +1553,22 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const { ascender, capHeight, xHeight, descender } = layer.metrics;
   const lines: [string, number][] = [[t("Ascender"), ascender], [t("Cap height"), capHeight], [t("x-height"), xHeight], [t("Baseline"), 0], [t("Descender"), descender]];
   const x0 = toScreen(0, 0).x, x1 = toScreen(layer.width, 0).x;
-  const outline = pathsToSvg(paths);
+  // Stroked paths are drawn as their stroke outlines (from the engine) plus a thin
+  // centre line; every other path is filled as usual.
+  const enginePaths = new Set(layer.enginePaths ?? []);
+  const outline = pathsToSvg(paths.filter((p, i) => !p.stroke && !enginePaths.has(i)));
+  const strokedCentres = pathsToSvg(paths.filter((p) => p.stroke));
+  // The one path the selection touches, for the Stroke panel.
+  const selectedPathSet = new Set([...selection].map((k) => parseKey(k)[0]));
+  const strokePath = selectedPathSet.size === 1 ? [...selectedPathSet][0] : null;
+  const strokeTarget = strokePath !== null ? paths[strokePath] : undefined;
+  // A single selected on-curve node of a stroked path: its pen point number.
+  const penNode = (() => {
+    if (!strokeTarget?.stroke || selection.size !== 1) return null;
+    const [, ni] = parseKey([...selection][0]);
+    if (!strokeTarget.nodes[ni] || !isOn(strokeTarget.nodes[ni])) return null;
+    return strokeTarget.nodes.slice(0, ni).filter(isOn).length;
+  })();
   // Nodes sharing an exact position with another node of the same path: flagged red.
   const dupNodes = new Set<string>();
   paths.forEach((p, pi) => {
@@ -1479,7 +1615,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               .filter((l) => (l.kind === "master" ? l.key === master : l.kind === "brace" || l.masterId === master))
               .map((l) => (
                 <option key={l.key} value={l.key}>
-                  {l.kind === "master" ? t("{name} (master)", { name: l.label }) : l.kind === "brace" ? t("Intermediate {name}", { name: l.label }) : l.kind === "smart" ? t("Smart {name}", { name: l.label }) : l.kind === "color" ? t("Colour {n}", { n: l.label }) : t("Alternate {name}", { name: l.label })}
+                  {l.kind === "master" ? t("{name} (master)", { name: l.label }) : l.kind === "brace" ? t("Intermediate {name}", { name: l.label }) : l.kind === "smart" ? t("Smart {name}", { name: l.label }) : l.kind === "color" ? t("Colour {n}", { n: l.label }) : l.kind === "backup" ? t("Backup: {name}", { name: l.label }) : t("Alternate {name}", { name: l.label })}
                 </option>
               ))}
           </select>
@@ -1488,6 +1624,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("bracket", false)} title={t("Add an alternate design (bracket layers)")}>{t("+ Alternate")}</button>
         <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "axes", axes: layer?.smartAxes ?? [] })} title={t("Make this a smart glyph: components of it get their own axes")}>{t("Smart…")}</button>
         <button className="btn btn-secondary btn-sm" onClick={addColorLayer} title={t("Add a colour layer (colour fonts): a drawing filled with a palette colour or gradient")}>{t("+ Colour")}</button>
+        <button className="btn btn-secondary btn-sm" onClick={addBackup} title={t("Save a copy of this master's drawing as a backup layer. Backups aren't exported.")}>{t("+ Backup")}</button>
         {(layer?.smartAxes?.length ?? 0) > 0 && (
           <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "pole", axes: layer?.smartAxes ?? [] })} title={t("Add the shape at another position on the smart axes")}>{t("+ Pole")}</button>
         )}
@@ -1496,6 +1633,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             {(currentLayer.kind === "brace" || currentLayer.kind === "bracket") && (
               <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog(currentLayer.kind as "brace" | "bracket", true)}>{currentLayer.kind === "brace" ? t("Move…") : t("Ranges…")}</button>
             )}
+            {currentLayer.kind === "backup" && (
+              <button className="btn btn-secondary btn-sm" onClick={useBackup} title={t("Make this the master's drawing; the current master drawing is kept as this backup")}>{t("Use as master")}</button>
+            )}
             {currentLayer.kind === "color" && (
               <>
                 <button className="btn btn-secondary btn-sm" onClick={() => setPainting(true)} title={t("Choose this layer's colour or gradient")}>{t("Paint…")}</button>
@@ -1503,7 +1643,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                 <button className="btn btn-secondary btn-sm" onClick={() => moveColorLayer(true)} title={t("Move this colour layer up (drawn later, on top)")} aria-label={t("Move up")}>↑</button>
               </>
             )}
-            <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? t("Removes this alternate from every master") : currentLayer.kind === "smart" ? t("Removes this pole") : currentLayer.kind === "color" ? t("Removes this colour layer from every master") : t("Removes this intermediate layer")}>{t("Remove")}</button>
+            <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? t("Removes this alternate from every master") : currentLayer.kind === "smart" ? t("Removes this pole") : currentLayer.kind === "color" ? t("Removes this colour layer from every master") : currentLayer.kind === "backup" ? t("Removes this backup") : t("Removes this intermediate layer")}>{t("Remove")}</button>
           </>
         )}
         {layer.glyphLocked && (
@@ -1601,6 +1741,22 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                 <path d={c.svg} data-comp={i} className={`component-fill${compSel.has(i) ? " is-selected" : ""}`} />
               </g>
             ))}
+            {/* Smart handles: drag along the axis' line to set its value. */}
+            {comps.map((c, ci) => (c.handles ?? []).map((h) => {
+              const dragging = smartDrag && smartDrag.ci === ci && smartDrag.h.axis === h.axis ? smartDrag : null;
+              const tt = dragging && h.max !== h.min ? (dragging.value - h.min) / (h.max - h.min) : null;
+              const x = (tt === null ? h.at[0] : h.atMin[0] + tt * (h.atMax[0] - h.atMin[0])) + c.dx;
+              const y = (tt === null ? h.at[1] : h.atMin[1] + tt * (h.atMax[1] - h.atMin[1])) + c.dy;
+              const r = 6 / view.s;
+              return (
+                <g key={`sh${ci}:${h.axis}`} className="smart-handle">
+                  {dragging && <line x1={h.atMin[0] + c.dx} y1={h.atMin[1] + c.dy} x2={h.atMax[0] + c.dx} y2={h.atMax[1] + c.dy} className="smart-track" strokeWidth={1 / view.s} />}
+                  <path d={`M${x} ${y - r}L${x + r} ${y}L${x} ${y + r}L${x - r} ${y}Z`} className="smart-diamond">
+                    <title>{t("{axis}: {value} (drag to change)", { axis: h.axis, value: Math.round((dragging?.value ?? h.value) * 10) / 10 })}</title>
+                  </path>
+                </g>
+              );
+            }))}
             {/* A component whose base glyph is missing: a dashed box where it would sit. */}
             {comps.map((c, i) => glyphNames.has(c.base) ? null : (
               <rect key={`cm${i}`} x={c.transform[4] + c.dx} y={c.transform[5] + c.dy} width={500} height={layer.metrics.capHeight} className="component-missing">
@@ -1608,9 +1764,17 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               </rect>
             ))}
             {focusPath !== null && paths[focusPath] ? <>
-              <path d={pathsToSvg(paths.filter((_, i) => i !== focusPath))} className="glyph-fill is-dimmed" fillRule="nonzero" pointerEvents="none" />
-              <path d={pathsToSvg([paths[focusPath]])} className="glyph-fill" fillRule="nonzero" />
+              <path d={pathsToSvg(paths.filter((p, i) => i !== focusPath && !p.stroke && !enginePaths.has(i)))} className="glyph-fill is-dimmed" fillRule="nonzero" pointerEvents="none" />
+              {!paths[focusPath].stroke && !enginePaths.has(focusPath) && <path d={pathsToSvg([paths[focusPath]])} className="glyph-fill" fillRule="nonzero" />}
             </> : <path d={outline} className="glyph-fill" fillRule="nonzero" />}
+            {layer.strokeSvg && <path d={layer.strokeSvg} className="glyph-fill" fillRule="nonzero" pointerEvents="none" />}
+            {(layer.parts ?? []).map((pt, i) => {
+              const nd = paths[pt.path]?.nodes[pt.node];
+              if (!nd) return null;
+              const r = 7 / view.s;
+              return <rect key={`part${i}`} x={nd.x - r} y={nd.y - r} width={2 * r} height={2 * r} className={`part-marker is-${pt.kind}`} strokeWidth={1.5 / view.s} pointerEvents="none"><title>{pt.glyph}</title></rect>;
+            })}
+            {strokedCentres && <path d={strokedCentres} className="stroke-centre" fill="none" strokeWidth={1.5 / view.s} pointerEvents="none" />}
             {/* Invisible strokes: the right-click target for lock and focus; locked paths turn red on hover. */}
             {!editingBackground && paths.map((p, pi) => (
               <path key={`ph${pi}`} d={pathsToSvg([p])} data-path={pi} className={`path-hit${p.locked ? " is-locked" : ""}`} fill="none" strokeWidth={(HIT + 3) / view.s} pointerEvents="stroke" />
@@ -1758,12 +1922,44 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               </g>
             );
           })()}
+          {smartDrag && (() => {
+            const c = comps[smartDrag.ci];
+            const { h } = smartDrag;
+            const tt = h.max !== h.min ? (smartDrag.value - h.min) / (h.max - h.min) : 0;
+            const p = toScreen(h.atMin[0] + tt * (h.atMax[0] - h.atMin[0]) + (c?.dx ?? 0), h.atMin[1] + tt * (h.atMax[1] - h.atMin[1]) + (c?.dy ?? 0));
+            return <text x={p.x + 10} y={p.y - 10} className="smart-label">{`${h.axis} ${smartDrag.value}`}</text>;
+          })()}
+          {pixelDraft && layer.grid && pixelDraft.cells.map(([x, y]) => {
+            const size = layer.grid!.spacing;
+            const a = toScreen(x, y + size), b = toScreen(x + size, y);
+            return <rect key={`px${x}:${y}`} x={a.x} y={a.y} width={b.x - a.x} height={b.y - a.y} className={`pixel-draft${pixelDraft.on ? "" : " is-erase"}`} pointerEvents="none" />;
+          })}
           {knifeLine && (() => {
             const a = toScreen(knifeLine.p0.x, knifeLine.p0.y), b = toScreen(knifeLine.p1.x, knifeLine.p1.y);
             return <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="knife-line" pointerEvents="none" />;
           })()}
           {marquee && <rect className="marquee" x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)} />}
         </svg>
+        {askPixelGlyph && (
+          <div className="scrim" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && setAskPixelGlyph(false)}>
+            <div className="dialog dialog-sm" role="dialog" aria-modal="true" aria-labelledby="pixel-glyph-title">
+              <header className="dialog-header">
+                <h2 id="pixel-glyph-title" className="k-subtitle">{t("No glyph named “pixel”")}</h2>
+              </header>
+              <div className="dialog-body">
+                <p className="k-body">{t("The pixel tool draws components of the “pixel” glyph. Create a {n} × {n} square?", { n: layer.grid?.spacing ?? 0 })}</p>
+              </div>
+              <footer className="dialog-footer">
+                <span className="spacer" />
+                <button type="button" className="btn btn-secondary" onClick={() => setAskPixelGlyph(false)}>{t("Cancel")}</button>
+                <button type="button" className="btn btn-primary" autoFocus onClick={() => {
+                  setAskPixelGlyph(false);
+                  backend.addPixelGlyph(layer.grid?.spacing ?? 50).then((st) => (onStructureChanged ?? onCommitted)(st), onError);
+                }}>{t("Add")}</button>
+              </footer>
+            </div>
+          </div>
+        )}
         {ctxMenu && (
           <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} role="menu">
             {layer.glyphLocked ? (
@@ -1778,6 +1974,17 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                 <button type="button" role="menuitem" onClick={() => { runCommand("close-open-paths"); setCtxMenu(null); }}>{t("Close Open Paths")}</button>
                 <button type="button" role="menuitem" onClick={() => { runCommand("reverse-contours"); setCtxMenu(null); }}>{t("Reverse Selected Contours")}</button>
                 <button type="button" role="menuitem" onClick={() => { runCommand("tidy-up"); setCtxMenu(null); }}>{t("Tidy up Paths")}</button>
+                <span className="ctx-sep" />
+                {(["corner", "cap", "segment"] as const).map((kind) => (
+                  <button key={kind} type="button" role="menuitem" onClick={() => {
+                    const prefix = kind === "corner" ? "_corner" : kind === "cap" ? "_cap" : "_segment";
+                    if (glyphs.some((g) => g.name.startsWith(prefix))) setPartPick({ kind, path: ctxMenu.node![0], node: ctxMenu.node![1] });
+                    else onWarning?.(t("There are no {prefix} glyphs yet. Add one (for example {prefix}.serif) and draw its open path.", { prefix }));
+                    setCtxMenu(null);
+                  }}>
+                    {kind === "corner" ? t("Add Corner Component…") : kind === "cap" ? t("Add Cap Component…") : t("Add Segment Component…")}
+                  </button>
+                ))}
                 <span className="ctx-sep" />
               </>}
               {ctxMenu.path !== null && paths[ctxMenu.path] && !editingBackground && <>
@@ -1932,6 +2139,147 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             </div>
           )}
         </div>
+        {(layer.parts ?? []).length > 0 && (
+        <div className="transform-panel parts-panel">
+          <button type="button" className="transform-head" aria-expanded={partsOpen} onClick={() => setPartsOpen((o) => !o)}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+            {t("Corner components")}
+            <span className="k-caption muted">{(layer.parts ?? []).length}</span>
+          </button>
+          {partsOpen && (
+            <div className="transform-body stroke-body">
+              {(layer.parts ?? []).map((pt, i) => {
+                const disabled = editingBackground || layer.glyphLocked;
+                const put = (patch: Partial<PathPart>) => strokeCall(() => backend.setPathPart(glyph, masterId, i, { ...pt, ...patch }));
+                const prefix = pt.kind === "corner" ? "_corner" : pt.kind === "cap" ? "_cap" : "_segment";
+                const scale = pt.scale ?? [1, 1];
+                return (
+                  <div key={i} className="part-row">
+                    <div className="part-head">
+                      <span className="k-caption muted">{pt.kind === "corner" ? t("Corner") : pt.kind === "cap" ? t("Cap") : t("Segment")} · {t("node {n}", { n: pt.node + 1 })}</span>
+                      <button type="button" className="icon-btn" aria-label={t("Remove {name}", { name: pt.glyph })} title={t("Remove")} disabled={disabled}
+                        onClick={() => strokeCall(() => backend.setPathPart(glyph, masterId, i, null))}><CloseIcon size={14} /></button>
+                    </div>
+                    <select className="select" value={pt.glyph} disabled={disabled} aria-label={t("Glyph")} onChange={(e) => put({ glyph: e.target.value })}>
+                      {[...new Set([pt.glyph, ...glyphs.map((g) => g.name).filter((n) => n.startsWith(prefix))])].map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <div className="part-scale">
+                      <MetricField onInvalid={onError} decimals label={t("Width %")} value={Math.abs(scale[0]) * 100} disabled={disabled} onCommit={(v) => put({ scale: [Math.sign(scale[0] || 1) * v / 100, scale[1]] })} />
+                      <MetricField onInvalid={onError} decimals label={t("Height %")} value={scale[1] * 100} disabled={disabled} onCommit={(v) => put({ scale: [scale[0], v / 100] })} />
+                    </div>
+                    {pt.kind === "corner" && (
+                      <div className="segmented stroke-seg" role="radiogroup" aria-label={t("Alignment")}>
+                        {([["out", "◁", t("Align to the outgoing stroke")], ["in", "▷", t("Align to the incoming stroke")], ["middle", "◁▷", t("Align halfway between the strokes")]] as const).map(([v, label, title]) => (
+                          <button key={v} type="button" role="radio" aria-checked={(pt.align ?? "out") === v} title={title} aria-label={title} disabled={disabled}
+                            className={`segment${(pt.align ?? "out") === v ? " is-selected" : ""}`} onClick={() => put({ align: v })}>{label}</button>
+                        ))}
+                        <button type="button" className="segment" title={t("Flip the corner")} aria-label={t("Flip the corner")} disabled={disabled}
+                          onClick={() => put({ scale: [-scale[0], scale[1]] })}>⇋</button>
+                      </div>
+                    )}
+                    {pt.kind === "cap" && (
+                      <label className="check-row">
+                        <input type="checkbox" checked={!!pt.fit} disabled={disabled} onChange={(e) => put({ fit: e.target.checked })} />
+                        <span className="k-body">{t("Fit to stroke width")}</span>
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+              <div className="hints-add">
+                <button type="button" className="btn btn-secondary btn-sm" disabled={editingBackground || layer.glyphLocked}
+                  title={t("Turn every corner, cap and segment component of this glyph into outline, in all masters")}
+                  onClick={() => strokeCall(() => backend.decomposeParts(glyph, masterId))}>{t("Decompose")}</button>
+              </div>
+            </div>
+          )}
+        </div>
+        )}
+        <div className="transform-panel stroke-panel">
+          <button type="button" className="transform-head" aria-expanded={strokeOpen} onClick={() => setStrokeOpen((o) => !o)}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+            {t("Stroke")}
+          </button>
+          {strokeOpen && (() => {
+            const disabled = editingBackground || layer.glyphLocked;
+            if (strokePath === null || !strokeTarget) {
+              return <p className="k-caption muted stroke-note">{t("Select a path to draw it with a pen instead of filling it.")}</p>;
+            }
+            const s = strokeTarget.stroke;
+            if (!s) {
+              return (
+                <div className="transform-body">
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={disabled}
+                    onClick={() => strokeCall(() => backend.setPathStroke(glyph, masterId, strokePath, { width: 40, position: 0, join: "round", startCap: "butt", endCap: "butt" }))}>{t("Stroke this path")}</button>
+                </div>
+              );
+            }
+            const put = (patch: Partial<typeof s>) => strokeCall(() => backend.setPathStroke(glyph, masterId, strokePath, { ...s, ...patch }));
+            const seg = <K extends string>(value: K, options: [K, string][], onPick: (v: K) => void, label: string) => (
+              <div className="segmented stroke-seg" role="radiogroup" aria-label={label}>
+                {options.map(([v, text]) => (
+                  <button key={v} type="button" role="radio" aria-checked={value === v} disabled={disabled}
+                    className={`segment${value === v ? " is-selected" : ""}`} onClick={() => onPick(v)}>{text}</button>
+                ))}
+              </div>
+            );
+            const pos = s.position ?? 0;
+            const caps: ["butt" | "round" | "square", string][] = [["butt", t("Flat")], ["round", t("Round")], ["square", t("Square")]];
+            return (
+              <div className="transform-body stroke-body">
+                <label className="info-field">
+                  <span className="k-caption muted">{t("Brush")}</span>
+                  <select className="select" value={s.brush ?? ""} disabled={disabled} aria-label={t("Brush")}
+                    title={t("A brush glyph (named _brush.something, with start and end anchors) drawn along the path instead of a pen")}
+                    onChange={(e) => put({ brush: e.target.value || undefined })}>
+                    <option value="">{t("Pen (no brush)")}</option>
+                    {glyphs.filter((g) => g.name.startsWith("_brush")).map((g) => <option key={g.name} value={g.name}>{g.name}</option>)}
+                  </select>
+                </label>
+                {!s.brush && <>
+                <MetricField onInvalid={onError} decimals label={t("Width")} value={s.width} disabled={disabled} onCommit={(v) => put({ width: v })} />
+                <span className="k-caption muted">{t("Position")}</span>
+                {seg(pos <= -100 ? "l" : pos >= 100 ? "r" : pos === 0 ? "c" : "x", [["l", t("Left")], ["c", t("Centre")], ["r", t("Right")]], (v) => put({ position: v === "l" ? -100 : v === "r" ? 100 : 0 }), t("Position"))}
+                <MetricField onInvalid={onError} decimals label={t("Position (−100 to 100)")} value={pos} disabled={disabled} onCommit={(v) => put({ position: v })} />
+                <span className="k-caption muted">{t("Join")}</span>
+                {seg(s.join ?? "round", [["miter", t("Miter")], ["round", t("Round")], ["bevel", t("Bevel")]], (v) => put({ join: v }), t("Join"))}
+                {!strokeTarget.closed && <>
+                  <span className="k-caption muted">{t("Start cap")}</span>
+                  {seg(s.startCap ?? "butt", caps, (v) => put({ startCap: v }), t("Start cap"))}
+                  <span className="k-caption muted">{t("End cap")}</span>
+                  {seg(s.endCap ?? "butt", caps, (v) => put({ endCap: v }), t("End cap"))}
+                </>}
+                {strokeTarget.closed && (
+                  <label className="check-row">
+                    <input type="checkbox" checked={!!s.fill} disabled={disabled} onChange={(e) => put({ fill: e.target.checked })} />
+                    <span className="k-body">{t("Fill (closed paths)")}</span>
+                  </label>
+                )}
+                {penNode !== null && (
+                  <div className="pen-point">
+                    <span className="k-caption muted">{t("Pen point (node {n})", { n: penNode + 1 })}</span>
+                    <MetricField onInvalid={onError} decimals label={t("Pen width")} value={s.widths?.[penNode] ?? s.width} disabled={disabled}
+                      onCommit={(v) => strokeCall(() => backend.setPenWidth(glyph, masterId, strokePath, penNode, v))} />
+                    {s.widths?.[penNode] !== undefined && (
+                      <button type="button" className="btn btn-secondary btn-sm" disabled={disabled}
+                        title={t("Use the stroke's width at this node again")}
+                        onClick={() => strokeCall(() => backend.setPenWidth(glyph, masterId, strokePath, penNode, null))}>{t("Reset")}</button>
+                    )}
+                  </div>
+                )}
+                {penNode === null && <p className="k-caption muted stroke-note">{t("Select one node to give it its own pen width.")}</p>}
+                </>}
+                <div className="hints-add">
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={disabled}
+                    title={t("Turn every stroked path of this glyph into outlines, in all masters")}
+                    onClick={() => strokeCall(() => backend.expandStrokes(glyph, masterId))}>{t("Expand Outline")}</button>
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={disabled}
+                    onClick={() => strokeCall(() => backend.setPathStroke(glyph, masterId, strokePath, null))}>{t("Remove stroke")}</button>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
         <div className="transform-panel hints-panel">
           <button type="button" className="transform-head" aria-expanded={hintsOpen} onClick={() => setHintsOpen((o) => !o)}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
@@ -1989,6 +2337,15 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       )}
       </div>
       {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}
+      {partPick && (() => {
+        const prefix = partPick.kind === "corner" ? "_corner" : partPick.kind === "cap" ? "_cap" : "_segment";
+        const names = glyphs.map((g) => g.name).filter((n) => n.startsWith(prefix));
+        return <ComponentPicker names={names} exclude={glyph} onCancel={() => setPartPick(null)} onPick={(name) => {
+          const pick = partPick;
+          setPartPick(null);
+          strokeCall(() => backend.addPathPart(glyph, masterId, { kind: pick.kind, glyph: name, path: pick.path, node: pick.node }));
+        }} />;
+      })()}
       {painting && layer?.paint && (
         <PaintDialog glyph={glyph} paint={layer.paint} palette={layer.palette ?? []} width={layer.width}
           height={layer.metrics.capHeight}
@@ -2078,6 +2435,7 @@ function hint(tool: Tool): string {
     case "select": return t("Click or drag to select · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes");
     case "pen": return t("Click for corners, drag for curves · click the first point to close · Esc ends the path");
     case "rect": return t("Drag to draw a rectangle · Shift for a square");
+    case "pixel": return t("Click a grid cell to add or remove a pixel · drag to paint");
     case "ellipse": return t("Drag to draw an ellipse · Shift for a circle");
     case "knife": return t("Drag a line across the outline to cut paths · Esc cancels");
     case "measure": return t("Drag a line across the outline to measure distances and angles · Esc clears");

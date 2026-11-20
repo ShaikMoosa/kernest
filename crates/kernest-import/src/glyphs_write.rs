@@ -175,9 +175,18 @@ fn shapes_list(list: &[Shape], attr: Option<&str>) -> String {
         .iter()
         .map(|sh| {
             let mut text = shape(sh);
-            if let Some(a) = attr {
+            // A stroked path shows its pen width in Glyphs too.
+            let stroke = match sh {
+                Shape::Path(p) => p
+                    .stroke
+                    .as_ref()
+                    .map(|s| format!("strokeWidth = {};", num(s.width))),
+                _ => None,
+            };
+            let all: Vec<&str> = attr.into_iter().chain(stroke.as_deref()).collect();
+            if !all.is_empty() {
                 text.pop();
-                let _ = write!(text, "attr = {{\n{a}\n}};\n}}");
+                let _ = write!(text, "attr = {{\n{}\n}};\n}}", all.join("\n"));
             }
             text
         })
@@ -228,6 +237,65 @@ fn background(l: &Layer) -> String {
     )
 }
 
+/// A layer's body with its corner, cap and segment components: corners become
+/// Glyphs corner hints (live in Glyphs too); caps and segments, which Glyphs has
+/// no matching form for, are written into the outline, along with any corner on
+/// the same path so node numbers stay right.
+fn layer_body_parts(font: &Font, l: &Layer) -> String {
+    if l.parts.is_empty() {
+        return layer_body(l);
+    }
+    use kernest_core::parts::PartKind;
+    let baked_paths: Vec<usize> = l
+        .parts
+        .iter()
+        .filter(|p| p.kind != PartKind::Corner)
+        .map(|p| p.path)
+        .collect();
+    let (live, baked): (Vec<_>, Vec<_>) = l
+        .parts
+        .iter()
+        .cloned()
+        .partition(|p| p.kind == PartKind::Corner && !baked_paths.contains(&p.path));
+    let mut bake = l.clone();
+    bake.parts = baked;
+    let mut out = kernest_core::parts::apply(font, &bake);
+    out.parts = Vec::new();
+    // Path number → shape number, as Glyphs counts them.
+    let shape_of: Vec<usize> = out
+        .shapes
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| matches!(s, Shape::Path(_)))
+        .map(|(i, _)| i)
+        .collect();
+    let hints: Vec<String> = live
+        .iter()
+        .filter_map(|p| {
+            let si = shape_of.get(p.path)?;
+            let options = match p.align {
+                kernest_core::parts::CornerAlign::Out => 0,
+                kernest_core::parts::CornerAlign::In => 1,
+                kernest_core::parts::CornerAlign::Middle => 2,
+                kernest_core::parts::CornerAlign::Unaligned => 4,
+            };
+            Some(format!(
+                "{{\nname = {};\noptions = {options};\norigin = ({si},{});\nscale = ({},{});\ntype = Corner;\n}}",
+                q(&p.glyph),
+                p.node,
+                num(p.scale[0]),
+                num(p.scale[1])
+            ))
+        })
+        .collect();
+    let body = layer_body(&out);
+    if hints.is_empty() {
+        body
+    } else {
+        format!("hints = (\n{}\n);\n{body}", hints.join(",\n"))
+    }
+}
+
 /// The body shared by every kind of layer: width, keys, guides, background, anchors
 /// and shapes.
 fn layer_body(l: &Layer) -> String {
@@ -236,15 +304,39 @@ fn layer_body(l: &Layer) -> String {
 
 fn layer_body_with(l: &Layer, attr: Option<&str>) -> String {
     format!(
-        "{}{}{}{}{}width = {};",
+        "{}{}{}{}{}{}width = {};",
         metrics_keys(l),
         anchors(l),
         background(l),
         guides(&l.guides),
         shapes_list(&l.shapes, attr),
+        stroke_data(l),
         num(l.width)
     )
 }
+
+/// Kernest's full stroke settings (caps, joins, pen points, brush) by path number,
+/// kept in the layer's userData so they come back exactly.
+fn stroke_data(l: &Layer) -> String {
+    let strokes: Vec<(usize, &kernest_core::stroke::PathStroke)> = l
+        .shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Path(p) => Some(p),
+            _ => None,
+        })
+        .enumerate()
+        .filter_map(|(i, p)| p.stroke.as_ref().map(|s| (i, s)))
+        .collect();
+    if strokes.is_empty() {
+        return String::new();
+    }
+    let json = serde_json::to_string(&strokes).unwrap_or_default();
+    format!("userData = {{\n\"{STROKE_KEY}\" = {};\n}};\n", q(&json))
+}
+
+/// The userData key that holds Kernest's stroke settings.
+pub(crate) const STROKE_KEY: &str = "com.kernest.strokes";
 
 /// The box around a layer's path points (on- and off-curve), which Glyphs gradient
 /// positions are relative to. The reader uses the same box, so positions round-trip.
@@ -378,7 +470,7 @@ fn glyph_layers(font: &Font, g: &Glyph) -> String {
             "{{\nlayerId = {};\n{}{}\n}}",
             q(master_gid(m)),
             pole,
-            layer_body(l)
+            layer_body_parts(font, l)
         ));
     }
     for l in g.layers.iter().filter(|l| l.color.is_none()) {
@@ -400,7 +492,7 @@ fn glyph_layers(font: &Font, g: &Glyph) -> String {
             out.push(format!(
                 "{{\nassociatedMasterId = {gid};\nlayerId = {lid};\npartSelection = {{\n{}\n}};\n{}\n}}",
                 sel.join("\n"),
-                layer_body(l)
+                layer_body_parts(font, l)
             ));
         } else if let Some(loc) = &l.location {
             let coords: Vec<String> = font
@@ -416,7 +508,19 @@ fn glyph_layers(font: &Font, g: &Glyph) -> String {
             out.push(format!(
                 "{{\nassociatedMasterId = {gid};\nattr = {{\ncoordinates = (\n{}\n);\n}};\nlayerId = {lid};\n{}\n}}",
                 coords.join(",\n"),
-                layer_body(l)
+                layer_body_parts(font, l)
+            ));
+        } else if let Some(name) = &l.backup {
+            // A backup: a named layer of its master with no special attributes.
+            out.push(format!(
+                "{{
+associatedMasterId = {gid};
+layerId = {lid};
+name = {};
+{}
+}}",
+                q(name),
+                layer_body_parts(font, l)
             ));
         } else if !l.bracket.is_empty() {
             let rules: Vec<String> = font
@@ -440,7 +544,7 @@ fn glyph_layers(font: &Font, g: &Glyph) -> String {
             out.push(format!(
                 "{{\nassociatedMasterId = {gid};\nattr = {{\naxisRules = (\n{}\n);\n}};\nlayerId = {lid};\n{}\n}}",
                 rules.join(",\n"),
-                layer_body(l)
+                layer_body_parts(font, l)
             ));
         }
     }
@@ -733,6 +837,25 @@ pub fn glyphs_source(font: &Font) -> String {
             palettes_value(&font.palettes)
         ));
     }
+    // Parameters kept from the source, unless Kernest writes that one itself above.
+    for p in &info.custom_parameters {
+        let ours = params
+            .iter()
+            .any(|e| e.contains(&format!("name = {};", q(&p.name))));
+        if ours || p.name.trim().is_empty() {
+            continue;
+        }
+        let value = if p.value.trim().is_empty() {
+            "\"\""
+        } else {
+            p.value.as_str()
+        };
+        let off = if p.disabled { "disabled = 1;\n" } else { "" };
+        params.push(format!(
+            "{{\n{off}name = {};\nvalue = {value};\n}}",
+            q(&p.name)
+        ));
+    }
     let _ = writeln!(s, "customParameters = (\n{}\n);", params.join(",\n"));
 
     let _ = writeln!(s, "unitsPerEm = {};", info.units_per_em);
@@ -894,9 +1017,11 @@ pub fn glyphs_source(font: &Font) -> String {
         .collect();
     let _ = writeln!(s, "fontMaster = (\n{}\n);", masters.join(",\n"));
 
-    // Instances: single (static) instances only, with their class and style-link overrides.
-    if !font.instances.is_empty() {
-        let insts: Vec<String> =
+    // Instances: the static instances with their class and style-link overrides, then
+    // one "Variable Font Setting" per variable font (its file name and glyph list; axis
+    // ranges have no Glyphs equivalent and are left out).
+    if !font.instances.is_empty() || !font.variable_fonts.is_empty() {
+        let mut insts: Vec<String> =
             font.instances
                 .iter()
                 .map(|i| {
@@ -934,6 +1059,24 @@ pub fn glyphs_source(font: &Font) -> String {
                     e
                 })
                 .collect();
+        for vf in &font.variable_fonts {
+            let mut vp = vec![format!(
+                "{{\nname = fileName;\nvalue = {};\n}}",
+                q(&vf.file_name)
+            )];
+            if !vf.glyphs.is_empty() {
+                let names: Vec<String> = vf.glyphs.iter().map(|g| q(g)).collect();
+                vp.push(format!(
+                    "{{\nname = \"Keep Glyphs\";\nvalue = (\n{}\n);\n}}",
+                    names.join(",\n")
+                ));
+            }
+            insts.push(format!(
+                "{{\ncustomParameters = (\n{}\n);\nname = {};\ntype = variable;\n}}",
+                vp.join(",\n"),
+                q(&vf.name)
+            ));
+        }
         let _ = writeln!(s, "instances = (\n{}\n);", insts.join(",\n"));
     }
 

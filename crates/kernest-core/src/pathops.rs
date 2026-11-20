@@ -111,6 +111,7 @@ pub fn reverse(p: &Path) -> Path {
         nodes.reverse();
         return Path {
             locked: p.locked,
+            stroke: p.stroke.clone(),
             closed: p.closed,
             nodes,
         };
@@ -138,8 +139,28 @@ pub fn reverse(p: &Path) -> Path {
         }
         nodes.reverse();
     }
+    // Pen-point widths follow their nodes to the new on-curve numbering.
+    let stroke = p.stroke.clone().map(|mut s| {
+        let new_index = |i: usize| {
+            if p.closed && p.nodes[0].on_curve() {
+                (n - i) % n
+            } else {
+                n - 1 - i
+            }
+        };
+        s.widths = s
+            .widths
+            .iter()
+            .filter_map(|(&k, &w)| {
+                let ni = new_index(*ons.get(k)?);
+                Some((nodes[..ni].iter().filter(|x| x.on_curve()).count(), w))
+            })
+            .collect();
+        s
+    });
     Path {
         locked: p.locked,
+        stroke,
         closed: p.closed,
         nodes,
     }
@@ -707,6 +728,7 @@ fn knife_path(p: &Path, line: Line) -> Option<Vec<Path>> {
             arc[0].smooth = false;
             out.push(Path {
                 locked: false,
+                stroke: None,
                 closed: true,
                 nodes: arc,
             });
@@ -728,6 +750,7 @@ fn knife_path(p: &Path, line: Line) -> Option<Vec<Path>> {
             piece[0].smooth = false;
             out.push(Path {
                 locked: false,
+                stroke: None,
                 closed: false,
                 nodes: piece,
             });
@@ -1129,6 +1152,7 @@ mod tests {
         }
         Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: pts
                 .into_iter()
@@ -1174,6 +1198,7 @@ mod tests {
         let mut l = Layer::new("m01", 1000.0);
         let open = Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: false,
             nodes: vec![
                 node(0.0, 900.0, NodeKind::Line),
@@ -1235,6 +1260,7 @@ mod tests {
         // A closed path: line, then a curve back to the start.
         let p = Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Curve),
@@ -1265,6 +1291,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -1300,6 +1327,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -1315,6 +1343,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -1464,6 +1493,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: false,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -1514,6 +1544,7 @@ mod tests {
         let open = |pts: &[(f64, f64)]| {
             Shape::Path(Path {
                 locked: false,
+                stroke: None,
                 closed: false,
                 nodes: pts
                     .iter()
@@ -1537,6 +1568,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: false,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -1555,6 +1587,7 @@ mod tests {
         let tri = |locked: bool, closed: bool| {
             Shape::Path(Path {
                 locked,
+                stroke: None,
                 closed,
                 nodes: vec![
                     node(0.0, 0.0, NodeKind::Line),
@@ -1600,6 +1633,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -1620,6 +1654,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -1642,6 +1677,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -1662,6 +1698,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0.4, 0.6, NodeKind::Line),

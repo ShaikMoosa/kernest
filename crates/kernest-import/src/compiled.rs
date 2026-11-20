@@ -459,6 +459,7 @@ fn font_info(font: &FontRef, upem: u16) -> FontInfo {
         hinting: None,
         grid: None,
         use_typo_metrics: false,
+        custom_parameters: Vec::new(),
         ps_hinting: None,
         control_instructions: String::new(),
     }
@@ -504,6 +505,7 @@ fn shapes_from(elems: &[PathElement]) -> Vec<Shape> {
             closed: true,
             nodes: std::mem::take(nodes),
             locked: false,
+            stroke: None,
         }));
     };
     for e in elems {

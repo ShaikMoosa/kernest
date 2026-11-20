@@ -794,8 +794,13 @@ fn check_glyphs_font(imp: &kernest_import::Imported) {
     assert_eq!(ga.right_group.as_deref(), Some("A"));
     assert_eq!(
         ga.layers.len(),
-        5,
-        "2 masters, a brace and 2 bracket layers; no backup"
+        6,
+        "2 masters, a brace, 2 bracket layers and the backup"
+    );
+    assert_eq!(
+        ga.layers.iter().filter(|l| l.backup.is_some()).count(),
+        1,
+        "the fixture's backup layer is kept as a backup"
     );
     let brace = ga.brace_layers().next().unwrap();
     assert_eq!((brace.master_id.as_str(), brace.width), ("m01", 650.0));
@@ -1695,5 +1700,302 @@ fn glyphs_round_trip_keeps_guides_backgrounds_metrics_and_colour() {
             }
         }
         assert!(a.color_layers(m).all(|l| !l.shapes.is_empty()));
+    }
+}
+
+#[test]
+fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
+    use kernest_core::{CustomParameter, VariableFontSetting};
+    let mut src = two_masters();
+    src.info.custom_parameters = vec![
+        CustomParameter {
+            name: "fsType".into(),
+            value: "(\n)".into(),
+            disabled: false,
+        },
+        CustomParameter {
+            name: "Write lastChange".into(),
+            value: "0".into(),
+            disabled: true,
+        },
+        CustomParameter {
+            name: "panose".into(),
+            value: "(\n2,\n0,\n5\n)".into(),
+            disabled: false,
+        },
+    ];
+    src.variable_fonts = vec![
+        VariableFontSetting {
+            name: "Upright".into(),
+            file_name: "Test-VF".into(),
+            axes: vec![],
+            glyphs: vec![],
+        },
+        VariableFontSetting {
+            name: "Text".into(),
+            file_name: "TestText-VF".into(),
+            axes: vec![],
+            glyphs: vec!["H".into(), "T".into()],
+        },
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Params.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let imp = import(&path).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    assert_eq!(imp.font.info.custom_parameters, src.info.custom_parameters);
+    assert_eq!(imp.font.variable_fonts, src.variable_fonts);
+}
+
+#[test]
+fn glyphs_right_to_left_kerning_is_imported() {
+    let text = r#"{
+.formatVersion = 3;
+familyName = RTL;
+fontMaster = (
+{
+id = m1;
+name = Regular;
+}
+);
+glyphs = (
+{
+glyphname = beh;
+kernLeft = beh;
+kernRight = beh;
+layers = (
+{
+layerId = m1;
+width = 500;
+}
+);
+unicode = 1576;
+},
+{
+glyphname = alef;
+layers = (
+{
+layerId = m1;
+width = 300;
+}
+);
+unicode = 1575;
+}
+);
+kerningLTR = {
+m1 = {
+alef = {
+beh = 5;
+};
+};
+};
+kerningRTL = {
+m1 = {
+"@MMK_R_beh" = {
+alef = -40;
+};
+alef = {
+beh = -12;
+};
+};
+};
+unitsPerEm = 1000;
+}
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Rtl.glyphs");
+    fs::write(&path, text).unwrap();
+    let imp = import(&path).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let pairs = &imp.font.kerning["m01"];
+    let value = |l: &str, r: &str| {
+        pairs
+            .iter()
+            .find(|p| p.left == l && p.right == r)
+            .map(|p| p.value)
+    };
+    assert_eq!(value("@beh", "alef"), Some(-40.0));
+    // The RTL pair replaces the LTR pair with the same sides.
+    assert_eq!(value("alef", "beh"), Some(-12.0));
+}
+
+#[test]
+fn custom_parameter_values_must_be_glyphs_syntax() {
+    use kernest_import::check_parameter_value as check;
+    for ok in [
+        "1",
+        "\"some text\"",
+        "(\n)",
+        "(a, b)",
+        "{key = value;}",
+        "word",
+    ] {
+        assert!(check("p", ok).is_ok(), "{ok}");
+    }
+    for bad in ["(a, b", "\"open", "{key = value"] {
+        assert!(check("p", bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn glyphs_round_trip_keeps_backup_layers() {
+    let src = two_masters();
+    let (src, key) = kernest_core::layers::add_backup(&src, "H", "m02", "legacy").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Backups.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let imp = import(&path).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let g = imp.font.glyph("H").unwrap();
+    let backups: Vec<_> = g.layers.iter().filter(|l| l.backup.is_some()).collect();
+    assert_eq!(backups.len(), 1);
+    let want = src.glyph("H").unwrap().layer(&key).unwrap();
+    assert_eq!(
+        (
+            backups[0].backup.as_deref(),
+            &backups[0].master_id,
+            &backups[0].shapes
+        ),
+        (Some("legacy"), &want.master_id, &want.shapes)
+    );
+}
+
+#[test]
+fn ufo_round_trip_keeps_guides_and_backgrounds() {
+    use kernest_core::{Background, Guide};
+    let mut src = two_masters();
+    src.masters[1].guides = vec![Guide {
+        x: 0.0,
+        y: 620.0,
+        angle: 0.0,
+        name: Some("overshoot".into()),
+        locked: false,
+    }];
+    let outline = src.glyph("H").unwrap().layer("m01").unwrap().shapes.clone();
+    let l = src.glyph_mut("H").unwrap().layer_mut("m02").unwrap();
+    l.guides = vec![
+        Guide {
+            x: 120.0,
+            y: 0.0,
+            angle: 90.0,
+            name: None,
+            locked: false,
+        },
+        Guide {
+            x: 10.0,
+            y: 20.0,
+            angle: 30.0,
+            name: Some("slant".into()),
+            locked: false,
+        },
+    ];
+    l.background = Some(Background {
+        shapes: outline,
+        anchors: Vec::new(),
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let opts = kernest_export::UfoExportOptions {
+        masters: vec![],
+        decompose_smart: false,
+        color_layers: false,
+    };
+    kernest_export::export_ufo(&src, dir.path(), &opts).unwrap();
+    let imp = import(&dir.path().join("font.designspace")).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let f = &imp.font;
+    let m = f
+        .masters
+        .iter()
+        .find(|m| m.name == src.masters[1].name)
+        .unwrap();
+    assert_eq!(m.guides, src.masters[1].guides);
+    let (a, b) = (
+        f.glyph("H").unwrap().layer(&m.id).unwrap(),
+        src.glyph("H").unwrap().layer("m02").unwrap(),
+    );
+    assert_eq!(a.guides, b.guides);
+    assert_eq!(a.background, b.background);
+}
+
+#[test]
+fn glyphs_round_trip_keeps_strokes() {
+    use kernest_core::stroke::{PathStroke, StrokeCap};
+    let mut src = two_masters();
+    for m in ["m01", "m02"] {
+        if let Shape::Path(p) = &mut src.glyph_mut("H").unwrap().layer_mut(m).unwrap().shapes[0] {
+            let mut s = PathStroke {
+                width: if m == "m01" { 30.0 } else { 70.0 },
+                end_cap: StrokeCap::Round,
+                ..Default::default()
+            };
+            s.widths.insert(1, 50.0);
+            p.stroke = Some(s);
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Strokes.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    assert!(fs::read_to_string(&path)
+        .unwrap()
+        .contains("strokeWidth = 30;"));
+    let imp = import(&path).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    for m in ["m01", "m02"] {
+        let stroke = |f: &Font| match &f.glyph("H").unwrap().layer(m).unwrap().shapes[0] {
+            Shape::Path(p) => p.stroke.clone(),
+            _ => None,
+        };
+        assert_eq!(stroke(&imp.font), stroke(&src), "{m}");
+    }
+}
+
+#[test]
+fn glyphs_round_trip_keeps_corner_components_live() {
+    use kernest_core::parts::{add_part, apply, PartKind, PathPart};
+    let mut src = two_masters();
+    // A cut corner glyph: from 20 up the y axis to 20 back along the x axis.
+    let mut g = kernest_core::Glyph::new("_corner.cut", vec![]);
+    g.export = false;
+    for m in src.masters.clone() {
+        let mut l = kernest_core::Layer::new(m.id.clone(), 0.0);
+        l.shapes.push(Shape::Path(kernest_core::Path {
+            closed: false,
+            nodes: vec![
+                kernest_core::Node::new(0.0, 20.0, NodeKind::Line),
+                kernest_core::Node::new(-20.0, 0.0, NodeKind::Line),
+            ],
+            locked: false,
+            stroke: None,
+        }));
+        g.layers.push(l);
+    }
+    src.glyphs.push(g);
+    let src = add_part(
+        &src,
+        "H",
+        "m01",
+        PathPart::new(PartKind::Corner, "_corner.cut", 0, 1),
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Corners.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    assert!(fs::read_to_string(&path)
+        .unwrap()
+        .contains("type = Corner;"));
+    let imp = import(&path).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    for m in ["m01", "m02"] {
+        let (a, b) = (
+            imp.font.glyph("H").unwrap().layer(m).unwrap(),
+            src.glyph("H").unwrap().layer(m).unwrap(),
+        );
+        assert_eq!(a.parts, b.parts, "{m}: the corner is live again");
+        assert_eq!(
+            a.shapes, b.shapes,
+            "{m}: the outline is the one drawn, without the corner"
+        );
+        let drawn = |f: &Font, l: &kernest_core::Layer| apply(f, l).shapes;
+        assert_eq!(drawn(&imp.font, a), drawn(&src, b));
     }
 }

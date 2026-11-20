@@ -349,4 +349,6 @@ export const DYNAMIC_KEYS = [
   "Win descent",
   "Underline thickness",
   "Underline position",
+  // Strokes, brushes and the pixel tool
+  "Pixel (X)",
 ];

@@ -198,11 +198,65 @@ pub fn remove_layer(font: &Font, glyph: &str, key: &str) -> R<Font> {
     if layer.color.is_some() {
         return crate::color::remove_color_layer(font, glyph, key);
     }
-    if layer.location.is_some() || layer.smart.is_some() {
+    if layer.location.is_some() || layer.smart.is_some() || layer.backup.is_some() {
         g.layers.retain(|l| l.key() != key);
     } else {
         g.layers.retain(|l| l.bracket != layer.bracket);
     }
+    Ok(f)
+}
+
+/// Saves a copy of a master layer's drawing (outline, anchors, width, guides and
+/// background) as a backup layer named `name`. Returns the font and the new key.
+pub fn add_backup(font: &Font, glyph: &str, master_id: &str, name: &str) -> R<(Font, String)> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A backup needs a name.".into());
+    }
+    let mut f = font.clone();
+    let g = f
+        .glyph_mut(glyph)
+        .ok_or_else(|| format!("There is no glyph named \"{glyph}\"."))?;
+    let master = g
+        .layer(master_id)
+        .filter(|l| l.is_master())
+        .ok_or_else(|| format!("\"{glyph}\" has no layer for that master."))?;
+    let mut copy = master.clone();
+    copy.metrics_keys = Default::default();
+    copy.hints.clear();
+    copy.id = Some(g.new_layer_id(master_id));
+    copy.backup = Some(name.to_string());
+    let key = copy.key().to_string();
+    g.layers.push(copy);
+    Ok((f, key))
+}
+
+/// Swaps a backup's drawing with its master's, so the backup becomes the master's
+/// drawing and the previous master drawing is kept as the backup.
+pub fn use_backup(font: &Font, glyph: &str, key: &str) -> R<Font> {
+    let mut f = font.clone();
+    let g = f
+        .glyph_mut(glyph)
+        .ok_or_else(|| format!("There is no glyph named \"{glyph}\"."))?;
+    let bi = g
+        .layers
+        .iter()
+        .position(|l| l.key() == key && l.backup.is_some())
+        .ok_or("That layer isn't a backup.")?;
+    let master_id = g.layers[bi].master_id.clone();
+    let mi = g
+        .layers
+        .iter()
+        .position(|l| l.is_master() && l.master_id == master_id)
+        .ok_or("The backup's master has no layer in this glyph.")?;
+    let (a, b) = (bi.min(mi), bi.max(mi));
+    let (lo, hi) = g.layers.split_at_mut(b);
+    let (x, y) = (&mut lo[a], &mut hi[0]);
+    std::mem::swap(&mut x.shapes, &mut y.shapes);
+    std::mem::swap(&mut x.anchors, &mut y.anchors);
+    std::mem::swap(&mut x.width, &mut y.width);
+    std::mem::swap(&mut x.guides, &mut y.guides);
+    std::mem::swap(&mut x.background, &mut y.background);
     Ok(f)
 }
 
@@ -251,6 +305,33 @@ mod tests {
     fn width_at(f: &Font, wght: f64) -> f64 {
         let i = Interpolator::new(f, &BTreeMap::from([("wght".into(), wght)])).unwrap();
         i.layer(f, "H").unwrap().width
+    }
+
+    #[test]
+    fn backups_are_added_used_and_removed() {
+        let f = sample_font();
+        let before = f.glyph("H").unwrap().layer("m01").unwrap().shapes.clone();
+        let (f, key) = add_backup(&f, "H", "m01", "Old H").unwrap();
+        let b = f.glyph("H").unwrap().layer(&key).unwrap();
+        assert_eq!((b.backup.as_deref(), &b.shapes), (Some("Old H"), &before));
+        assert!(f.validate().is_ok());
+        // Change the master, then swap the backup back in.
+        let mut f2 = f.clone();
+        f2.glyph_mut("H")
+            .unwrap()
+            .layer_mut("m01")
+            .unwrap()
+            .shapes
+            .pop();
+        let edited = f2.glyph("H").unwrap().layer("m01").unwrap().shapes.clone();
+        let f3 = use_backup(&f2, "H", &key).unwrap();
+        assert_eq!(f3.glyph("H").unwrap().layer("m01").unwrap().shapes, before);
+        assert_eq!(f3.glyph("H").unwrap().layer(&key).unwrap().shapes, edited);
+        // Backups don't affect compatibility.
+        assert!(check_glyph(&f3, "H").is_empty());
+        let f4 = remove_layer(&f3, "H", &key).unwrap();
+        assert!(f4.glyph("H").unwrap().layer(&key).is_none());
+        assert!(add_backup(&f, "H", "m01", "  ").is_err());
     }
 
     #[test]

@@ -155,6 +155,12 @@ Use the **Layer** menu in the Edit View toolbar to switch between the master's o
   - **Ranges…** changes the ranges for all masters; **Remove** removes the alternate everywhere.
 - **In exported fonts:** static fonts get the right design at their location. Variable fonts get intermediate layers as extra sources and swap alternates in with OpenType feature variations.
 
+**Backups.** **+ Backup** saves a copy of the master's drawing (outline, anchors, width, guides and background) as a backup layer, named after the date and time. Backups appear in the Layer menu as **Backup: name**. They aren't exported, interpolated or checked for compatibility; they're kept for reference.
+
+- **Use as master** swaps the backup's drawing with the master's, so the current drawing becomes the backup and nothing is lost.
+- **Remove** deletes that backup only.
+- Backup layers in Glyphs files (named layers such as "legacy" or a dated copy) are imported as backups and written back by Save As .glyphs.
+
 ### Smart components
 
 A smart glyph is a component that stretches: each glyph that uses it sets its own values on the smart glyph's axes. For example, one `_stem` can be the stems of H, I and L at different heights.
@@ -164,6 +170,22 @@ A smart glyph is a component that stretches: each glyph that uses it sets its ow
 3. Use the glyph as a component (**Add Component**). With the component selected, its axis values appear next to X and Y; type a value to reshape it.
 
 Poles must match the master layer point for point. On export, smart components become ordinary outlines. Smart components in Glyphs files import as smart components.
+
+**Smart handles.** Give the smart glyph an anchor named exactly like one of its axes (for example an anchor `Height` on top of `_stem`, in the master layer and in each pole). Wherever the smart glyph is used, that anchor shows as a red diamond on the component. Drag it with the Select tool: it slides along the line between its positions at the axis' minimum and maximum, a label shows the value, and letting go sets it (one undoable step). Each axis with such an anchor gets its own handle.
+
+### Corner, cap and segment components
+
+Small glyphs placed onto an outline, so a serif, an ink trap or a decorative stroke is drawn once and reused everywhere. They stay live: the outline keeps its own points, and Kernest draws the components onto it wherever it's shown or exported. Change the component glyph and every place that uses it follows.
+
+Right-click an on-curve node and choose:
+
+- **Add Corner Component…:** a `_corner.name` glyph replaces the corner at that node. Draw the corner as an open path whose first point lies on the y axis above the origin and whose last point lies on the x axis, the origin being the corner (as in Glyphs; `origin`, `left` and `right` anchors work as in Glyphs too). Kernest turns, shears and slides it to fit the strokes either side of the node exactly as Glyphs does, so corner glyphs made in Glyphs place the same.
+- **Add Cap Component…:** a `_cap.name` glyph replaces the segment from the node to the next one, such as the end of a stem. Draw the cap as an open path from its first point to its last, both on the baseline, bulging upwards; Kernest stretches it to fit between the two nodes, pointing out of the shape.
+- **Add Segment Component…:** a `_segment.name` glyph replaces the segment from the node to the next one: a wave, a zigzag. Its path runs from its first point to its last (or from its `start` to its `end` anchor), is stretched to the segment's length and, on a curve, bent to follow it.
+
+The **Corner components** panel in the sidebar lists them. Pick another glyph, set **Width %** and **Height %**, line a corner up with the outgoing stroke (◁), the incoming stroke (▷) or halfway (◁▷), flip it (⇋), or for a cap tick **Fit to stroke width** so its height scales with its width. **×** removes one; **Decompose** turns all of the glyph's components into outline, in every master. Markers on the canvas show where they sit.
+
+A component is added to the same node in every master and intermediate layer, and masters whose components differ are reported as incompatible. Corner components in Glyphs files stay live; Save As .glyphs writes Kernest's corner components as Glyphs corner components. Cap and segment components from Glyphs files are reported as left out (they work differently there), and Kernest's own caps and segments are written into the outline in a `.glyphs` copy.
 
 ### Path tools and filters
 
@@ -187,6 +209,37 @@ The **Filter** menu opens a dialog with a live preview drawn over the glyph befo
 - Each dialog has an **All masters** switch and, when several glyphs are selected in the Font View, a **Selected glyphs (n)** switch so one filter run edits them all as a single undo step.
 - **Repeat Last Filter (Ctrl+Shift+F):** re-applies the last filter and its settings to the current target.
 - Locked glyphs are skipped: the dialog shows a notice and disables Apply until you unlock them.
+
+### Strokes and pen points
+
+A path can be drawn with a pen instead of being filled: an open stroke for a monoline design, or a closed path drawn as a ring. Select a path (any of its nodes) and use **Stroke** in the editor sidebar.
+
+- **Stroke this path** gives it a 40-unit stroke. The editor then draws the stroke's outline, with the path itself as a thin line through it that you edit as usual.
+- **Width:** the pen width in font units.
+- **Position:** where the path sits in the stroke: **Left** (the path is the stroke's left edge, as the path runs), **Centre**, **Right**, or any value from −100 to 100.
+- **Join:** how corners are drawn: **Miter**, **Round** or **Bevel**.
+- **Start cap / End cap** (open paths): **Flat**, **Round**, or **Square** (extends half the width past the end).
+- **Fill** (closed paths): fills the inside too, so only the outer edge of the stroke shows.
+- **Pen points:** select one node of a stroked path to give it its own **Pen width**; the width changes evenly towards the next node. **Reset** goes back to the stroke's width.
+- **Expand Outline** turns every stroked path of the glyph into ordinary outlines, in all masters at once. **Remove stroke** fills the path again.
+
+The stroke settings apply to the same path in every master and intermediate layer, so the masters stay compatible; each master keeps its own width (and pen-point widths), which interpolate. A stroke's outline always has the same structure for the same path, whatever the width, so a thin and a heavy master interpolate in a variable font. Masters whose strokes differ in join, caps, fill, pen points or smooth nodes are reported as incompatible.
+
+Strokes are expanded to outlines when you export (TTF, OTF, WOFF2, variable fonts) and when you export UFO sources. Inner corners can leave small overlaps; static exports remove overlaps, and variable fonts allow them. Save As .glyphs keeps strokes: Glyphs shows the pen width, and Kernest reads all its settings back.
+
+### Brushes
+
+A **brush** is a glyph whose outline is drawn along a path instead of a pen, for example an arrow that follows a curve. Name the glyph `_brush.something`, untick **Export this glyph** so the brush itself stays out of your fonts, and give it a `start` and an `end` anchor: the part of the drawing between them stretches to the path's length and bends to follow it; anything beyond them extends past the path's ends. Without the anchors, the brush's left and right edges at y = 0 stand in.
+
+In the Stroke panel, choose the brush from **Brush** (the list shows every glyph whose name starts with `_brush`). **Pen (no brush)** goes back to a pen. Change the brush glyph and every path drawn with it follows. Brush curves are split a fixed number of times before bending, so masters stay compatible.
+
+### The pixel tool
+
+The **Pixel** tool (X) draws a glyph out of components of a glyph named `pixel`, placed on the grid (Font Info › Grid; the spacing must be 2 or more and sets the pixel size).
+
+- Click a grid cell to add a pixel there, or click a pixel to remove it. Drag to paint (or erase) a run of cells; the whole drag is one undoable step.
+- If the font has no `pixel` glyph yet, Kernest offers to create one: a square the size of the grid, not exported.
+- Change the `pixel` glyph (a dot, a cross, a diamond) and every pixel glyph changes with it.
 
 ### Locks and focus
 
@@ -299,6 +352,8 @@ Open **Font Info** (Ctrl+I) to set:
 
 Switch the master you're editing with the buttons at the top right. Previews interpolate live. Kernest checks that every glyph can be interpolated, meaning the same number of paths, nodes and components in each master, and lists the glyphs that can't be in the **Incompatible** category of Font View.
 
+**Custom parameters** (Font Info) lists the settings from a Glyphs source that Kernest doesn't use itself, with their values exactly as Glyphs writes them (`1`, `"text"`, `(a, b)`, `{key = value;}`). They're kept with the font and written back by Save As .glyphs, but not applied when Kernest exports. Edit a value, switch one off with **On**, add one with **Add parameter**, or remove it; a value Glyphs couldn't read is refused. A font with custom parameters or backup layers saves at format version 13.
+
 **Line spacing** (Font Info › Masters, on each master) sets how far apart lines of text sit and where the underline goes: typo, hhea and win ascender, descender and line gap, plus underline thickness and position. Leave a field empty and it's worked out from the ascender and descender on export. Win ascent, win descent, line gaps and underline thickness can't be negative. **Use Typo Metrics** applies to the whole font: apps then space lines by the typo values. A font that sets any of these saves at format version 12.
 
 ### Interpolation warnings
@@ -361,8 +416,8 @@ After exporting, **Check font** runs [Fontspector](https://github.com/fonttools/
 
 ### Editable sources
 
-- **File › Export › UFO…** writes editable sources instead of compiled fonts: one `.ufo` per chosen master, plus a `.designspace` tying them together, for editing in other font tools. Tick the masters to write (the default one is marked), and choose whether to **decompose smart components** (flatten smart glyphs to outlines; otherwise they stay plain components) and write **colour layers** as named UFO layers.
-- **File › Save As .glyphs…** writes a Glyphs 3 `.glyphs` copy of the open font, including guides, backgrounds, glyph tags, notes and locks, line spacing values, colour palettes and colour layers. An opaque solid colour becomes a palette colour layer; see-through colours and gradients become full-colour layers. This is a copy out: the working document stays a `.kernest` font, since some things have no Glyphs equivalent (a radial gradient's separate focus point, smart filters, export presets).
+- **File › Export › UFO…** writes editable sources instead of compiled fonts: one `.ufo` per chosen master, plus a `.designspace` tying them together, for editing in other font tools. Guides (per glyph and per master) and backgrounds (in the `public.background` layer) are included; strokes are written as the outlines they draw. Tick the masters to write (the default one is marked), and choose whether to **decompose smart components** (flatten smart glyphs to outlines; otherwise they stay plain components) and write **colour layers** as named UFO layers.
+- **File › Save As .glyphs…** writes a Glyphs 3 `.glyphs` copy of the open font, including guides, backgrounds, glyph tags, notes and locks, line spacing values, colour palettes and colour layers, backup layers, strokes, custom parameters and variable font settings (their file names and glyph lists; axis ranges have no Glyphs equivalent). An opaque solid colour becomes a palette colour layer; see-through colours and gradients become full-colour layers. This is a copy out: the working document stays a `.kernest` font, since some things have no Glyphs equivalent (a radial gradient's separate focus point, smart filters, export presets).
 
 ## Colour fonts
 
@@ -392,9 +447,16 @@ On export, every colour layer becomes a glyph of its own (`O.color0`, `O.color1`
 
 `.glyphspackage` and `.ufo` sources are folders. Use **File › Import Folder…** to pick the folder, or pick any file inside it with Import….
 
-Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers, guides (per master and per glyph, locked or not), background drawings, and line spacing values (typo, hhea and win ascender/descender/line gap, underline, and **Use Typo Metrics**). From Glyphs files it also brings metrics keys (glyph-wide and per layer), glyph tags, notes and locks, alignment zones and stems, the hinting settings in a **TTFAutohint options** custom parameter, and colour: **Color Palettes**, palette colour layers and full-colour layers with fills and gradients. From UFOs, backgrounds come from the `public.background` layer. From designspaces, sparse sources become intermediate layers and rules become alternates. Right-to-left kerning isn't supported yet. If anything is left out, a dialog lists it.
+Kernest brings over the axes, masters, outlines, components, anchors, kerning, instances and features, plus brace and bracket layers, guides (per master and per glyph, locked or not), background drawings, and line spacing values (typo, hhea and win ascender/descender/line gap, underline, and **Use Typo Metrics**). From Glyphs files it also brings metrics keys (glyph-wide and per layer), glyph tags, notes and locks, alignment zones and stems, the hinting settings in a **TTFAutohint options** custom parameter, and colour: **Color Palettes**, palette colour layers and full-colour layers with fills and gradients. From UFOs, backgrounds come from the `public.background` layer. From designspaces, sparse sources become intermediate layers and rules become alternates. If anything is left out, a dialog lists it.
 
 Kerning pairs that point at a group with no glyphs in it are left out (they can't do anything). A pair with the value 0 is kept when one side is a glyph, because it cancels the group kerning for that glyph.
+
+More from Glyphs files:
+
+- **Right-to-left kerning** joins the font's kerning, as fontc and glyphsLib compile it; a right-to-left pair wins over a left-to-right pair with the same sides.
+- **Variable Font Settings** become entries in Font Info › Variable fonts: the name, the `fileName` parameter and the glyphs kept by **Keep Glyphs** / **Remove Glyphs** (wildcards such as `*.sc` work). Other parameters of a setting are listed as left out.
+- **Backup layers** (extra named layers of a master) are kept as backups (see [Edit View](#intermediate-and-alternate-layers)).
+- **Custom parameters** Kernest has no setting for (fsType, panose, isFixedPitch…) are kept in Font Info › Custom parameters.
 
 To see or change them, use **Line spacing** on a master in Font Info › Masters.
 

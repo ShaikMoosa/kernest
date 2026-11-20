@@ -452,6 +452,7 @@ fn build(
             .open_type_os2_selection
             .as_ref()
             .is_some_and(|s| s.contains(&7)),
+        custom_parameters: Vec::new(),
     };
 
     // Masters, with the default one first so it is the reference for empty layers.
@@ -655,6 +656,7 @@ fn layer(id: &str, g: &norad::Glyph, skipped: &mut usize) -> Layer {
             .collect();
         l.shapes.push(Shape::Path(KPath {
             locked: false,
+            stroke: None,
             closed,
             nodes,
         }));

@@ -536,6 +536,7 @@ mod tests {
     fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Shape {
         Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 Node::new(x0, y0, NodeKind::Line),

@@ -306,6 +306,7 @@ mod tests {
                 .map(|&(x, y)| Node::new(x, y, NodeKind::Line))
                 .collect(),
             locked: false,
+            stroke: None,
         })
     }
 
@@ -352,6 +353,7 @@ mod tests {
                 closed: true,
                 nodes,
                 locked: false,
+                stroke: None,
             })
         };
         let mut l = sample_font().glyphs[0].layers[0].clone();

@@ -278,6 +278,7 @@ mod tests {
         let mut layer = Layer::new("m01", 300.0);
         let rect = Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 Node::new(50.0, 0.0, NodeKind::Line),

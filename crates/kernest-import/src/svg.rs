@@ -291,6 +291,7 @@ fn contour_path(c: &Contour, s: f64, dx: f64, dy: f64) -> Option<KPath> {
     set_smooth(&mut nodes);
     Some(KPath {
         locked: false,
+        stroke: None,
         closed: true,
         nodes,
     })

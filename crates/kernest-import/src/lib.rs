@@ -19,6 +19,14 @@ pub use metrics::{apply_metrics, from_font, parse_afm, KeepSide, SourceMetrics};
 pub use svg::{svg_shapes, Placement};
 pub use woff2::decode as decode_woff2;
 
+/// Checks that `text` is a value Glyphs can read (a number, a string, a list in
+/// parentheses or a dictionary in braces), as typed into Font Info › Custom parameters.
+pub fn check_parameter_value(name: &str, text: &str) -> Result<(), String> {
+    glyphs_reader::Plist::parse(text)
+        .map(|_| ())
+        .map_err(|_| format!("{name}: the value isn't one Glyphs can read. Use a number, \"text in quotes\", a list (a, b) or a dictionary {{key = value;}}."))
+}
+
 use std::collections::BTreeMap;
 use std::path::Path;
 

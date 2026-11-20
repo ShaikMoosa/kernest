@@ -377,6 +377,7 @@ mod tests {
         let mut l = Layer::new("m01", 600.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -449,6 +450,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -474,6 +476,7 @@ mod tests {
         let mut l = rect(100.0);
         l.shapes.push(Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: true,
             nodes: vec![
                 node(200.0, 0.0, NodeKind::Line),
@@ -491,6 +494,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: false,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -586,6 +590,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: false,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -602,6 +607,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: false,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -627,6 +633,7 @@ mod tests {
         let mut l = Layer::new("m01", 300.0);
         l.shapes = vec![Shape::Path(Path {
             locked: false,
+            stroke: None,
             closed: false,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
