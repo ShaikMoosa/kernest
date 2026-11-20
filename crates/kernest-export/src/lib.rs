@@ -12,6 +12,7 @@ mod cffhint;
 mod charstring;
 mod colr;
 mod hint;
+pub mod names;
 mod stat;
 pub mod ufo;
 pub mod woff2;
@@ -363,6 +364,85 @@ fn instance_source<'a>(
     })
 }
 
+/// The static fonts an export makes, as (style name, location, instance): the
+/// exporting instances, or the masters when no instance exports.
+fn static_targets(font: &Font) -> Vec<(String, Location, Option<&Instance>)> {
+    if font.instances.iter().any(|i| i.export) {
+        font.instances
+            .iter()
+            .filter(|i| i.export)
+            .map(|i| (i.name.clone(), i.location.clone(), Some(i)))
+            .collect()
+    } else {
+        font.masters
+            .iter()
+            .map(|m| (m.name.clone(), m.location.clone(), None))
+            .collect()
+    }
+}
+
+/// The file stem of a static font: "<Family>-<Style>", using the instance's own family.
+fn static_stem(font: &Font, style: &str, inst: Option<&Instance>) -> String {
+    let family = inst.map_or(font.info.family_name.as_str(), |i| {
+        i.family(&font.info.family_name)
+    });
+    format!("{}-{}", file_stem(family), file_stem(style))
+}
+
+/// Checks that no two fonts of an export would be written to the same file (names
+/// are compared ignoring case, as Windows does). The error names the clashing fonts.
+fn check_file_clashes(font: &Font, opts: &ExportOptions) -> Result<(), String> {
+    let mut exts: Vec<&str> = Vec::new();
+    if opts.ttf {
+        exts.push("ttf");
+    }
+    if opts.otf {
+        exts.push("otf");
+    }
+    if opts.woff2 {
+        exts.push("woff2");
+    }
+    // (stem, who) for every font, variable and static.
+    let mut planned: Vec<(String, String)> = Vec::new();
+    if opts.variable {
+        if font.variable_fonts.is_empty() {
+            planned.push((
+                format!("{}-VF", file_stem(&font.info.family_name)),
+                "the variable font".into(),
+            ));
+        } else {
+            for vf in &font.variable_fonts {
+                planned.push((vf.file_name.clone(), format!("variable font '{}'", vf.name)));
+            }
+        }
+    }
+    if opts.statics {
+        for (style, _, inst) in static_targets(font) {
+            let who = match inst {
+                Some(i) if i.has_own_family(&font.info.family_name) => {
+                    format!("'{} {}'", i.family(&font.info.family_name), style)
+                }
+                _ => format!("'{style}'"),
+            };
+            planned.push((static_stem(font, &style, inst), who));
+        }
+    }
+    // Lower-cased file name → (who, file name as written).
+    let mut seen: BTreeMap<String, (&str, String)> = BTreeMap::new();
+    for (stem, who) in &planned {
+        for ext in &exts {
+            let file = format!("{stem}.{ext}");
+            if let Some((first, written)) = seen.get(&file.to_lowercase()) {
+                return Err(format!(
+                    "{first} and {who} would both be exported as {written}. Give one of them another style or family name in Font Info › Exports. Nothing was exported."
+                ));
+            }
+            seen.insert(file.to_lowercase(), (who, file));
+        }
+    }
+    Ok(())
+}
+
 fn write_out(dir: &Path, file: &str, bytes: &[u8]) -> Result<PathBuf, String> {
     let path = dir.join(file);
     std::fs::write(&path, bytes).map_err(|e| format!("could not write {}: {e}", path.display()))?;
@@ -382,6 +462,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     if !opts.ttf && !opts.otf && !opts.woff2 {
         return Err("Choose at least one format: TTF, OTF or WOFF2.".into());
     }
+    check_file_clashes(font, opts)?;
     // Smart components become outlines; the compiler only sees plain shapes.
     let flat = kernest_core::smart::flatten_font(font);
     // Components sit where their anchors say, so exported positions are current.
@@ -633,19 +714,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     }
 
     if opts.statics {
-        let targets: Vec<(String, Location, Option<&Instance>)> =
-            if font.instances.iter().any(|i| i.export) {
-                font.instances
-                    .iter()
-                    .filter(|i| i.export)
-                    .map(|i| (i.name.clone(), i.location.clone(), Some(i)))
-                    .collect()
-            } else {
-                font.masters
-                    .iter()
-                    .map(|m| (m.name.clone(), m.location.clone(), None))
-                    .collect()
-            };
+        let targets = static_targets(font);
         for (i, (style, location, inst)) in targets.iter().enumerate() {
             // Glyph swaps and removals for this instance.
             let swapped;
@@ -682,7 +751,33 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
             });
             match built {
                 Ok((bytes, ufo)) => {
-                    let stem = format!("{family}-{}", file_stem(style));
+                    let stem = static_stem(font, style, *inst);
+                    let inst_family = inst.map_or(font.info.family_name.as_str(), |i| {
+                        i.family(&font.info.family_name)
+                    });
+                    // Family names in other languages.
+                    let bytes = match inst.filter(|i| !i.localized_family_names.is_empty()) {
+                        Some(i) => {
+                            match names::add_localized_families(&bytes, &i.localized_family_names) {
+                                Ok((b, skipped)) => {
+                                    if !skipped.is_empty() {
+                                        report.warnings.push(format!(
+                                        "{style}: no Windows language for {}; those family names were left out.",
+                                        skipped.join(", ")
+                                    ));
+                                    }
+                                    b
+                                }
+                                Err(e) => {
+                                    report.problems.push(format!(
+                                        "{style}: {e}; exported without localized family names."
+                                    ));
+                                    bytes
+                                }
+                            }
+                        }
+                        None => bytes,
+                    };
                     let tt = truetype(
                         &mut report,
                         style,
@@ -702,18 +797,16 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                         )?;
                     }
                     if opts.otf {
-                        match cff::ttf_to_otf(&bytes, &ufo, &font.info.family_name, style).map(
-                            |o| {
-                                colorize(
-                                    &mut report,
-                                    &format!("{style} (OTF)"),
-                                    &bytes,
-                                    o,
-                                    false,
-                                    Some(location),
-                                )
-                            },
-                        ) {
+                        match cff::ttf_to_otf(&bytes, &ufo, inst_family, style).map(|o| {
+                            colorize(
+                                &mut report,
+                                &format!("{style} (OTF)"),
+                                &bytes,
+                                o,
+                                false,
+                                Some(location),
+                            )
+                        }) {
                             Ok(otf) => emit(
                                 &mut report,
                                 "static",
@@ -1169,6 +1262,8 @@ pub(crate) mod tests {
                 style_link: None,
                 rename_glyphs: Vec::new(),
                 remove_glyphs: Vec::new(),
+                family_name: None,
+                localized_family_names: Default::default(),
             })
             .collect();
         f.export_presets = vec![kernest_core::presets::ExportPreset {
@@ -1431,6 +1526,8 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
         });
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
@@ -1648,6 +1745,8 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
         });
         let out2 = tempfile::tempdir().unwrap();
         let r2 = export(&f2, &ExportOptions::ttf(false, true, out2.path())).unwrap();
@@ -1847,6 +1946,8 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
         });
         f.instances.push(Instance {
             name: "Bold".into(),
@@ -1857,6 +1958,8 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
         });
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
@@ -1886,6 +1989,124 @@ pub(crate) mod tests {
         let loc = BTreeMap::from([("wdth".to_string(), 75.0)]);
         assert_eq!(ufo::width_class(&h, &loc), Some(3));
         assert_eq!(ufo::width_class(&h, &BTreeMap::new()), Some(5));
+    }
+
+    /// A Windows name record's string for a language.
+    fn name_in(bytes: &[u8], lang: u16, id: u16) -> Option<String> {
+        let f = FontRef::new(bytes).unwrap();
+        let name = f.name().unwrap();
+        name.name_record()
+            .iter()
+            .find(|r| {
+                r.platform_id() == 3
+                    && r.language_id() == lang
+                    && u16::from_be_bytes(r.name_id().to_be_bytes()) == id
+            })
+            .map(|r| r.string(name.string_data()).unwrap().to_string())
+    }
+
+    fn instance(name: &str, wght: f64, family: Option<&str>) -> Instance {
+        Instance {
+            name: name.into(),
+            location: BTreeMap::from([("wght".into(), wght)]),
+            export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
+            family_name: family.map(String::from),
+            localized_family_names: Default::default(),
+        }
+    }
+
+    #[test]
+    fn instances_export_under_their_own_family() {
+        let mut f = two_masters();
+        let fam = f.info.family_name.clone();
+        let deca = format!("{fam} Deca");
+        let text = format!("{fam} Text");
+        f.instances = vec![
+            instance("Regular", 400.0, None),
+            instance("Bold", 700.0, None),
+            instance("Bold", 700.0, Some(&deca)),
+            instance("Light", 400.0, Some(&text)),
+        ];
+        f.instances[2]
+            .localized_family_names
+            .insert("DEU".into(), "Zehn".into());
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(false, true, out.path());
+        opts.otf = true;
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let stem = file_stem(&fam);
+        let mut files: Vec<String> = r
+            .files
+            .iter()
+            .map(|x| {
+                Path::new(&x.path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        files.sort();
+        let mut want: Vec<String> = [
+            format!("{stem}-Regular"),
+            format!("{stem}-Bold"),
+            format!("{stem}Deca-Bold"),
+            format!("{stem}Text-Light"),
+        ]
+        .iter()
+        .flat_map(|s| [format!("{s}.ttf"), format!("{s}.otf")])
+        .collect();
+        want.sort();
+        assert_eq!(files, want);
+        // Every file the report lists is on disk.
+        assert_eq!(std::fs::read_dir(out.path()).unwrap().count(), 8);
+
+        let read = |file: String| std::fs::read(out.path().join(file)).unwrap();
+        let deca_bold = read(format!("{stem}Deca-Bold.ttf"));
+        assert_eq!(
+            name_in(&deca_bold, 0x0409, 1).as_deref(),
+            Some(deca.as_str())
+        );
+        assert_eq!(name_in(&deca_bold, 0x0409, 2).as_deref(), Some("Bold"));
+        assert_eq!(name_in(&deca_bold, 0x0409, 4), Some(format!("{deca} Bold")));
+        // The German family name, under the German Windows language ID.
+        assert_eq!(name_in(&deca_bold, 0x0407, 1).as_deref(), Some("Zehn"));
+        assert_eq!(name_in(&deca_bold, 0x0407, 4).as_deref(), Some("Zehn Bold"));
+        // Not a RIBBI style: the typographic family is the instance's family.
+        let light = read(format!("{stem}Text-Light.otf"));
+        assert_eq!(name_in(&light, 0x0409, 16).as_deref(), Some(text.as_str()));
+        assert_eq!(name_in(&light, 0x0409, 17).as_deref(), Some("Light"));
+        // An instance without a family of its own is unchanged.
+        let bold = read(format!("{stem}-Bold.ttf"));
+        assert_eq!(name_in(&bold, 0x0409, 1).as_deref(), Some(fam.as_str()));
+    }
+
+    #[test]
+    fn clashing_file_names_stop_the_export() {
+        let mut f = two_masters();
+        let fam = f.info.family_name.clone();
+        // Same family, names differing only in case: one file on Windows.
+        f.instances = vec![
+            instance("Bold", 700.0, None),
+            instance("bold", 650.0, Some(&fam)),
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let err = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap_err();
+        assert!(err.contains("'Bold' and 'bold'"), "{err}");
+        assert!(
+            err.contains(&format!("{}-Bold.ttf", file_stem(&fam))),
+            "{err}"
+        );
+        assert_eq!(std::fs::read_dir(out.path()).unwrap().count(), 0);
+        // Different families don't clash.
+        f.instances[1].family_name = Some(format!("{fam} Deca"));
+        assert!(export(&f, &ExportOptions::ttf(false, true, out.path())).is_ok());
     }
 
     fn name_strings(bytes: &[u8]) -> BTreeMap<u16, String> {
@@ -1951,6 +2172,8 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
         });
         f.instances.push(Instance {
             name: "Bold".into(),
@@ -1965,6 +2188,8 @@ pub(crate) mod tests {
             }),
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
         });
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();

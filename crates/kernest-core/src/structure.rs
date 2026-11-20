@@ -671,8 +671,28 @@ pub fn set_instances(font: &Font, instances: Vec<Instance>) -> R<Font> {
         if i.name.is_empty() {
             return Err("Every instance needs a name.".into());
         }
-        if !names.insert(i.name.clone()) {
-            return Err(format!("Instance name \"{}\" is used twice.", i.name));
+        // A family name of its own; the font's family (or nothing) means none.
+        i.family_name = i
+            .family_name
+            .map(|f| f.trim().to_string())
+            .filter(|f| !f.is_empty() && *f != font.info.family_name);
+        if let Some(f) = &i.family_name {
+            if f.chars().count() > 63 {
+                return Err(format!(
+                    "Family name \"{f}\" is too long; use at most 63 characters."
+                ));
+            }
+        }
+        // Names only need to be unique within a family: one source can export a
+        // "Bold" for each of its families.
+        if !names.insert((i.family_name.clone(), i.name.clone())) {
+            return Err(match &i.family_name {
+                Some(f) => format!(
+                    "Instance name \"{}\" is used twice in family \"{f}\".",
+                    i.name
+                ),
+                None => format!("Instance name \"{}\" is used twice.", i.name),
+            });
         }
         i.location = check_location(font, &i.location)?;
         out.push(i);
@@ -1071,12 +1091,35 @@ mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
         };
         let f = set_instances(&f, vec![i("Light", 300.0), i("Bold", 700.0)]).unwrap();
         assert_eq!(f.instances.len(), 2);
         assert!(set_instances(&f, vec![i("A", 300.0), i("A", 400.0)]).is_err());
         assert!(set_instances(&f, vec![i(" ", 300.0)]).is_err());
         assert!(set_instances(&f, vec![i("X", 2000.0)]).is_err());
+        // Names are unique per family: one "Bold" in each family is fine.
+        let fam = |mut x: Instance, f: &str| {
+            x.family_name = Some(f.into());
+            x
+        };
+        let g =
+            set_instances(&f, vec![i("Bold", 700.0), fam(i("Bold", 700.0), " Other ")]).unwrap();
+        assert_eq!(g.instances[1].family_name.as_deref(), Some("Other"));
+        let err = set_instances(
+            &f,
+            vec![fam(i("A", 300.0), "Other"), fam(i("A", 400.0), "Other")],
+        )
+        .unwrap_err();
+        assert!(err.contains("in family \"Other\""), "{err}");
+        // The font's own family, or an empty one, means none.
+        let own = f.info.family_name.clone();
+        let g =
+            set_instances(&f, vec![fam(i("A", 300.0), &own), fam(i("B", 400.0), "  ")]).unwrap();
+        assert!(g.instances.iter().all(|x| x.family_name.is_none()));
+        assert!(set_instances(&f, vec![i("A", 300.0), fam(i("A", 400.0), &own)]).is_err());
+        assert!(set_instances(&f, vec![fam(i("A", 300.0), &"x".repeat(64))]).is_err());
         let f = set_info(&f, " Kernest Sans ", 2048, 1, 5).unwrap();
         assert_eq!(
             (f.info.family_name.as_str(), f.info.units_per_em),

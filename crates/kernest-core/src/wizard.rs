@@ -193,6 +193,8 @@ mod tests {
                 style_link: None,
                 rename_glyphs: Vec::new(),
                 remove_glyphs: Vec::new(),
+                family_name: None,
+                localized_family_names: Default::default(),
             }],
             ..Default::default()
         };

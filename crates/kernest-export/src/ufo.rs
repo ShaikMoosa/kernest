@@ -251,7 +251,11 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     let font = src.font;
     let mut ufo = norad::Font::new();
     let info = &mut ufo.font_info;
-    info.family_name = Some(font.info.family_name.clone());
+    // An instance can belong to a family of its own (one source, several families).
+    let family = src.instance.map_or(font.info.family_name.as_str(), |i| {
+        i.family(&font.info.family_name)
+    });
+    info.family_name = Some(family.to_string());
     info.style_name = Some(src.style_name.to_string());
     info.units_per_em = Some(u32::from(font.info.units_per_em).into());
     info.version_major = Some(i32::from(font.info.version_major));
@@ -289,9 +293,9 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
         let base = link.base.trim();
         info.style_map_family_name =
             Some(if base.is_empty() || base.eq_ignore_ascii_case("regular") {
-                font.info.family_name.clone()
+                family.to_string()
             } else {
-                format!("{} {base}", font.info.family_name)
+                format!("{family} {base}")
             });
         info.style_map_style_name = Some(match (link.bold, link.italic) {
             (true, true) => StyleMapStyle::BoldItalic,
@@ -699,15 +703,13 @@ pub fn designspace(font: &Font, sources: &[DsSource], rules: &[DsRule]) -> Strin
     }
     x.push_str("  </sources>\n  <instances>\n");
     for i in font.instances.iter().filter(|i| i.export) {
+        let family = i.family(&font.info.family_name);
         let _ = write!(
             x,
             "    <instance familyname=\"{}\" stylename=\"{}\" postscriptfontname=\"{}\"><location>",
-            xml_escape(&font.info.family_name),
+            xml_escape(family),
             xml_escape(&i.name),
-            xml_escape(&crate::cff::ps_name(&format!(
-                "{}-{}",
-                font.info.family_name, i.name
-            )))
+            xml_escape(&crate::cff::ps_name(&format!("{family}-{}", i.name)))
         );
         for a in &font.axes {
             let d = i

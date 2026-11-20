@@ -1242,7 +1242,30 @@ pub fn glyphs_source(font: &Font) -> String {
                     if !ip.is_empty() {
                         let _ = writeln!(e, "customParameters = (\n{}\n);", ip.join(",\n"));
                     }
-                    let _ = writeln!(e, "name = {};\n}}", q(&i.name));
+                    let _ = writeln!(e, "name = {};", q(&i.name));
+                    // The instance's own family name, and its other languages.
+                    let mut names: Vec<String> = Vec::new();
+                    if let Some(f) = i.family_name.as_deref().filter(|f| !f.trim().is_empty()) {
+                        names.push(format!(
+                            "{{\nlanguage = dflt;\nvalue = {};\n}}",
+                            q(f.trim())
+                        ));
+                    }
+                    for (lang, f) in &i.localized_family_names {
+                        names.push(format!(
+                            "{{\nlanguage = {};\nvalue = {};\n}}",
+                            q(lang),
+                            q(f)
+                        ));
+                    }
+                    if !names.is_empty() {
+                        let _ = writeln!(
+                            e,
+                            "properties = (\n{{\nkey = familyNames;\nvalues = (\n{}\n);\n}}\n);",
+                            names.join(",\n")
+                        );
+                    }
+                    e.push('}');
                     e
                 })
                 .collect();

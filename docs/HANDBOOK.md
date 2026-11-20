@@ -392,6 +392,7 @@ Open **Font Info** (Ctrl+I) to set:
   - Removing an axis takes masters and instances off it (their positions on that axis are dropped) and deletes intermediate and alternate layers that use it. Kernest asks first, and Ctrl+Z undoes it.
 - **Masters:** each master is a full set of outlines at a location on the axes. Add a master by copying an existing one, then edit its outlines. **Add from font…** brings a master in from another font (a compiled font, or a Kernest, Glyphs, UFO or designspace source): pick the source master and its location, and Kernest reports which glyphs are compatible and which differ before anything is added. Each master has **Zones** and **Stems** editors: zones keep edges like the baseline and x-height on one pixel row at small sizes (a positive size marks a top edge, a negative size a bottom edge); stems are the common stroke widths — PostScript exports use them for hints, and TrueType uses the first horizontal stem as its guide width.
 - **Instances:** named styles such as SemiBold at a location between masters. They become static fonts on export; untick **Export** on an instance to leave it out.
+  - **Family name** exports the instance as part of another family, so one source can make several families (for example Lexend, Lexend Deca and Lexend Exa). Leave it empty to use the font's family name. Instance names only need to be unique within a family, so each family can have its own Bold. Family names in other languages, from Glyphs files, are kept and written to the font's name table.
   - **Weight class** and **Width class** set the numbers apps use to sort and match styles (weight 1–1000, width 1–9). Leave them empty (**Automatic**) to take them from the instance's position on the Weight or Width axis, or from its name.
   - **Style link** marks an instance as the Bold, Italic or Bold Italic of another instance (or of the family). Exported fonts then carry the right style-map names, so apps group Regular and Bold as one family.
   - **Generate as New Font** turns the instances into masters of a brand-new font, opened in its own window: one master per instance at its location, with the outlines interpolated. Handy for turning a variable design into a static family you can then edit per style.
@@ -463,7 +464,7 @@ OpenType features are the substitutions and positioning rules that run when text
 **File › Export › Font…** (Ctrl+E) builds fonts with [fontc](https://github.com/googlefonts/fontc):
 
 - **Variable font** (`Family-VF.ttf`): built from all the masters. It needs at least two masters, an axis, a master at the default location, and glyphs that can be interpolated. If Font Info › **Variable fonts** defines extra cuts, export writes one variable file per entry, each with its own axis ranges and glyph set.
-- **Static fonts** (`Family-Style.ttf`): one per exported instance, or one per master if there are no instances. Instances between masters are interpolated by Kernest first. Each static font's weight class (used by apps to sort and match styles) comes from its **Weight class** in Font Info, or from its position on the Weight axis, or from its style name (Thin, Light, Bold…) if there's no Weight axis; its width class comes from **Width class** or a Width axis. Style-linked instances carry the style-map names that group them with their base family.
+- **Static fonts** (`Family-Style.ttf`): one per exported instance, or one per master if there are no instances. An instance with its own **Family name** uses that family in its file name and names. If two fonts would be written to the same file (names are compared ignoring case, as Windows does), export stops before writing anything and names both, so no font silently replaces another. Instances between masters are interpolated by Kernest first. Each static font's weight class (used by apps to sort and match styles) comes from its **Weight class** in Font Info, or from its position on the Weight axis, or from its style name (Thin, Light, Bold…) if there's no Weight axis; its width class comes from **Width class** or a Width axis. Style-linked instances carry the style-map names that group them with their base family.
 
 Choose the formats:
 
@@ -538,7 +539,7 @@ On export the switches are custom parameters (Font Info › Custom parameters �
 - **SBIX to SVG** — a pixel size: glyphs without an SVG drawing get one made from their bitmap at that size (or the next larger one).
 - **Color Layers to SVG** — `1` also writes SVG documents drawn from the colour layers, for apps that read SVG but not COLR.
 
-Glyphs files keep bitmaps as `iColor` layers and SVG drawings as `svg` layers, in both directions. A font with bitmaps, SVG drawings or number values saves at format version 15.
+Glyphs files keep bitmaps as `iColor` layers and SVG drawings as `svg` layers, in both directions. A font with bitmaps, SVG drawings or number values saves at format version 15; a font whose instances have family names of their own saves at version 16.
 
 ## Import
 

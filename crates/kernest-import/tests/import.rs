@@ -49,6 +49,8 @@ fn two_masters() -> Font {
         style_link: None,
         rename_glyphs: Vec::new(),
         remove_glyphs: Vec::new(),
+        family_name: None,
+        localized_family_names: Default::default(),
     });
     // A brace layer for H and an alternate for o.
     let (mut f, brace) =
@@ -113,6 +115,80 @@ fn designspace_round_trip() {
         v.sort_by(|a, b| (&a.left, &a.right).cmp(&(&b.left, &b.right)));
     }
     assert_eq!(f.kerning, want);
+}
+
+/// A Glyphs 3 source with one font family and instances in two more families: the
+/// `familyNames` property (with a German name) and the `familyName` parameter. Two
+/// instances share the name "Bold".
+fn multi_family_glyphs() -> String {
+    let inst = |name: &str, w: f64, extra: &str| {
+        format!("{{\naxesValues = (\n{w}\n);\n{extra}name = {name};\n}}")
+    };
+    format!(
+        "{{\n.appVersion = \"3260\";\n.formatVersion = 3;\naxes = (\n{{\nname = Weight;\ntag = wght;\n}}\n);\nfamilyName = Fam;\nfontMaster = (\n{{\naxesValues = (\n400\n);\nid = m01;\nname = Regular;\n}},\n{{\naxesValues = (\n700\n);\nid = m02;\nname = Bold;\n}}\n);\nunitsPerEm = 1000;\nglyphs = (\n{{\nglyphname = A;\nlayers = (\n{{\nlayerId = m01;\nwidth = 500;\n}},\n{{\nlayerId = m02;\nwidth = 600;\n}}\n);\n}}\n);\ninstances = (\n{},\n{},\n{},\n{}\n);\n}}",
+        inst("Regular", 400.0, ""),
+        inst("Bold", 700.0, ""),
+        inst(
+            "Bold",
+            700.0,
+            "properties = (\n{\nkey = familyNames;\nvalues = (\n{\nlanguage = dflt;\nvalue = \"Fam Deca\";\n},\n{\nlanguage = DEU;\nvalue = \"Fam Zehn\";\n}\n);\n}\n);\n",
+        ),
+        inst(
+            "Light",
+            400.0,
+            "customParameters = (\n{\nname = familyName;\nvalue = \"Fam Text\";\n}\n);\n",
+        ),
+    )
+}
+
+#[test]
+fn glyphs_instance_family_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Multi.glyphs");
+    fs::write(&path, multi_family_glyphs()).unwrap();
+    let f = import(&path).unwrap().font;
+    let fams: Vec<(Option<&str>, &str)> = f
+        .instances
+        .iter()
+        .map(|i| (i.family_name.as_deref(), i.name.as_str()))
+        .collect();
+    assert_eq!(
+        fams,
+        vec![
+            (None, "Regular"),
+            (None, "Bold"),
+            (Some("Fam Deca"), "Bold"),
+            (Some("Fam Text"), "Light"),
+        ]
+    );
+    assert_eq!(
+        f.instances[2].localized_family_names,
+        BTreeMap::from([("DEU".to_string(), "Fam Zehn".to_string())])
+    );
+
+    // Saved as .glyphs and opened again, the names are kept.
+    let out = dir.path().join("Again.glyphs");
+    kernest_import::write_glyphs(&f, &out).unwrap();
+    let again = import(&out).unwrap().font;
+    assert_eq!(again.instances, f.instances);
+}
+
+#[test]
+fn designspace_instance_family_name() {
+    let mut src = two_masters();
+    src.instances[0].family_name = Some("Sample Display".into());
+    let dir = tempfile::tempdir().unwrap();
+    let ds = kernest_export::write_sources(&src, dir.path()).unwrap();
+    let f = import(&ds).unwrap().font;
+    assert_eq!(
+        f.instances[0].family_name.as_deref(),
+        Some("Sample Display")
+    );
+    // The font's own family stays the instance default.
+    let src = two_masters();
+    let plain = tempfile::tempdir().unwrap();
+    let ds = kernest_export::write_sources(&src, plain.path()).unwrap();
+    assert_eq!(import(&ds).unwrap().font.instances[0].family_name, None);
 }
 
 #[test]

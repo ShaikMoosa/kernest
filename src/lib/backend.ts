@@ -550,6 +550,10 @@ export interface Instance {
   renameGlyphs?: [string, string][];
   /** Glyphs left out of this export ("Remove Glyphs"). */
   removeGlyphs?: string[];
+  /** This instance's own family name; unset means the font's family name. */
+  familyName?: string;
+  /** Family names in other languages, by Glyphs language tag ("DEU", "JAN"…). */
+  localizedFamilyNames?: Record<string, string>;
 }
 
 /** A virtual master: a named location only glyphs with intermediate layers there use. */
@@ -2154,9 +2158,13 @@ const mockBackend: Backend = {
     const clean = instances.map((i) => {
       const name = i.name.trim();
       if (!name) throw "Every instance needs a name.";
-      if (names.has(name)) throw `Instance name "${name}" is used twice.`;
-      names.add(name);
-      return { name, location: checkLocation(d, i.location), export: i.export ?? true, weightClass: i.weightClass, widthClass: i.widthClass, styleLink: i.styleLink };
+      const fam = (i.familyName ?? "").trim();
+      const familyName = fam && fam !== d.familyName ? fam : undefined;
+      if (familyName && [...familyName].length > 63) throw `Family name "${familyName}" is too long; use at most 63 characters.`;
+      const key = `${familyName ?? ""}\u0000${name}`;
+      if (names.has(key)) throw familyName ? `Instance name "${name}" is used twice in family "${familyName}".` : `Instance name "${name}" is used twice.`;
+      names.add(key);
+      return { ...i, name, location: checkLocation(d, i.location), export: i.export ?? true, familyName };
     });
     return editMeta(d, (m) => { m.instances = clean; });
   },

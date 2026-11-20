@@ -446,6 +446,8 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             },
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
         })
         .collect();
 
@@ -973,22 +975,91 @@ fn swaps_in(p: &glyphs_reader::Plist) -> Vec<[String; 2]> {
         .collect()
 }
 
-/// "Rename Glyphs" and "Remove Glyphs" on static instances, by instance name.
+/// Language-tagged names from a Glyphs list of `{language; value}` entries.
+fn localized_names(list: &glyphs_reader::Plist) -> BTreeMap<String, String> {
+    list.as_array()
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|e| {
+            let lang = e.get("language").and_then(|l| l.as_str())?.trim();
+            let value = e.get("value").and_then(|v| v.as_str())?.trim();
+            (!lang.is_empty() && !value.is_empty()).then(|| (lang.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+/// Splits localized family names into the default name ("dflt", else English) and
+/// the other languages.
+fn split_family_names(
+    mut names: BTreeMap<String, String>,
+) -> (Option<String>, BTreeMap<String, String>) {
+    let default = names
+        .remove("dflt")
+        .or_else(|| names.remove("ENG"))
+        .or_else(|| names.values().next().cloned());
+    (default, names)
+}
+
+/// Per-instance settings Glyphs keeps outside the parsed instance: "Rename Glyphs",
+/// "Remove Glyphs" and the instance's own family names (the `familyNames` property in
+/// Glyphs 3; the `familyName` and `Localized Family Names` parameters in Glyphs 2).
+/// Static instances are matched by position, since several can share a name (one
+/// "Bold" per family).
 fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font) {
-    for inst in root
+    let font_family = font.info.family_name.clone();
+    let statics = root
         .get("instances")
         .and_then(|i| i.as_array())
         .unwrap_or(&[])
-    {
-        if inst.get("type").and_then(|t| t.as_str()) == Some("variable") {
+        .iter()
+        .filter(|inst| inst.get("type").and_then(|t| t.as_str()) != Some("variable"));
+    for (inst, target) in statics.zip(font.instances.iter_mut()) {
+        if inst.get("name").and_then(|n| n.as_str()) != Some(target.name.as_str()) {
             continue;
         }
-        let Some(name) = inst.get("name").and_then(|n| n.as_str()) else {
-            continue;
-        };
-        let Some(target) = font.instances.iter_mut().find(|i| i.name == name) else {
-            continue;
-        };
+        let mut names = BTreeMap::new();
+        for prop in inst
+            .get("properties")
+            .and_then(|p| p.as_array())
+            .unwrap_or(&[])
+        {
+            if prop.get("key").and_then(|k| k.as_str()) == Some("familyNames") {
+                if let Some(v) = prop.get("values") {
+                    names.extend(localized_names(v));
+                }
+                if let Some(v) = prop.get("value").and_then(|v| v.as_str()) {
+                    names.insert("dflt".into(), v.trim().to_string());
+                }
+            }
+        }
+        for p in inst
+            .get("customParameters")
+            .and_then(|p| p.as_array())
+            .unwrap_or(&[])
+        {
+            if p.get("disabled").and_then(num).is_some_and(|v| v != 0.0) {
+                continue;
+            }
+            match p.get("name").and_then(|n| n.as_str()) {
+                Some("familyName") => {
+                    if let Some(v) = p.get("value").and_then(|v| v.as_str()) {
+                        names.insert("dflt".into(), v.trim().to_string());
+                    }
+                }
+                Some("Localized Family Names") => {
+                    if let Some(v) = p.get("value") {
+                        for (lang, name) in localized_names(v) {
+                            names.entry(lang).or_insert(name);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        names.retain(|_, v| !v.is_empty());
+        let (family, others) = split_family_names(names);
+        target.family_name = family.filter(|f| *f != font_family || !others.is_empty());
+        target.localized_family_names = others;
         for p in inst
             .get("customParameters")
             .and_then(|p| p.as_array())
