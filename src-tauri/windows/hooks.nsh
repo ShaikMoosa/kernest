@@ -20,10 +20,18 @@
 !define KERNEST_EXPORT_CMD 'cmd.exe /c ""${KERNEST_CLI}" export "%1" --out "%1\..\build" & echo. & pause"'
 !define KERNEST_CHECK_CMD 'cmd.exe /c ""${KERNEST_CLI}" export "%1" --out "%1\..\build" && "${KERNEST_CLI}" check "%1\..\build" & echo. & pause"'
 
-!macro KERNEST_WRITE_VERB KEY LABEL CMD
-  WriteRegStr SHCTX "${KEY}" "" "${LABEL}"
+; The commands hold quotes, so they're used through their defines here: passed as
+; macro parameters, NSIS would split them at the quotes.
+!macro KERNEST_EXPORT_VERB_AT KEY
+  WriteRegStr SHCTX "${KEY}" "" "Export fonts here"
   WriteRegStr SHCTX "${KEY}" "Icon" "${KERNEST_EXE},0"
-  WriteRegStr SHCTX "${KEY}\command" "" '${CMD}'
+  WriteRegStr SHCTX "${KEY}\command" "" '${KERNEST_EXPORT_CMD}'
+!macroend
+
+!macro KERNEST_CHECK_VERB_AT KEY
+  WriteRegStr SHCTX "${KEY}" "" "Check font"
+  WriteRegStr SHCTX "${KEY}" "Icon" "${KERNEST_EXE},0"
+  WriteRegStr SHCTX "${KEY}\command" "" '${KERNEST_CHECK_CMD}'
 !macroend
 
 !macro KERNEST_CLAIM_EXT EXT
@@ -50,9 +58,9 @@
   WriteRegStr SHCTX "${KERNEST_FOLDER_VERB}\command" "" '"${KERNEST_EXE}" "%1"'
 
   ; Right-click "Export fonts here" and "Check font" on the same folders.
-  !insertmacro KERNEST_WRITE_VERB "${KERNEST_EXPORT_VERB}" "Export fonts here" "${KERNEST_EXPORT_CMD}"
+  !insertmacro KERNEST_EXPORT_VERB_AT "${KERNEST_EXPORT_VERB}"
   WriteRegStr SHCTX "${KERNEST_EXPORT_VERB}" "AppliesTo" '${KERNEST_APPLIES}'
-  !insertmacro KERNEST_WRITE_VERB "${KERNEST_CHECK_VERB}" "Check font" "${KERNEST_CHECK_CMD}"
+  !insertmacro KERNEST_CHECK_VERB_AT "${KERNEST_CHECK_VERB}"
   WriteRegStr SHCTX "${KERNEST_CHECK_VERB}" "AppliesTo" '${KERNEST_APPLIES}'
 
   ; Font sources that are files.
@@ -60,8 +68,8 @@
   WriteRegStr SHCTX "Software\Classes\${KERNEST_PROGID}\DefaultIcon" "" "${KERNEST_EXE},0"
   WriteRegStr SHCTX "Software\Classes\${KERNEST_PROGID}\shell\open" "" "Open with Kernest"
   WriteRegStr SHCTX "Software\Classes\${KERNEST_PROGID}\shell\open\command" "" '"${KERNEST_EXE}" "%1"'
-  !insertmacro KERNEST_WRITE_VERB "Software\Classes\${KERNEST_PROGID}\shell\Kernest.Export" "Export fonts here" "${KERNEST_EXPORT_CMD}"
-  !insertmacro KERNEST_WRITE_VERB "Software\Classes\${KERNEST_PROGID}\shell\Kernest.Check" "Check font" "${KERNEST_CHECK_CMD}"
+  !insertmacro KERNEST_EXPORT_VERB_AT "Software\Classes\${KERNEST_PROGID}\shell\Kernest.Export"
+  !insertmacro KERNEST_CHECK_VERB_AT "Software\Classes\${KERNEST_PROGID}\shell\Kernest.Check"
   !insertmacro KERNEST_CLAIM_EXT ".glyphs"
   !insertmacro KERNEST_CLAIM_EXT ".designspace"
 
