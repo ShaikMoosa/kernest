@@ -146,7 +146,7 @@ The rest of the plan, in order. Each phase is built, tested, checked in the app,
 | 2.6 | Interpolation warnings: paths that run the other way, start points, contour order and kinks between masters, with a one-click fix | ✅ v2.6 |
 | 2.7 | Ready for real fonts: tested on real families, fast Font View for large fonts, editable Unicode values, guides/backgrounds/locks and line spacing imported from Glyphs and UFO, colour written to `.glyphs`; line spacing editable in Font Info (2.7.1) | ✅ v2.7.1 |
 | 2.8 | Nothing left behind: Glyphs variable font settings, right-to-left kerning, extra layers kept as backups, guides and backgrounds in UFO export, a Custom Parameters table; strokes and pen points (S28), brushes and the pixel tool (S59); corner, cap and segment components (S58); smart-glyph handles on the canvas (S57) | ✅ v2.8 |
-| 2.9 | Masking and shape order (S29), images in the editor (S33), annotations (S32); higher-order interpolation tool (S40), virtual masters and glyph swaps (S39) | 🛠 built, not released |
+| 2.9 | Masking and shape order (S29), images in the editor (S33), annotations (S32); higher-order interpolation tool (S40), virtual masters and glyph swaps (S39) | ✅ v2.9 |
 | 2.10 | sbix bitmaps and SVG colour layers (S63); feature-code tokens and conditions (S64) | planned |
 | 2.11 | Test install, quick export destinations and web preview (S65); Explorer preview pane and update notice (S70) | planned |
 | 2.12 | Kerning compress and clean-up (S56); remaining menu items (S46, S47) | planned |
