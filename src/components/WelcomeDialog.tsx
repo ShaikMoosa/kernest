@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { errorMessage } from "../lib/backend";
+import { setShowStartAtLaunch, showStartAtLaunch } from "../lib/desktop";
 import { t } from "../lib/i18n";
 import { AddIcon, CloseIcon, FolderIcon } from "./Icons";
 import logo from "../assets/kernest-logo.svg";
@@ -11,6 +12,7 @@ export function WelcomeDialog({ onComplete }: Props) {
   const [experience, setExperience] = useState<"beginner" | "experienced">("beginner");
   const [action, setAction] = useState<StartAction>("new");
   const [busy, setBusy] = useState(false);
+  const [atLaunch, setAtLaunch] = useState(showStartAtLaunch);
   const [error, setError] = useState<string | null>(null);
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => { form.current?.querySelector<HTMLInputElement>('input[type="radio"]')?.focus(); }, []);
@@ -60,7 +62,7 @@ export function WelcomeDialog({ onComplete }: Props) {
             </div>
             {error && <p role="alert" className="notice notice-danger">{error}</p>}
           </div>
-          <footer className="wizard-footer"><span className="k-caption muted">{t("You can restart the tour from Help at any time.")}</span><span className="spacer" /><button type="button" className="btn btn-link" disabled={busy} onClick={() => complete(null)}>{t("Skip")}</button><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? t("Opening…") : t("Continue")}</button></footer>
+          <footer className="wizard-footer"><label className="check-row" title={t("You can restart the tour from Help at any time.")}><input type="checkbox" checked={atLaunch} onChange={(e) => { setAtLaunch(e.target.checked); setShowStartAtLaunch(e.target.checked); }} /><span className="k-body">{t("Show Start Window at launch")}</span></label><span className="spacer" /><button type="button" className="btn btn-link" disabled={busy} onClick={() => complete(null)}>{t("Skip")}</button><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? t("Opening…") : `${t("Continue")} →`}</button></footer>
         </div>
       </div>
     </form>

@@ -26,7 +26,11 @@ export function NewFontDialog({ sets, onCancel, onCreate }: Props) {
   const form = useRef<HTMLFormElement>(null);
   const suggestions = useMemo(() => suggestedInstances(layout.axes), [layout.axes]);
   const instances = suggestions.filter(i => selected.includes(i.name));
-  const total = sets.filter(s => chosen.includes(s.id)).reduce((n, s) => n + s.count, 0);
+  const chosenSets = sets.filter(s => chosen.includes(s.id));
+  const total = chosenSets.reduce((n, s) => n + s.count, 0);
+  const setsSummary = chosenSets.length <= 2 && chosenSets.length > 0
+    ? `${chosenSets.map(s => t(s.name)).join(" + ")} · ${tn(total, "{n} glyph", "{n} glyphs")}`
+    : `${tn(chosen.length, "{n} glyph set", "{n} glyph sets")} · ${tn(total, "{n} glyph", "{n} glyphs")}`;
 
   useEffect(() => {
     form.current?.querySelector<HTMLInputElement>("input")?.focus();
@@ -102,7 +106,7 @@ export function NewFontDialog({ sets, onCancel, onCreate }: Props) {
           <nav className="wizard-steps" aria-label={t("Font setup steps")}>
             {STEP_LABELS.map((label, i) => <button key={label} type="button" className={`wizard-step${step === i ? " is-current" : ""}`} aria-current={step === i ? "step" : undefined} disabled={busy || i > step} onClick={() => { setStep(i); setError(null); }}>
               <span className={`wizard-step-number${i < step ? " is-done" : ""}`}>{i < step ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m5 12 4 4L19 6" /></svg> : i + 1}</span>
-              <span><strong>{t(label)}</strong>{i === 0 && step > 0 && <small>{name} · {upm} UPM</small>}{i === 1 && step > 1 && <small>{tn(chosen.length, "{n} glyph set", "{n} glyph sets")}</small>}{i === 2 && step > 2 && <small>{tn(layout.masters.length, "{n} master", "{n} masters")}</small>}</span>
+              <span><strong>{t(label)}</strong>{i === 0 && step > 0 && <small>{name} · {upm} UPM</small>}{i === 1 && step > 1 && <small>{setsSummary}</small>}{i === 2 && step > 2 && <small>{tn(layout.masters.length, "{n} master", "{n} masters")} · {tn(instances.length, "{n} instance", "{n} instances")}</small>}</span>
             </button>)}
           </nav>
           <div className="wizard-main">
@@ -123,13 +127,18 @@ export function NewFontDialog({ sets, onCancel, onCreate }: Props) {
               {step === 1 && <>
                 <p className="muted">{t("Pick the scripts and glyph sets you want to start drawing. You can add more later.")}</p>
                 <fieldset className="wizard-sets"><legend className="sr-only">{t("Start with glyph sets")}</legend>{sets.map(s => <label key={s.id} className="check-row"><input type="checkbox" checked={chosen.includes(s.id)} onChange={() => setChosen(c => c.includes(s.id) ? c.filter(x => x !== s.id) : [...c, s.id])} /><span>{t(s.name)}</span><span className="spacer" /><span className="k-caption muted">{tn(s.count, "{n} glyph", "{n} glyphs")}</span></label>)}</fieldset>
-                <p className="k-caption muted">{tn(total, "Up to {n} glyph; overlapping sets are combined.", "Up to {n} glyphs; overlapping sets are combined.")}</p>
+                <section className="wizard-sample" aria-label={t("Preview")}>
+                  <h4 className="k-label muted">{t("Preview")}</h4>
+                  <p dir="auto">{chosenSets.map(s => s.sample).join(" ") || <span className="muted k-body">{t("Pick a glyph set to see its characters.")}</span>}</p>
+                </section>
+                <p className="k-caption muted">{tn(total, "Total: up to {n} glyph; overlapping sets are combined.", "Total: up to {n} glyphs; overlapping sets are combined.")}</p>
               </>}
               {step === 2 && <>
                 <p className="muted">{t("How will this family vary? You can change everything later in Font Info.")}</p>
                 <div className="wizard-modes">{([["single", "Single style", "1 master"], ["weight", "Weight", "Light to Bold · 2 masters"], ["weight-width", "Weight × Width", "4 masters"], ["custom", "Custom", "Define axes yourself"]] as const).map(([id, label, caption]) => <label key={id} className={`wizard-mode${mode === id ? " is-selected" : ""}`}><span><input type="radio" name="family-mode" value={id} checked={mode === id} onChange={() => selectMode(id)} />{t(label)}</span><small>{t(caption)}</small></label>)}</div>
                 <div className="wizard-designspace">
                   <div>
+                    {layout.axes.length > 0 && <h4 className="k-label">{tn(layout.axes.length, "Axis", "Axes")}</h4>}
                     {layout.axes.map((axis, i) => <div className="wizard-axis" key={i}>
                       <label className="field"><span className="k-caption muted">{t("Name")}</span><input aria-label={t("Axis name")} value={axis.name} required onChange={e => updateAxis(i, "name", e.target.value)} /></label>
                       <label className="field"><span className="k-caption muted">{t("Tag")}</span><input aria-label={t("Axis tag")} className="k-code" value={axis.tag} required minLength={4} maxLength={4} onChange={e => updateAxis(i, "tag", e.target.value)} /></label>
@@ -147,8 +156,19 @@ export function NewFontDialog({ sets, onCancel, onCreate }: Props) {
                   </div>
                   {layout.axes.length > 0 && <aside className="wizard-preview" aria-label={t("Master locations")}>
                     <h4 className="k-label">{t("Designspace")}</h4>
-                    <svg viewBox="0 0 240 120" role="img" aria-label={t("Master locations")}><path d="M16 92H224 M16 92V16" fill="none" stroke="currentColor" opacity="0.25" />{layout.masters.map((m, i) => { const x = layout.axes[0], y = layout.axes[1]; return <circle key={i} cx={16 + ((m.location[x.tag] ?? x.default) - x.min) / (x.max - x.min || 1) * 208} cy={y ? 92 - ((m.location[y.tag] ?? y.default) - y.min) / (y.max - y.min || 1) * 76 : 54} r="5"><title>{m.name}</title></circle>; })}</svg>
-                    <p className="k-caption muted">{t("Every dot is a master. One master must sit at the default of every axis.")}</p>
+                    {layout.axes.length === 1 ? (() => {
+                      const a = layout.axes[0];
+                      const x = (v: number) => 12 + (v - a.min) / (a.max - a.min || 1) * 216;
+                      return <svg viewBox="0 0 240 56" role="img" aria-label={t("Master locations")}>
+                        <path d="M12 20H228" stroke="currentColor" opacity="0.25" />
+                        {instances.map(i => <circle key={i.name} className="wizard-dot-instance" cx={x(i.location[a.tag] ?? a.default)} cy="20" r="5"><title>{i.name}</title></circle>)}
+                        {layout.masters.map((m, i) => <circle key={i} className="wizard-dot-master" cx={x(m.location[a.tag] ?? a.default)} cy="20" r="7"><title>{m.name}</title></circle>)}
+                        <text x="12" y="48" className="wizard-dot-label">{a.min}</text>
+                        <text x="228" y="48" textAnchor="end" className="wizard-dot-label">{a.max}</text>
+                      </svg>;
+                    })() : <svg viewBox="0 0 240 120" role="img" aria-label={t("Master locations")}><path d="M16 92H224 M16 92V16" fill="none" stroke="currentColor" opacity="0.25" />{[...instances.map(i => ({ name: i.name, location: i.location, master: false })), ...layout.masters.map(m => ({ ...m, master: true }))].map((m, i) => { const x = layout.axes[0], y = layout.axes[1]; return <circle key={i} className={m.master ? "wizard-dot-master" : "wizard-dot-instance"} cx={16 + ((m.location[x.tag] ?? x.default) - x.min) / (x.max - x.min || 1) * 208} cy={y ? 92 - ((m.location[y.tag] ?? y.default) - y.min) / (y.max - y.min || 1) * 76 : 54} r={m.master ? 6 : 4}><title>{m.name}</title></circle>; })}</svg>}
+                    {instances.length > 0 && <ul className="wizard-instance-names">{[instances[0], instances[Math.floor((instances.length - 1) / 2)], instances.at(-1)!].filter((v, n, all) => all.indexOf(v) === n).map(i => <li key={i.name} style={{ fontWeight: Math.max(100, Math.min(900, i.location.wght ?? 400)) }}>{name} {i.name}</li>)}</ul>}
+                    <p className="k-caption muted">{t("Filled dots are masters, open dots are instances. One master must sit at the default of every axis.")}</p>
                   </aside>}
                 </div>
                 <h4 className="k-label">{t("Suggested instances")}</h4>
@@ -161,7 +181,7 @@ export function NewFontDialog({ sets, onCancel, onCreate }: Props) {
               </>}
               {error && <p role="alert" className="notice notice-danger k-label">{error}</p>}
             </div>
-            <footer className="wizard-footer"><span className="k-caption muted">{t("Step {step} of 4", { step: step + 1 })}</span><span className="spacer" />{step > 0 && <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => { setStep(step - 1); setError(null); }}>{t("Back")}</button>}<button type="submit" className="btn btn-primary" disabled={busy}>{busy ? t("Creating font…") : step === 3 ? t("Create Font") : t("Next")}</button></footer>
+            <footer className="wizard-footer"><span className="k-caption muted">{t("Step {step} of 4", { step: step + 1 })}</span><span className="spacer" />{step > 0 && <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => { setStep(step - 1); setError(null); }}>← {t("Back")}</button>}<button type="submit" className="btn btn-primary" disabled={busy}>{busy ? t("Creating font…") : step === 3 ? t("Create Font") : step === 2 ? `${t("Next: Review")} →` : `${t("Next")} →`}</button></footer>
           </div>
         </div>
       </form>

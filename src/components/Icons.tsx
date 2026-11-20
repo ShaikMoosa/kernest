@@ -13,6 +13,7 @@ export const AddIcon = ({ size = 16 }: P) => svg(size, <path d="M12 5v14M5 12h14
 export const FolderIcon = ({ size = 16 }: P) => svg(size, <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />);
 export const SparkIcon = ({ size = 16 }: P) => svg(size, <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6" />);
 export const ExternalIcon = ({ size = 14 }: P) => svg(size, <path d="M14 5h5v5M19 5l-8 8M18 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h4" />);
+export const ArrowUpRightIcon = ({ size = 12 }: P) => svg(size, <path d="M7 17 17 7M8 7h9v9" />);
 export const ChevronDownIcon = ({ size = 12 }: P) => svg(size, <path d="m6 9 6 6 6-6" />);
 
 export function CaptionIcon({ kind }: { kind: "minimize" | "maximize" | "close" }) {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { backend, type Annotation, type HoiKind, type HoiView, type GlyphPicture, type ImageData, type LayerImage, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
+import { VariationPreview } from "./VariationPreview";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
 import {
@@ -204,6 +205,8 @@ interface Props {
   /** View › Show Sidebar: the Transform/Hints/Pixel preview column. */
   showSidebar?: boolean;
   onToggleSidebar?: () => void;
+  /** Toolbar view toggles (Nodes, Metrics, Anchors, Guides, Background), shared with the View menu. */
+  onToggleView?: (view: "nodes" | "metrics" | "anchors" | "guides" | "background") => void;
   /** The current master's id; `masterId` differs when a brace or bracket layer is open. */
   masterKey?: string;
   /** Switches this tab to another layer (a layer key). */
@@ -213,7 +216,7 @@ interface Props {
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showImage = true, showAnnotations = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, masterKey, onPickLayer, reporters = [] }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showImage = true, showAnnotations = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, onToggleView, masterKey, onPickLayer, reporters = [] }: Props) {
   const master = masterKey ?? masterId;
   const nodeScale = handleSize === "small" ? 0.75 : handleSize === "large" ? 1.5 : 1;
   // ---------- Reporter plug-ins ----------
@@ -417,6 +420,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [pixelDraft, setPixelDraft] = useState<{ on: boolean; cells: [number, number][] } | null>(null);
   const [askPixelGlyph, setAskPixelGlyph] = useState(false);
   const [transformOpen, setTransformOpen] = useState(false);
+  const [layersOpen, setLayersOpen] = useState(true);
   const [hintsOpen, setHintsOpen] = useState(false);
   const [strokeOpen, setStrokeOpen] = useState(true);
   const [tf, setTf] = useState({ sx: 100, sy: 100, rot: 0, kx: 0, ky: 0, mh: false, mv: false, origin: 4, allMasters: false });
@@ -1877,44 +1881,6 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         <span className="toolbar-sep" />
         <button className="btn btn-secondary btn-sm" onClick={() => setPicking(true)} title={t("Add Component (Ctrl+Shift+C)")}>{t("Add Component")}</button>
         <span className="toolbar-sep" />
-        <label className="layer-picker" title={t("Intermediate (brace) and alternate (bracket) layers of this glyph")}>
-          <span className="k-caption muted">{t("Layer")}</span>
-          <select className="text-input layer-select" value={masterId} onChange={(e) => onPickLayer?.(e.target.value)} aria-label={t("Layer")}>
-            {layerList
-              .filter((l) => (l.kind === "master" ? l.key === master : l.kind === "brace" || l.masterId === master))
-              .map((l) => (
-                <option key={l.key} value={l.key}>
-                  {l.kind === "master" ? t("{name} (master)", { name: l.label }) : l.kind === "brace" ? t("Intermediate {name}", { name: l.label }) : l.kind === "smart" ? t("Smart {name}", { name: l.label }) : l.kind === "color" ? t("Colour {n}", { n: l.label }) : l.kind === "backup" ? t("Backup: {name}", { name: l.label }) : t("Alternate {name}", { name: l.label })}
-                </option>
-              ))}
-          </select>
-        </label>
-        <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("brace", false)} title={t("Add an intermediate (brace) layer")}>{t("+ Intermediate")}</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("bracket", false)} title={t("Add an alternate design (bracket layers)")}>{t("+ Alternate")}</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "axes", axes: layer?.smartAxes ?? [] })} title={t("Make this a smart glyph: components of it get their own axes")}>{t("Smart…")}</button>
-        <button className="btn btn-secondary btn-sm" onClick={addColorLayer} title={t("Add a colour layer (colour fonts): a drawing filled with a palette colour or gradient")}>{t("+ Colour")}</button>
-        <button className="btn btn-secondary btn-sm" onClick={addBackup} title={t("Save a copy of this master's drawing as a backup layer. Backups aren't exported.")}>{t("+ Backup")}</button>
-        {(layer?.smartAxes?.length ?? 0) > 0 && (
-          <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "pole", axes: layer?.smartAxes ?? [] })} title={t("Add the shape at another position on the smart axes")}>{t("+ Pole")}</button>
-        )}
-        {currentLayer && currentLayer.kind !== "master" && (
-          <>
-            {(currentLayer.kind === "brace" || currentLayer.kind === "bracket") && (
-              <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog(currentLayer.kind as "brace" | "bracket", true)}>{currentLayer.kind === "brace" ? t("Move…") : t("Ranges…")}</button>
-            )}
-            {currentLayer.kind === "backup" && (
-              <button className="btn btn-secondary btn-sm" onClick={useBackup} title={t("Make this the master's drawing; the current master drawing is kept as this backup")}>{t("Use as master")}</button>
-            )}
-            {currentLayer.kind === "color" && (
-              <>
-                <button className="btn btn-secondary btn-sm" onClick={() => setPainting(true)} title={t("Choose this layer's colour or gradient")}>{t("Paint…")}</button>
-                <button className="btn btn-secondary btn-sm" onClick={() => moveColorLayer(false)} title={t("Move this colour layer down (drawn earlier)")} aria-label={t("Move down")}>↓</button>
-                <button className="btn btn-secondary btn-sm" onClick={() => moveColorLayer(true)} title={t("Move this colour layer up (drawn later, on top)")} aria-label={t("Move up")}>↑</button>
-              </>
-            )}
-            <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? t("Removes this alternate from every master") : currentLayer.kind === "smart" ? t("Removes this pole") : currentLayer.kind === "color" ? t("Removes this colour layer from every master") : currentLayer.kind === "backup" ? t("Removes this backup") : t("Removes this intermediate layer")}>{t("Remove")}</button>
-          </>
-        )}
         {layer.glyphLocked && (
           <span className="locked-badge k-caption" role="status" title={t("This glyph is locked. Unlock it to edit.")}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -1923,11 +1889,16 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             {t("Locked")}
           </span>
         )}
-        <span className="toolbar-hint k-caption muted">{hint(activeTool)}</span>
+        <span className="toolbar-hint k-caption muted" title={hint(activeTool)}>{toolName(activeTool)}</span>
         <span className="spacer" />
-        <span className="k-caption muted">{cursor ? `${cursor.x}, ${cursor.y}` : ""}</span>
-        <button className="btn btn-secondary btn-sm" onClick={fit} title={t("Fit glyph (Ctrl+0)")}>{t("Fit")}</button>
-        <span className="k-caption muted zoom">{Math.round(view.s * 100)}%</span>
+        {onToggleView && (
+          <div className="segmented view-toggles" role="group" aria-label={t("Show")}>
+            {([["nodes", "Nodes", showNodes], ["metrics", "Metrics", showMetrics], ["anchors", "Anchors", showAnchors], ["guides", "Guides", showGuides], ["background", "Background", showBackground]] as const).map(([key, label, on]) => (
+              <button key={key} type="button" className={`segment${on ? " is-selected" : ""}`} aria-pressed={on} onClick={() => onToggleView(key)}
+                title={t("Show or hide {what}", { what: t(label) })}>{t(label)}</button>
+            ))}
+          </div>
+        )}
         <button type="button" className="icon-btn sidebar-toggle" aria-pressed={showSidebar} onClick={onToggleSidebar}
           title={t("Show or hide the sidebar")} aria-label={t("Sidebar")}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
@@ -1974,7 +1945,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             return (
               <g key={label}>
                 <line x1={0} x2={size.w} y1={sy} y2={sy} className={y === 0 ? "metric-line baseline" : "metric-line"} />
-                <text x={x1 + 8} y={sy - 4} className="metric-label">{label} {Math.round(y)}</text>
+                <text x={16} y={sy - 4} className="metric-label">{label} {Math.round(y)}</text>
               </g>
             );
           })}
@@ -2485,7 +2456,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         {paths.length === 0 && comps.length === 0 && !preview && (
           <div className="canvas-empty">
             <p className="k-subtitle">{t("Empty glyph")}</p>
-            <p className="k-caption muted">{t("Press P to draw with the pen, F for a rectangle, or Ctrl+Shift+C to add a component.")}</p>
+            <p className="canvas-empty-keys k-caption muted">
+              <kbd>P</kbd> {t("Draw")} <kbd>F</kbd> {t("Rectangle")} <kbd>{"Ctrl+V"}</kbd> {t("Paste")} <kbd>{"Ctrl+Shift+C"}</kbd> {t("Add component")}
+            </p>
           </div>
         )}
         <div className="editor-bottom">
@@ -2558,6 +2531,65 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       </div>
       {showSidebar && (
         <aside className="edit-sidebar" aria-label={t("Sidebar")}>
+        <VariationPreview glyph={glyph} masterId={master} version={version} />
+        <div className="transform-panel layers-panel">
+          <button type="button" className="transform-head" aria-expanded={layersOpen} onClick={() => setLayersOpen((o) => !o)}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+            {t("Layers")}
+          </button>
+          {layersOpen && (
+            <div className="layers-body">
+              <ul className="layer-list" role="listbox" aria-label={t("Layer")}>
+                {layerList
+                  .filter((l) => (l.kind === "master" ? true : l.kind === "brace" || l.masterId === master))
+                  .map((l) => {
+                    const current = l.key === masterId;
+                    const switchable = l.kind !== "master" || l.key === master;
+                    return (
+                      <li key={l.key}>
+                        <button type="button" role="option" aria-selected={current} disabled={!switchable} className={`layer-row${current ? " is-selected" : ""}`}
+                          title={switchable ? undefined : t("Switch masters with the master buttons at the top of the window")}
+                          onClick={() => onPickLayer?.(l.key)}>
+                          <span className="layer-name">{l.kind === "brace" ? `{${l.label}}` : l.kind === "color" ? t("Colour {n}", { n: l.label }) : l.label}</span>
+                          <span className="k-caption muted">{l.kind === "master" ? t("master") : l.kind === "brace" ? t("intermediate") : l.kind === "bracket" ? t("alternate") : l.kind === "smart" ? t("smart pole") : l.kind === "color" ? t("colour") : t("backup")}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+              </ul>
+              <div className="layer-actions">
+                <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("brace", false)} title={t("Add an intermediate (brace) layer")}>{t("+ Intermediate")}</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog("bracket", false)} title={t("Add an alternate design (bracket layers)")}>{t("+ Alternate")}</button>
+                <button className="btn btn-secondary btn-sm" onClick={addColorLayer} title={t("Add a colour layer (colour fonts): a drawing filled with a palette colour or gradient")}>{t("+ Colour")}</button>
+                <button className="btn btn-secondary btn-sm" onClick={addBackup} title={t("Save a copy of this master's drawing as a backup layer. Backups aren't exported.")}>{t("+ Backup")}</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "axes", axes: layer?.smartAxes ?? [] })} title={t("Make this a smart glyph: components of it get their own axes")}>{t("Smart…")}</button>
+                {(layer?.smartAxes?.length ?? 0) > 0 && (
+                  <button className="btn btn-secondary btn-sm" onClick={() => setSmartDialog({ kind: "pole", axes: layer?.smartAxes ?? [] })} title={t("Add the shape at another position on the smart axes")}>{t("+ Pole")}</button>
+                )}
+              </div>
+              <div className="layer-actions">
+                {currentLayer && currentLayer.kind !== "master" && (
+                  <>
+                    {(currentLayer.kind === "brace" || currentLayer.kind === "bracket") && (
+                      <button className="btn btn-secondary btn-sm" onClick={() => openLayerDialog(currentLayer.kind as "brace" | "bracket", true)}>{currentLayer.kind === "brace" ? t("Move…") : t("Ranges…")}</button>
+                    )}
+                    {currentLayer.kind === "backup" && (
+                      <button className="btn btn-secondary btn-sm" onClick={useBackup} title={t("Make this the master's drawing; the current master drawing is kept as this backup")}>{t("Use as master")}</button>
+                    )}
+                    {currentLayer.kind === "color" && (
+                      <>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setPainting(true)} title={t("Choose this layer's colour or gradient")}>{t("Paint…")}</button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => moveColorLayer(false)} title={t("Move this colour layer down (drawn earlier)")} aria-label={t("Move down")}>↓</button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => moveColorLayer(true)} title={t("Move this colour layer up (drawn later, on top)")} aria-label={t("Move up")}>↑</button>
+                      </>
+                    )}
+                    <button className="btn btn-secondary btn-sm" onClick={removeCurrentLayer} title={currentLayer.kind === "bracket" ? t("Removes this alternate from every master") : currentLayer.kind === "smart" ? t("Removes this pole") : currentLayer.kind === "color" ? t("Removes this colour layer from every master") : currentLayer.kind === "backup" ? t("Removes this backup") : t("Removes this intermediate layer")}>{t("Remove")}</button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
         <div className="transform-panel">
           <button type="button" className="transform-head" aria-expanded={transformOpen} onClick={() => setTransformOpen((o) => !o)}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
@@ -2956,6 +2988,17 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         </aside>
       )}
       </div>
+      <footer className="statusbar k-caption edit-status">
+        <span>{t("Layer: {name}", { name: currentLayer ? (currentLayer.kind === "master" ? currentLayer.label : `${currentLayer.masterName} · ${currentLayer.label}`) : master })} · {t("{selected} of {total} nodes selected", { selected: selection.size, total: paths.reduce((n, p) => n + p.nodes.filter(isOn).length, 0) })}</span>
+        <span className="spacer" />
+        {cursor && <span className="k-code">{cursor.x}, {cursor.y}</span>}
+        <button type="button" className="link-btn" onClick={fit} title={t("Fit glyph (Ctrl+0)")}>{t("Fit")}</button>
+        <span className="zoom-control" role="group" aria-label={t("Zoom")}>
+          <button type="button" className="icon-btn" aria-label={t("Zoom out")} title={t("Zoom out (Ctrl+−)")} onClick={() => { const m = measured.current; if (m) zoomAt(0.8, m.w / 2, m.h / 2); }}>−</button>
+          <span className="k-code">{Math.round(view.s * 100)}%</span>
+          <button type="button" className="icon-btn" aria-label={t("Zoom in")} title={t("Zoom in (Ctrl+=)")} onClick={() => { const m = measured.current; if (m) zoomAt(1.25, m.w / 2, m.h / 2); }}>+</button>
+        </span>
+      </footer>
       {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}
       {partPick && (() => {
         const prefix = partPick.kind === "corner" ? "_corner" : partPick.kind === "cap" ? "_cap" : "_segment";
@@ -3072,6 +3115,14 @@ function hoiAt(kind: HoiKind | null, p0: [number, number], p1: [number, number],
   if (kind.turn === "clockwise" || ((kind.turn ?? "auto") === "auto" && d > Math.PI)) d -= tau;
   const a = a0 + d * t, r = lerp(r0, r1);
   return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+}
+
+/** The active tool and its shortcut, as the toolbar shows it ("Select  V"). */
+function toolName(tool: Tool): string {
+  const tl = TOOLS.find((x) => x.id === tool);
+  if (!tl) return "";
+  const [name] = t(tl.label).split(/ \(/);
+  return `${name}  ${tl.shift ? "Shift+" : ""}${tl.key.toUpperCase()}`;
 }
 
 function hint(tool: Tool): string {

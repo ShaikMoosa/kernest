@@ -3,8 +3,9 @@ import { backend, type DocStatus, type FeaturesView, type FontInfo, type KernMod
 import { t } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
 import { wrapRows } from "../lib/onboarding";
+import { loadSamples, onSamplesChanged } from "../lib/samples";
 
-const PRESETS = ["HOHOHAVATAR To LT", "nnonnoonon HHOHHOOHOH", "Hamburgefontsiv", "/H/O/H/n/o/n LTLTLT ToTo"];
+const PRESETS = loadSamples();
 const MISSING_WIDTH = 500;
 const MODES: { id: KernMode; label: string; title: string }[] = [
   { id: "group", label: "Group", title: "Kern the two glyphs' kerning groups (or the glyphs, if they have none)" },
@@ -64,11 +65,16 @@ interface Props {
   onOpenGlyph: (name: string) => void;
   textWidth?: number;
   onMilestone?: (milestone: Milestone) => void;
+  /** The tab's title follows the sample text. */
+  onTitle?: (title: string) => void;
 }
 
 /** S06 · Text view for spacing and kerning. */
-export function TextView({ masterId, version, active, onChanged, onError, onOpenGlyph, textWidth = 16000, onMilestone }: Props) {
+export function TextView({ masterId, version, active, onChanged, onError, onOpenGlyph, textWidth = 16000, onMilestone, onTitle }: Props) {
   const [text, setText] = useState(PRESETS[0]);
+  const [samples, setSamples] = useState(loadSamples);
+  useEffect(() => onSamplesChanged(() => setSamples(loadSamples())), []);
+  useEffect(() => { onTitle?.(text.trim()); }, [text, onTitle]);
   const [info, setInfo] = useState<FontInfo | null>(null);
   const [rawLayout, setLayout] = useState<TextLayout | null>(null);
   // The setting is in 1/1000 em; advances are in font units, so scale by the UPM.
@@ -100,6 +106,21 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   }, [info, preview]);
   const previewing = location !== undefined;
   latest.current.previewing = previewing;
+
+  // ---------- Preview panel: the text in every master ----------
+  const [panelOpen, setPanelOpen] = useState(() => { try { return localStorage.getItem("kernest.textPreviewPanel") !== "0"; } catch { return true; } });
+  const [panelSize, setPanelSize] = useState(36);
+  const [panelLayouts, setPanelLayouts] = useState<{ id: string; name: string; layout: TextLayout }[]>([]);
+  useEffect(() => { try { localStorage.setItem("kernest.textPreviewPanel", panelOpen ? "1" : "0"); } catch { /* a convenience only */ } }, [panelOpen]);
+  useEffect(() => {
+    if (!panelOpen || !info) return;
+    let live = true;
+    const id = setTimeout(() => {
+      Promise.all(info.masters.map((m) => backend.textLayout(text, m.id).then((layout) => ({ id: m.id, name: m.name, layout }))))
+        .then((rows) => { if (live) setPanelLayouts(rows); }, () => {});
+    }, 200);
+    return () => { live = false; clearTimeout(id); };
+  }, [panelOpen, info, text, version]);
 
   // ---------- Feature preview ----------
   const [featView, setFeatView] = useState<FeaturesView | null>(null);
@@ -296,7 +317,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
         <input className="text-input" value={text} onChange={(e) => setText(e.target.value)} aria-label={t("Sample text")} placeholder={t("Type text, or /glyphname")} spellCheck={false} />
         <select className="select" aria-label={t("Sample strings")} value="" onChange={(e) => e.target.value && setText(e.target.value)}>
           <option value="">{t("Samples…")}</option>
-          {PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
+          {samples.map((p, i) => <option key={`${i}:${p}`} value={p}>{p}</option>)}
         </select>
         <span className="toolbar-sep" />
         <div className="segmented" role="radiogroup" aria-label={t("Kerning mode")}>
@@ -353,7 +374,18 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
         <input type="range" min={24} max={320} value={size} onChange={(e) => setSize(Number(e.target.value))} aria-label={t("Text size")} className="size-slider" />
         <span className="k-caption muted zoom">{size} px</span>
       </div>
-      <div className="text-canvas">
+      <div className="text-stage">
+      {!text.trim() && (
+        <div className="empty text-empty">
+          <span className="text-empty-cursor" aria-hidden="true" />
+          <p className="k-subtitle">{t("Type to add glyphs")}</p>
+          <p className="k-body muted">{t("Use /glyphname for glyphs without a character. Or start with a sample string:")}</p>
+          <div className="text-empty-samples">
+            {samples.slice(0, 6).map((p, i) => <button key={`${i}:${p}`} type="button" className="chip-btn" onClick={() => setText(p)}>{p}</button>)}
+          </div>
+        </div>
+      )}
+      <div className="text-canvas" hidden={!text.trim()}>
         <svg ref={svgRef} width={width} height={height} style={{ minWidth: "100%" }} onMouseDown={placeCursor} onDoubleClick={(e) => { const n = glyphAt(e); if (n) onOpenGlyph(n); }}>
           {!showShaped && layout?.lines.map((ln, li) => {
             const by = baseline(li);
@@ -361,8 +393,11 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
             const pairKern = cursor.line === li ? (ln[cursor.pos - 1]?.type === "glyph" ? (ln[cursor.pos - 1] as Glyph) : undefined) : undefined;
             return (
               <g key={li}>
-                {showMetrics && metrics && [metrics.ascender, metrics.xHeight, 0, metrics.descender].map((m) => (
-                  <line key={m} x1={0} x2={Math.max(width, 6000)} y1={by - m * scale} y2={by - m * scale} className={m === 0 ? "metric-line baseline" : "metric-line"} />
+                {showMetrics && metrics && ([[t("Ascender"), metrics.ascender], [t("x-height"), metrics.xHeight], [t("Baseline"), 0], [t("Descender"), metrics.descender]] as const).map(([label, m]) => (
+                  <g key={label}>
+                    <line x1={0} x2={Math.max(width, 6000)} y1={by - m * scale} y2={by - m * scale} className={m === 0 ? "metric-line baseline" : "metric-line"} />
+                    <text x={xs[xs.length - 1] + 24} y={by - m * scale - 4} className="metric-label">{label}</text>
+                  </g>
                 ))}
                 {ln.map((it, i) => it.type === "glyph" ? (
                   <g key={i}>
@@ -391,8 +426,15 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
                     <line x1={xs[cursor.pos]} x2={xs[cursor.pos]} y1={by - (metrics?.ascender ?? 800) * 1.05 * scale} y2={by - (metrics?.descender ?? -200) * 1.05 * scale} className="text-cursor" />
                     {pairKern && ln[cursor.pos]?.type === "glyph" && (
                       <g transform={`translate(${xs[cursor.pos]} ${by - (metrics?.descender ?? -200) * scale + 22})`}>
-                        <rect x={-46} y={-14} width={92} height={22} rx={6} className={`kern-badge${pairKern.kernKind === "exception" ? " is-exception" : ""}`} />
-                        <text x={0} y={2} className="kern-badge-text">{pairKern.kern === 0 ? "0" : pairKern.kern > 0 ? `+${pairKern.kern}` : pairKern.kern}</text>
+                        {(() => {
+                          const value = pairKern.kern === 0 ? "0" : pairKern.kern > 0 ? `+${pairKern.kern}` : String(pairKern.kern);
+                          const label = pairKern.kernLeft ? `${value}  ${pairKern.kernLeft} | ${pairKern.kernRight}` : value;
+                          const w = Math.max(40, label.length * 7.4 + 16);
+                          return <>
+                            <rect x={-w / 2} y={-14} width={w} height={22} rx={6} className={`kern-badge${pairKern.kernKind === "exception" ? " is-exception" : ""}`} />
+                            <text x={0} y={2} className="kern-badge-text" xmlSpace="preserve">{label}</text>
+                          </>;
+                        })()}
                       </g>
                     )}
                   </>
@@ -441,7 +483,56 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
           <GroupField label={t("Right group")} value={current.rightGroup} disabled={previewing} onCommit={(v) => setGroups(current.name, current.leftGroup, v)} />
         </div>
       )}
-      <div className="text-hint k-caption muted">{shapeOn ? t("Feature preview · spacing edits are paused: turn off Shape preview to edit") : previewing ? t("Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit") : t("Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it")}</div>
+      </div>
+      <section className={`text-preview-panel${panelOpen ? "" : " is-closed"}`} aria-label={t("Preview")}>
+        <div className="row text-preview-head">
+          <button type="button" className="transform-head" aria-expanded={panelOpen} onClick={() => setPanelOpen((o) => !o)}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+            {t("Preview")}
+          </button>
+          <span className="spacer" />
+          {panelOpen && (
+            <label className="k-caption text-preview-size">
+              {t("Size")}
+              <select className="select" value={panelSize} onChange={(e) => setPanelSize(Number(e.target.value))} aria-label={t("Preview size")}>
+                {[24, 36, 48, 64].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+        {panelOpen && (
+          <div className="text-preview-rows">
+            {panelLayouts.map((row) => {
+              const sc = panelSize / 1000;
+              const asc = row.layout.metrics.ascender;
+              let x = 0;
+              const items = row.layout.lines.flatMap((ln, li) => {
+                const out = ln.map((it, i) => {
+                  const at = x;
+                  x += (it.type === "glyph" ? it.width + it.kern : MISSING_WIDTH) * sc;
+                  return it.type === "glyph" && it.svg ? <path key={`${li}:${i}`} d={it.svg} transform={`translate(${at} ${asc * sc}) scale(${sc} ${-sc})`} /> : null;
+                });
+                x += 300 * sc;
+                return out;
+              });
+              return (
+                <div key={row.id} className={`text-preview-row${row.id === masterId ? " is-current" : ""}`}>
+                  <span className="k-caption text-preview-name">{row.name}</span>
+                  <svg width={Math.max(1, x)} height={(asc - row.layout.metrics.descender) * sc} aria-label={row.name}>{items}</svg>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+      <footer className="statusbar k-caption text-status" title={t("Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it")}>
+        <span>{shapeOn ? t("Feature preview · spacing edits are paused: turn off Shape preview to edit") : previewing ? t("Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit")
+          : before?.type === "glyph" && after?.type === "glyph" ? t("Text mode · cursor between {left} | {right}", { left: before.name, right: after.name }) : t("Text mode")}</span>
+        <span className="spacer" />
+        {!shapeOn && !previewing && before?.type === "glyph" && after?.type === "glyph" && (
+          <span>{before.kernLeft ? t("Kerning {value} ({pair}) · Alt+←/→", { value: before.kern, pair: `${before.kernLeft} | ${before.kernRight}` }) : t("No kerning · Alt+←/→ to kern")}</span>
+        )}
+      </footer>
     </div>
   );
 }

@@ -105,7 +105,7 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen, drag, dragging, dr
 }
 
 /** S03 · Font View — grid of glyphs with category sidebar and glyph info. */
-export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetUnicodes, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetUnicodes?: (glyph: string, text: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void> }) {
+export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetUnicodes, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing, onAddNamed }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetUnicodes?: (glyph: string, text: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void>; onAddNamed?: (name: string) => void }) {
   const [category, setCategory] = useState<string>("All");
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -181,6 +181,11 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
   }, [font.glyphs, category, query, filterMatch]);
 
   const drawn = font.glyphs.filter((g) => g.svg).length;
+  // "144 glyphs · Latin" when everything shown is in one script.
+  const shownScript = useMemo(() => {
+    const scripts = new Set(shown.map((g) => g.script).filter((s) => s && s !== "Common"));
+    return scripts.size === 1 ? [...scripts][0] : null;
+  }, [shown]);
   const selectedGlyphs = font.glyphs.filter((g) => selection.has(g.name));
   // Edit › Select All, Deselect All, Invert Selection and Find… from the menu bar.
   const searchRef = useRef<HTMLInputElement>(null);
@@ -323,8 +328,113 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
     setActiveFilter(saved.name);
   }
 
+  const glyphInfo = (
+    <section className="glyph-info" aria-label={t("Glyph info")}>
+      {one ? (
+        <>
+          <div className="row">
+            <span className="k-body-strong">{one.name}</span>
+            <span className="spacer" />
+            <span className="k-code muted">{one.unicode ? `U+${one.unicode}` : t("unencoded")}</span>
+          </div>
+          <div className="metric-row">
+            {([["lsb", "LSB", one.lsb], ["width", "Width", one.width], ["rsb", "RSB", one.rsb]] as const).map(([key, label, value]) => (
+              <label key={key}>
+                <span className="k-caption muted">{t(label)}</span>
+                {onSetMetric && value !== null ? (
+                  <input key={`${one.name}:${value}`} className="metric-input" type="number" defaultValue={Math.round(value)} aria-label={t(label)}
+                    onBlur={(e) => { const v = Number(e.currentTarget.value); if (e.currentTarget.value !== "" && Number.isFinite(v) && v !== Math.round(value)) onSetMetric(one.name, key, v).catch(() => {}); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { e.currentTarget.value = String(Math.round(value)); e.currentTarget.blur(); } }} />
+                ) : <output className="metric">{fmt(value)}</output>}
+              </label>
+            ))}
+          </div>
+          <p className="k-caption muted">{t(one.category)}{one.subcategory ? ` · ${t(one.subcategory)}` : ""} · {t(one.script)}{one.export ? "" : ` · ${t("not exported")}`}</p>
+          {onSetUnicodes && (
+            <label className="field info-field">
+              <span className="k-caption muted">{t("Unicode")}</span>
+              <input
+                className="text-input k-code"
+                value={uniDraft}
+                placeholder={t("unencoded")}
+                title={t("Type values like 0041 or U+0041, or the character itself; separate several with commas")}
+                onChange={(e) => setUniDraft(e.target.value)}
+                onBlur={commitUnicodes}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setUniDraft(oneUni); e.currentTarget.blur(); } }}
+              />
+            </label>
+          )}
+          {onSetTags && (
+            <label className="field info-field">
+              <span className="k-caption muted">{t("Tags")}</span>
+              <input
+                className="text-input"
+                value={tagsDraft}
+                placeholder={t("tag, tag")}
+                onChange={(e) => setTagsDraft(e.target.value)}
+                onBlur={commitTags}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              />
+            </label>
+          )}
+          {onSetGroups && (
+            <div className="row info-groups">
+              <label className="field">
+                <span className="k-caption muted">{t("Left group")}</span>
+                <input
+                  className="text-input"
+                  value={leftDraft}
+                  onChange={(e) => setLeftDraft(e.target.value)}
+                  onBlur={commitGroups}
+                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                />
+              </label>
+              <label className="field">
+                <span className="k-caption muted">{t("Right group")}</span>
+                <input
+                  className="text-input"
+                  value={rightDraft}
+                  onChange={(e) => setRightDraft(e.target.value)}
+                  onBlur={commitGroups}
+                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                />
+              </label>
+            </div>
+          )}
+          {onSetProductionName && (
+            <label className="field info-field">
+              <span className="k-caption muted">{t("Production name")}</span>
+              <input
+                className="text-input"
+                value={prodDraft}
+                placeholder={one.name}
+                onChange={(e) => setProdDraft(e.target.value)}
+                onBlur={commitProd}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              />
+            </label>
+          )}
+        </>
+      ) : (
+        <p className="k-caption muted">{selectedGlyphs.length > 1 ? tn(selectedGlyphs.length, "{n} glyph selected", "{n} glyphs selected") : t("Select a glyph to see its metrics.")}</p>
+      )}
+      {selectedGlyphs.length > 0 && onSetExport && (
+        <label className="check-row" title={t("Glyphs that aren't exported (such as parts used only as components) are left out of fonts")}>
+          <input
+            type="checkbox"
+            checked={selectedGlyphs.every((g) => g.export)}
+            ref={(el) => { if (el) el.indeterminate = selectedGlyphs.some((g) => g.export) && !selectedGlyphs.every((g) => g.export); }}
+            onChange={(e) => onSetExport(selectedGlyphs.map((g) => g.name), e.target.checked)}
+            aria-label={t("Export the selected glyphs")}
+          />
+          <span className="k-caption">{selectedGlyphs.length > 1 ? t("Export these glyphs") : t("Export this glyph")}</span>
+        </label>
+      )}
+    </section>
+  );
+
   return (
-    <div className="fontview">
+    <div className={`fontview${mode === "list" ? " is-list" : ""}`}>
       <aside className="sidebar">
         <label className="search">
           <SearchIcon />
@@ -400,124 +510,31 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
           </>
         )}
         <span className="spacer" />
-        <section className="glyph-info" aria-label={t("Glyph info")}>
-          {one ? (
-            <>
-              <div className="row">
-                <span className="k-body-strong">{one.name}</span>
-                <span className="spacer" />
-                <span className="k-code muted">{one.unicode ? `U+${one.unicode}` : t("unencoded")}</span>
-              </div>
-              <div className="metric-row">
-                <label><span className="k-caption muted">{t("LSB")}</span><output className="metric">{fmt(one.lsb)}</output></label>
-                <label><span className="k-caption muted">{t("Width")}</span><output className="metric">{fmt(one.width)}</output></label>
-                <label><span className="k-caption muted">{t("RSB")}</span><output className="metric">{fmt(one.rsb)}</output></label>
-              </div>
-              <p className="k-caption muted">{t(one.category)}{one.subcategory ? ` · ${t(one.subcategory)}` : ""} · {t(one.script)}{one.export ? "" : ` · ${t("not exported")}`}</p>
-              {onSetUnicodes && (
-                <label className="field info-field">
-                  <span className="k-caption muted">{t("Unicode")}</span>
-                  <input
-                    className="text-input k-code"
-                    value={uniDraft}
-                    placeholder={t("unencoded")}
-                    title={t("Type values like 0041 or U+0041, or the character itself; separate several with commas")}
-                    onChange={(e) => setUniDraft(e.target.value)}
-                    onBlur={commitUnicodes}
-                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setUniDraft(oneUni); e.currentTarget.blur(); } }}
-                  />
-                </label>
-              )}
-              {onSetTags && (
-                <label className="field info-field">
-                  <span className="k-caption muted">{t("Tags")}</span>
-                  <input
-                    className="text-input"
-                    value={tagsDraft}
-                    placeholder={t("tag, tag")}
-                    onChange={(e) => setTagsDraft(e.target.value)}
-                    onBlur={commitTags}
-                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                  />
-                </label>
-              )}
-              {onSetGroups && (
-                <div className="row info-groups">
-                  <label className="field">
-                    <span className="k-caption muted">{t("Left group")}</span>
-                    <input
-                      className="text-input"
-                      value={leftDraft}
-                      onChange={(e) => setLeftDraft(e.target.value)}
-                      onBlur={commitGroups}
-                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                    />
-                  </label>
-                  <label className="field">
-                    <span className="k-caption muted">{t("Right group")}</span>
-                    <input
-                      className="text-input"
-                      value={rightDraft}
-                      onChange={(e) => setRightDraft(e.target.value)}
-                      onBlur={commitGroups}
-                      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                    />
-                  </label>
-                </div>
-              )}
-              {onSetProductionName && (
-                <label className="field info-field">
-                  <span className="k-caption muted">{t("Production name")}</span>
-                  <input
-                    className="text-input"
-                    value={prodDraft}
-                    placeholder={one.name}
-                    onChange={(e) => setProdDraft(e.target.value)}
-                    onBlur={commitProd}
-                    onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                  />
-                </label>
-              )}
-            </>
-          ) : (
-            <p className="k-caption muted">{selectedGlyphs.length > 1 ? tn(selectedGlyphs.length, "{n} glyph selected", "{n} glyphs selected") : t("Select a glyph to see its metrics.")}</p>
-          )}
-          {selectedGlyphs.length > 0 && onSetExport && (
-            <label className="check-row" title={t("Glyphs that aren't exported (such as parts used only as components) are left out of fonts")}>
-              <input
-                type="checkbox"
-                checked={selectedGlyphs.every((g) => g.export)}
-                ref={(el) => { if (el) el.indeterminate = selectedGlyphs.some((g) => g.export) && !selectedGlyphs.every((g) => g.export); }}
-                onChange={(e) => onSetExport(selectedGlyphs.map((g) => g.name), e.target.checked)}
-                aria-label={t("Export the selected glyphs")}
-              />
-              <span className="k-caption">{selectedGlyphs.length > 1 ? t("Export these glyphs") : t("Export this glyph")}</span>
-            </label>
-          )}
-        </section>
+        {mode === "grid" && glyphInfo}
       </aside>
       <main className="grid-area">
         <div className="grid-header">
-          <h2 className="k-subtitle">{activeFilter ?? (category === "All" ? t("All glyphs") : t(category))}</h2>
-          <span className="k-caption muted">{tn(shown.length, "{n} glyph", "{n} glyphs")}</span>
-          <span className="spacer" />
           <div className="segmented" role="group" aria-label={t("Font view layout")}>
             <button type="button" className={`segment${mode === "grid" ? " is-selected" : ""}`} aria-pressed={mode === "grid"} onClick={() => switchMode("grid")}>{t("Grid")}</button>
             <button type="button" className={`segment${mode === "list" ? " is-selected" : ""}`} aria-pressed={mode === "list"} onClick={() => switchMode("list")}>{t("List")}</button>
           </div>
+          <div className="grid-title">
+            <h2 className="k-subtitle">{activeFilter ?? (category === "All" ? t("All glyphs") : t(category))}</h2>
+            <span className="k-caption muted">{tn(shown.length, "{n} glyph", "{n} glyphs")}{shownScript ? ` · ${t(shownScript)}` : ""}</span>
+          </div>
+          <span className="spacer" />
           {mode === "grid" && (
             <label className="cell-size">
               <span className="k-caption muted">{t("Cell size")}</span>
               <input type="range" min={64} max={160} step={8} value={cellSize} onChange={(e) => resizeCells(Number(e.target.value))} aria-label={t("Cell size")} />
             </label>
           )}
-          {onAddGlyphs && <button type="button" className="btn btn-secondary btn-sm" onClick={onAddGlyphs}>{t("Add Glyphs…")}</button>}
-          {onRenameGlyphs && <button type="button" className="btn btn-secondary btn-sm" onClick={onRenameGlyphs}>{t("Rename Glyphs…")}</button>}
-          {onBatch && <BatchMenu count={selection.size} onRun={onBatch} />}
+          {(onBatch || onRenameGlyphs) && <BatchMenu count={selection.size} onRun={onBatch} onRename={onRenameGlyphs} />}
+          {onAddGlyphs && <button type="button" className="btn btn-primary btn-sm" onClick={onAddGlyphs}>{t("Add Glyphs…")}</button>}
         </div>
         {shown.length ? (
           mode === "list" ? (
-            <GlyphListView glyphs={shown} selection={selection} onSelect={select} onOpen={onOpenGlyph} onEdit={listEdit} onSetExport={(names, on) => onSetExport?.(names, on)} dragProps={dragProps} dragName={dragName} dropName={dropName} />
+            <GlyphListView glyphs={shown} metrics={font.metrics} selection={selection} onSelect={select} onOpen={onOpenGlyph} onEdit={listEdit} onSetExport={(names, on) => onSetExport?.(names, on)} dragProps={dragProps} dragName={dragName} dropName={dropName} />
           ) : (
           <VirtualGrid glyphs={shown} cellSize={cellSize} onKeyDown={(e) => {
             // Enter opens the selected glyphs in Edit View tabs.
@@ -530,14 +547,53 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
           )} />
           )
         ) : (
-          <div className="empty">
-            <p className="k-subtitle">{t("No glyphs match “{query}”", { query })}</p>
-            <button className="btn btn-secondary" onClick={() => { setQuery(""); setCategory("All"); }}>{t("Clear search & filters")}</button>
-          </div>
+          font.glyphs.length === 0 ? (
+            <div className="empty">
+              <div className="empty-art">Aa</div>
+              <p className="k-subtitle">{t("This font has no glyphs yet")}</p>
+              <p className="k-body muted">{t("Add glyphs by name or character, or start from glyph sets.")}</p>
+              {onAddGlyphs && <button className="btn btn-primary" onClick={onAddGlyphs}>{t("Add Glyphs…")}</button>}
+            </div>
+          ) : (
+            <div className="empty">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="empty-icon" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2" /></svg>
+              <p className="k-subtitle">{query.trim() ? t("No glyphs match “{query}”", { query }) : t("No glyphs here")}</p>
+              {(category !== "All" || activeFilter) && (
+                <p className="k-caption muted">{t("Showing: {what}", { what: activeFilter ?? t(category) })}</p>
+              )}
+              <div className="row">
+                <button className="btn btn-primary" onClick={() => { setQuery(""); setCategory("All"); setActiveFilter(null); }}>{t("Clear search & filters")}</button>
+                {onAddNamed && /^[A-Za-z_.][A-Za-z0-9_.\-]*$/.test(query.trim()) && (
+                  <button className="btn btn-secondary" onClick={() => { const name = query.trim(); setQuery(""); setCategory("All"); setActiveFilter(null); onAddNamed(name); }}>
+                    {t("Add “{name}” as a new glyph", { name: query.trim() })}
+                  </button>
+                )}
+              </div>
+            </div>
+          )
         )}
       </main>
+      {mode === "list" && (
+        <aside className="glyph-props" aria-label={t("Glyph Properties")}>
+          <div className="row">
+            <h2 className="k-subtitle">{t("Glyph Properties")}</h2>
+            <span className="spacer" />
+            {one && <span className="k-caption muted">{one.name}</span>}
+          </div>
+          {one && (
+            <div className="glyph-props-preview" aria-hidden="true">
+              {one.svg ? (
+                <svg viewBox={`${one.width / 2 - (font.metrics.ascender - font.metrics.descender) / 2} ${-font.metrics.ascender} ${font.metrics.ascender - font.metrics.descender} ${font.metrics.ascender - font.metrics.descender}`}>
+                  <path d={one.svg} transform="scale(1,-1)" />
+                </svg>
+              ) : <span className="glyph-placeholder">{one.character?.trim() ?? ""}</span>}
+            </div>
+          )}
+          {glyphInfo}
+        </aside>
+      )}
       <footer className="statusbar k-caption">
-        <span>{t("Selected: {selected} · Shown: {shown} · Total: {total} · Drawn: {drawn}", { selected: selection.size, shown: shown.length, total: font.glyphs.length, drawn })}</span>
+        <span>{t("{selected} selected · {shown} shown · {total} total · {drawn} drawn", { selected: selection.size, shown: shown.length, total: font.glyphs.length, drawn })}</span>
         <span className="spacer" />
         <span>{t("Master: {master}", { master: font.masters.find((m) => m.id === font.masterId)?.name ?? "" })} · {font.path ?? t("Not saved yet")}</span>
       </footer>

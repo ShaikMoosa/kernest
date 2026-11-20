@@ -127,6 +127,8 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
   const wantVariable = variable && canVariable;
   const noFormat = !formats.ttf && !formats.otf && !formats.woff2;
   const nothing = (!wantVariable && !statics) || noFormat || (statics && !allInstances && selectedInstances.length === 0);
+  // Every style in every chosen format, for the button ("Export 4 fonts").
+  const fileCount = ((statics ? staticStyles.length : 0) + (wantVariable ? 1 : 0)) * (["ttf", "otf", "woff2"] as const).filter((f) => formats[f]).length;
 
   async function browse() {
     const picked = await open({ directory: true, multiple: false, title: t("Export fonts to"), defaultPath: dir || undefined });
@@ -300,7 +302,7 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
           <button type="button" className="btn btn-secondary" disabled={busy || !info || !isTauri} title={t("Opens the fonts as web fonts in your browser")} onClick={() => trial("web")}>{t("Web Preview")}</button>
           <button type="button" className="btn btn-secondary" disabled={busy || !report?.files.length} onClick={() => setChecking(true)}>{t("Check font")}</button>
           <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>{report ? t("Done") : t("Cancel")}</button>
-          <button type="button" className="btn btn-primary" onClick={run} disabled={busy || nothing || !info}>{busy ? t("Exporting…") : t("Export")}</button>
+          <button type="button" className="btn btn-primary" onClick={run} disabled={busy || nothing || !info}>{busy ? t("Exporting…") : nothing ? t("Export") : tn(fileCount, "Export {n} font", "Export {n} fonts")}</button>
         </footer>
       </div>
     </div>

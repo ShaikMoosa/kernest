@@ -4,8 +4,9 @@ import { AppearanceSettings } from "./AppearanceSettings";
 import { UpdateSettings } from "./UpdateSettings";
 import type { ThemePref } from "../lib/theme";
 import { SHORTCUT_ACTIONS, effectiveShortcut, shortcutFromEvent } from "../lib/shortcuts";
-import { CloseIcon } from "./Icons";
+import { CloseIcon, SearchIcon } from "./Icons";
 import { t, type Lang } from "../lib/i18n";
+import { SampleStringsSettings } from "./SampleStringsSettings";
 
 interface Props {
   /** The tab to open on (Help › Keyboard Shortcuts, Window › Plugin Manager). */
@@ -27,13 +28,15 @@ interface Props {
   onReloadPlugins: () => void;
 }
 
-export type Tab = "appearance" | "updates" | "plugins" | "shortcuts" | "python";
+export type Tab = "appearance" | "updates" | "samples" | "plugins" | "shortcuts" | "python";
 
 const TYPE_LABEL: Record<string, string> = { filter: "Filter", reporter: "Reporter", general: "General" };
 
 /** S44 · Settings: plug-ins, keyboard shortcuts and the Python runtime. */
 export function SettingsDialog({ settings, theme, language, updateInfo, onAppearance, onToggleUpdates, onCheckUpdates, plugins, onClose, onSetPluginEnabled, onSetShortcut, onResetShortcuts, onSetPythonPath, onOpenPluginsFolder, onReloadPlugins, initialTab }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab ?? "appearance");
+  const [shortcutQuery, setShortcutQuery] = useState("");
+  const [onlyCustom, setOnlyCustom] = useState(false);
   const [recording, setRecording] = useState<string | null>(null);
   const [python, setPython] = useState<PythonInfo | null>(null);
   const [pythonPath, setPythonPath] = useState(settings.pythonPath ?? "");
@@ -68,6 +71,7 @@ export function SettingsDialog({ settings, theme, language, updateInfo, onAppear
   const tabs: { id: Tab; label: string }[] = [
     { id: "appearance", label: t("Appearance") },
     { id: "updates", label: t("Updates") },
+    { id: "samples", label: t("Sample strings") },
     { id: "plugins", label: t("Plugins") },
     { id: "shortcuts", label: t("Shortcuts") },
     { id: "python", label: t("Python") },
@@ -93,6 +97,7 @@ export function SettingsDialog({ settings, theme, language, updateInfo, onAppear
         <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="dialog-body settings-body">
           {tab === "appearance" && <AppearanceSettings appearance={settings.appearance} theme={theme} language={language} onChange={onAppearance} />}
           {tab === "updates" && <UpdateSettings enabled={settings.updates.enabled} info={updateInfo} onToggle={onToggleUpdates} onCheck={onCheckUpdates} />}
+          {tab === "samples" && <SampleStringsSettings />}
           {tab === "plugins" && (
             <>
               <div className="settings-row">
@@ -121,12 +126,24 @@ export function SettingsDialog({ settings, theme, language, updateInfo, onAppear
           {tab === "shortcuts" && (
             <>
               <div className="settings-row">
-                <span className="k-caption muted">{t("Click Change, then press the keys. Escape cancels.")}</span>
+                <div className="segmented" role="group" aria-label={t("Show")}>
+                  <button type="button" className={`segment${!onlyCustom ? " is-selected" : ""}`} aria-pressed={!onlyCustom} onClick={() => setOnlyCustom(false)}>{t("All")}</button>
+                  <button type="button" className={`segment${onlyCustom ? " is-selected" : ""}`} aria-pressed={onlyCustom} onClick={() => setOnlyCustom(true)}>{t("Customized")}</button>
+                </div>
+                <label className="search shortcut-search">
+                  <SearchIcon size={14} />
+                  <input placeholder={t("Search actions")} value={shortcutQuery} onChange={(e) => setShortcutQuery(e.target.value)} aria-label={t("Search actions")} />
+                </label>
                 <span className="spacer" />
                 <button type="button" className="btn btn-secondary" onClick={onResetShortcuts}>{t("Reset All")}</button>
               </div>
-              <ul className="settings-list">
-                {SHORTCUT_ACTIONS.map((a) => {
+              <p className="k-caption muted">{t("Click Change, then press the keys. Escape cancels.")}</p>
+              <ul className="settings-list shortcut-list">
+                {SHORTCUT_ACTIONS.filter((a) => {
+                  if (onlyCustom && settings.shortcuts[a.id] === undefined) return false;
+                  const q = shortcutQuery.trim().toLowerCase();
+                  return !q || t(a.label).toLowerCase().includes(q) || effectiveShortcut(a, settings.shortcuts).toLowerCase().includes(q);
+                }).map((a) => {
                   const current = effectiveShortcut(a, settings.shortcuts);
                   const overridden = settings.shortcuts[a.id] !== undefined;
                   return (
@@ -138,10 +155,10 @@ export function SettingsDialog({ settings, theme, language, updateInfo, onAppear
                       ) : (
                         <kbd className="shortcut-keys">{current}</kbd>
                       )}
-                      <button type="button" className="btn btn-secondary" onClick={() => setRecording(recording === a.id ? null : a.id)}>
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRecording(recording === a.id ? null : a.id)}>
                         {recording === a.id ? t("Cancel") : t("Change")}
                       </button>
-                      {overridden && <button type="button" className="btn btn-secondary" onClick={() => onSetShortcut(a.id, "")}>{t("Reset")}</button>}
+                      {overridden && <button type="button" className="btn btn-secondary btn-sm" onClick={() => onSetShortcut(a.id, "")}>{t("Reset")}</button>}
                     </li>
                   );
                 })}

@@ -14,14 +14,16 @@ export type ListEdit =
 export type DragHandlers = React.HTMLAttributes<HTMLElement>;
 
 type ColumnKey =
-  | "name" | "unicode" | "category" | "subcategory" | "lsb" | "rsb" | "width"
+  | "glyph" | "name" | "script" | "unicode" | "category" | "subcategory" | "lsb" | "rsb" | "width"
   | "leftGroup" | "rightGroup" | "export" | "tags";
 
 const COLUMNS: { key: ColumnKey; label: string; w: string; edit?: "number" | "text" | "tags" | "name" | "unicodes" }[] = [
+  { key: "glyph", label: "Glyph", w: "52px" },
   { key: "name", label: "Name", w: "150px", edit: "name" },
   { key: "unicode", label: "Unicode", w: "90px", edit: "unicodes" },
   { key: "category", label: "Category", w: "96px" },
   { key: "subcategory", label: "Subcategory", w: "96px" },
+  { key: "script", label: "Script", w: "80px" },
   { key: "lsb", label: "LSB", w: "60px", edit: "number" },
   { key: "rsb", label: "RSB", w: "60px", edit: "number" },
   { key: "width", label: "Width", w: "60px", edit: "number" },
@@ -46,15 +48,29 @@ function sortValue(g: GlyphSummary, key: ColumnKey): string | number {
     case "unicode": return g.unicode ?? "";
     case "leftGroup": return g.leftGroup ?? "";
     case "rightGroup": return g.rightGroup ?? "";
+    case "glyph": return g.name;
     default: return g[key];
   }
+}
+
+/** The glyph drawn small for the Glyph column (its character when it has no outlines yet). */
+function ListGlyph({ glyph, metrics }: { glyph: GlyphSummary; metrics: { ascender: number; descender: number } }) {
+  const h = metrics.ascender - metrics.descender;
+  if (!glyph.svg) return <span className="list-glyph is-empty" aria-hidden="true">{glyph.character?.trim() ?? ""}</span>;
+  return (
+    <svg className="list-glyph" viewBox={`${glyph.width / 2 - h / 2} ${-metrics.ascender} ${h} ${h}`} aria-hidden="true">
+      <path d={glyph.svg} transform="scale(1,-1)" />
+    </svg>
+  );
 }
 
 const fmt = (v: number | null) => (v === null ? "—" : String(Math.round(v)));
 
 /** S04 · Virtualised, sortable glyph table; only the visible rows are rendered. */
-export function GlyphListView({ glyphs, selection, onSelect, onOpen, onEdit, onSetExport, dragProps, dragName, dropName }: {
+export function GlyphListView({ glyphs, metrics, selection, onSelect, onOpen, onEdit, onSetExport, dragProps, dragName, dropName }: {
   glyphs: GlyphSummary[];
+  /** Vertical metrics, to draw every glyph at the same scale in the Glyph column. */
+  metrics: { ascender: number; descender: number };
   selection: Set<string>;
   onSelect: (g: GlyphSummary, e: React.MouseEvent) => void;
   onOpen: (name: string) => void;
@@ -100,7 +116,7 @@ export function GlyphListView({ glyphs, selection, onSelect, onOpen, onEdit, onS
 
   function startEdit(g: GlyphSummary, key: ColumnKey) {
     const col = COLUMNS.find((c) => c.key === key)!;
-    if (!col.edit) return;
+    if (!col.edit || key === "glyph") return;
     setEditing({ name: g.name, key });
     setDraft(
       col.edit === "number" ? String(g[key] ?? "")
@@ -151,6 +167,7 @@ export function GlyphListView({ glyphs, selection, onSelect, onOpen, onEdit, onS
       case "leftGroup": return g.leftGroup ?? "—";
       case "rightGroup": return g.rightGroup ?? "—";
       case "tags": return g.tags.join(", ");
+      case "script": return g.script && g.script !== "Common" ? t(g.script) : "—";
       default: return g.name;
     }
   }
@@ -169,7 +186,7 @@ export function GlyphListView({ glyphs, selection, onSelect, onOpen, onEdit, onS
     >
       <div className="glyph-list-body" ref={boxRef} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
         <div className="glyph-list-head" role="row" style={{ gridTemplateColumns: TEMPLATE }}>
-          {COLUMNS.map((c) => (
+          {COLUMNS.map((c) => c.key === "glyph" ? <span key={c.key} role="columnheader" className="list-th">{t(c.label)}</span> : (
             <button
               key={c.key}
               type="button"
@@ -219,6 +236,8 @@ export function GlyphListView({ glyphs, selection, onSelect, onOpen, onEdit, onS
                           if (e.key === "Escape") { cancelled.current = true; e.currentTarget.blur(); }
                         }}
                       />
+                    ) : c.key === "glyph" ? (
+                      <ListGlyph glyph={g} metrics={metrics} />
                     ) : c.key === "export" ? (
                       <input
                         type="checkbox"

@@ -21,6 +21,8 @@ Kernest is a font editor for Windows. It works offline, and your fonts are plain
 
 The first time you open Kernest it shows a **Welcome** window. Pick what describes you best — *New to type design* turns on the guided tour, *I've used other font editors* skips it — then choose how to start: a new font, an existing `.kernest` font, the sample font, or an import from another app. You can reopen the Welcome window later from **Help › Welcome to Kernest**.
 
+The **Start window** lists your recent fonts by file name and folder; type in the search box and use ↑/↓ and Enter to open one. Its side panel links to this Handbook, the keyboard shortcuts and what's new, and shows "Up to date" when update checks are on. Untick **Show at launch** (here or in the Welcome window) and Kernest reopens your most recent font when it starts instead.
+
 ### The New Font wizard
 
 **New Font** opens a four-step setup:
@@ -57,7 +59,7 @@ A Kernest font is a **`.kernest` folder**. Inside it, `font.json` holds the font
 
 ## Font View
 
-The **Font** tab shows every glyph as a cell. Switch between **Grid** and **List** at the top right; in Grid, the slider next to it sets the cell size. Both choices are remembered.
+The **Font** tab shows every glyph as a cell. Switch between **Grid** and **List** at the top left; in Grid, the slider on the right sets the cell size. Both choices are remembered. The **Actions** menu holds Rename Glyphs… and the batch commands (they run on the selected glyphs), and **Text Preview** in the command bar opens a text tab. The panel at the bottom of the sidebar edits the selected glyph's LSB, width and RSB directly.
 
 - **Find glyphs:** filter by category on the left, or search by name, Unicode value (`0041` or `U+0041`) or the character itself.
 - **Select:** click a glyph. Ctrl+click and Shift+click select more than one.
@@ -75,7 +77,7 @@ The **Font** tab shows every glyph as a cell. Switch between **Grid** and **List
 
 ### List view
 
-**List** shows the glyphs as a table: name, Unicode, category, subcategory, LSB, RSB, width, left and right group, export and tags. Click a column heading to sort by it (click again for descending, a third time to return to the font's own order). Double-click a cell to edit it in place — width and sidebearings, groups, tags, export, and the name (which renames the glyph everywhere, see below); Enter or clicking away keeps the change, Escape cancels. Each edit is one undo step. With one glyph selected, the box under the sidebar shows its category, subcategory and script, and lets you set its tags and kerning groups.
+**List** shows the glyphs as a table: the glyph itself, name, Unicode, category, subcategory, script, LSB, RSB, width, left and right group, export and tags. The selected glyph's properties move to a **Glyph Properties** panel on the right, with a large preview. Click a column heading to sort by it (click again for descending, a third time to return to the font's own order). Double-click a cell to edit it in place — width and sidebearings, groups, tags, export, and the name (which renames the glyph everywhere, see below); Enter or clicking away keeps the change, Escape cancels. Each edit is one undo step. With one glyph selected, the box under the sidebar shows its category, subcategory and script, and lets you set its tags and kerning groups.
 
 ### The sidebar: categories, languages, filters
 
@@ -145,7 +147,7 @@ Every edit can be undone with **Ctrl+Z** and redone with **Ctrl+Y**.
 
 ### Intermediate and alternate layers
 
-Use the **Layer** menu in the Edit View toolbar to switch between the master's own layer and the glyph's extra layers.
+Use the **Layers** panel at the top of the editor sidebar to switch between the master's own layer and the glyph's extra layers; the buttons under the list add new ones, and the selected layer's own actions (Move…, Ranges…, Paint…, Remove) appear below them.
 
 - **+ Intermediate** adds a brace layer: an extra drawing at its own location on the axes (for example `{wght 550}`), used when a glyph needs a correction between two masters.
   - It starts as the glyph interpolated there, so nothing changes until you edit it.
@@ -316,7 +318,7 @@ With the select arrow in the palette, click a mark to select it, drag to move it
 
 ### Editor sidebar
 
-The **Transform**, **Hints** and **Pixel preview** panels sit in a sidebar beside the canvas — on the right, or on the left in Arabic. Each panel keeps its own collapse arrow, and the sidebar scrolls when the open panels grow taller than the window. **View › Show Sidebar**, or the sidebar button at the end of the editor toolbar, shows or hides the whole sidebar; Kernest remembers the choice between sessions. With the sidebar hidden the canvas gets the full width.
+The **Variation preview**, **Layers**, **Transform**, **Hints** and **Pixel preview** panels sit in a sidebar beside the canvas. Variation preview (in fonts with axes and two or more masters) draws the glyph anywhere on the axes as you drag the sliders, and names the nearest instance. The status bar under the canvas shows the layer, how many nodes are selected, the pointer position and the zoom, with − and + buttons. The sidebar is on the right, or on the left in Arabic. Each panel keeps its own collapse arrow, and the sidebar scrolls when the open panels grow taller than the window. **View › Show Sidebar**, or the sidebar button at the end of the editor toolbar, shows or hides the whole sidebar; Kernest remembers the choice between sessions. With the sidebar hidden the canvas gets the full width.
 
 ### Transform panel
 
@@ -334,7 +336,7 @@ With the **Measure** tool (L), drag a line across the outline. Kernest marks whe
 ### Grid and view toggles
 
 - **Grid:** Font Info › General › Grid has **Spacing** and **Subdivision**. Points snap to a grid of Spacing ÷ Subdivision units while drawing and dragging. Spacing 0 turns the grid off.
-- **View menu:** Show Nodes, Show Anchors, Show Guides, Show Background and Show Bounding Box (the rectangle around the outline) each switch their drawing on or off. Kernest remembers these choices between sessions.
+- **View menu:** Show Nodes, Show Anchors, Show Guides, Show Background and Show Bounding Box (the rectangle around the outline) each switch their drawing on or off. **Nodes, Metrics, Anchors, Guides** and **Background** are also toggles at the right of the editor toolbar. Kernest remembers these choices between sessions.
 
 ## Anchors and composites
 
@@ -357,12 +359,14 @@ An anchor is a named point that tells other glyphs where to sit: a mark above a 
   - Click between two glyphs to place the cursor.
   - **Alt+Left** and **Alt+Right** change the kerning there by 10 units, or by 1 unit with Shift held too.
   - The **Features** button previews OpenType features on the sample text (see [Features](#features)).
-- **Kerning window** (Window › Kerning, Ctrl+Shift+K): every kerning pair for the current master, with a filter box and a row for adding pairs.
+  - The **Preview** strip at the bottom shows the text in every master at once; the status bar names the pair at the cursor and its kerning. The tab is named after its text.
+  - The **Samples** menu lists the strings from **Settings › Sample strings**, where you can add, edit and remove them.
+- **Kerning window** (Window › Kerning, Ctrl+Shift+K): every kerning pair for the current master (Left · Value · Right), with a filter box and a row for adding pairs. Click a pair to preview it on the right, where the group members are listed too. **Search options** narrow the filter: group pairs or exceptions, left or right side, or only pairs touching the glyphs selected in Font View. The **−** button deletes the selected pair.
 - **Kerning groups:** a glyph has a **left group** (used when it's on the right side of a pair) and a **right group** (used when it's on the left side). Group pairs are written as `@group`. A pair between two specific glyphs is an **exception**, and it overrides the group pair.
 
 ### Kerning tools
 
-The Kerning window's toolbar tidies the pairs of the current master, or of every master with **All masters** ticked. Each is one undo step.
+The Kerning window's **Actions** menu tidies the pairs of the current master, or of every master with **All masters** ticked. Each is one undo step.
 
 - **Compress** moves glyph pairs one step up to their groups, the left side first: `T–m` becomes `@T–m`, and the next Compress makes it `@T–@n`. A pair whose value the group kerning already gives is removed. One that differs from it, such as `T–ö` at −40 where `@T–@o` is −70, stays: it's a real exception.
 - **Clean Up** removes pairs that do nothing: zero values, pairs naming a glyph or group that doesn't exist, and exceptions equal to the group pair they fall under.
@@ -434,7 +438,9 @@ These glyphs get an amber dot and are listed in the **Interpolation warnings** c
 
 Font Info › **General** holds the names that go into the exported font's name table: designer and designer URL, manufacturer and manufacturer URL, copyright, vendor ID, license and license URL, trademark, description and sample text. Leave a field empty to leave it out of the export. The family name stays at the top of Font Info.
 
-Font Info › **Notes** is a free text box for remarks to yourself about the font. Notes are saved in the `.kernest` file and undo with Ctrl+Z, but they are never exported into the font.
+Font Info › **Notes** is a free text box for remarks to yourself about the font. Notes are saved in the `.kernest` file and undo with Ctrl+Z, but they are never exported into the font. Switch to **Preview** to read them as Markdown: `#` headings, `**bold**`, `_italic_`, `-` lists and `[links](https://…)`.
+
+Font Info lists its sections on the left (General, Axes, Masters, Exports, Features, Custom parameters, Other, Notes) and shows one at a time. **Filter settings** at the top searches every section at once.
 
 ## Features
 
@@ -617,12 +623,13 @@ folder. Kernest seeds two samples:
 
 ### Settings
 
-**Window › Settings…** (Ctrl+,) has three tabs:
+**Window › Settings…** (Ctrl+,) has these tabs, besides Appearance and Updates:
 
+- **Sample strings:** the texts in the Samples menu of text tabs.
 - **Plugins:** enable, disable and open plug-ins.
 - **Shortcuts:** every keyboard action, its current shortcut, **Change** to record a new
-  one and **Reset** to restore the defaults. Your choices are saved and used everywhere,
-  including the menus.
+  one and **Reset** to restore the defaults. Search by name or key, or show only the ones
+  you changed (**Customized**). Your choices are saved and used everywhere, including the menus.
 - **Python:** the interpreter Kernest runs, its version and path.
 
 The full scripting reference — every object and field, the plug-in format and the sample

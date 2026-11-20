@@ -3,8 +3,9 @@ import { backend, type Axis, type AxisValue, type DocStatus, type FontInfo, type
 import { designBounds, designToUser, hasMap, userToDesign } from "../lib/axisMap";
 import { hasLabels, statStyleName } from "../lib/statName";
 import { pickMasterSource } from "../lib/desktop";
-import { AddIcon, CloseIcon, FolderIcon } from "./Icons";
+import { AddIcon, CloseIcon, FolderIcon, SearchIcon } from "./Icons";
 import { FeaturesSection } from "./FeaturesSection";
+import { NotesPreview } from "./NotesPreview";
 import { ForeignMasterDialog } from "./ForeignMasterDialog";
 import { t, tn, translateMessage } from "../lib/i18n";
 
@@ -141,6 +142,22 @@ interface Props {
 /** S10/S11 · Font Info: general info, axes, masters and instances. */
 export function FontInfoView({ version, onChanged, onError, onGenerateInstances }: Props) {
   const [info, setInfo] = useState<FontInfo | null>(null);
+  const [group, setGroup] = useState<string>(() => { try { return localStorage.getItem("kernest.fontInfoGroup") ?? "general"; } catch { return "general"; } });
+  const [settingsFilter, setSettingsFilter] = useState("");
+  const [notesPreview, setNotesPreview] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { try { localStorage.setItem("kernest.fontInfoGroup", group); } catch { /* a convenience only */ } }, [group]);
+  // Filter settings: every section whose labels or values mention the text, across all groups.
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const q = settingsFilter.trim().toLowerCase();
+    for (const el of root.querySelectorAll<HTMLElement>("[data-group]")) {
+      if (!q) { el.hidden = false; continue; }
+      const values = [...el.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")].map((i) => i.value).join(" ");
+      el.hidden = !`${el.textContent ?? ""} ${values}`.toLowerCase().includes(q);
+    }
+  });
   // Drafts while editing axes or instances. A ref mirrors them so commits that land
   // in the same instant (blur, then click Apply) always build on the latest draft.
   const [axes, setAxesState] = useState<Axis[] | null>(null);
@@ -229,7 +246,30 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
   return (
     <FieldError.Provider value={onError}>
     <div className="fontinfo">
-      <div className="fontinfo-scroll">
+      <nav className="fi-nav" aria-label={t("Font Info sections")}>
+        <label className="search fi-filter">
+          <SearchIcon />
+          <input placeholder={t("Filter settings")} value={settingsFilter} onChange={(e) => setSettingsFilter(e.target.value)} aria-label={t("Filter settings")} />
+        </label>
+        <p className="k-overline muted">{t("Font Info")}</p>
+        {([
+          ["general", t("General"), null],
+          ["axes", t("Axes"), info.axes.length],
+          ["masters", t("Masters"), info.masters.length],
+          ["exports", t("Exports"), info.instances.length + info.variableFonts.length],
+          ["features", t("Features"), null],
+          ["params", t("Custom parameters"), info.customParameters.length],
+          ["other", t("Other"), null],
+          ["notes", t("Notes"), null],
+        ] as const).map(([id, label, count]) => (
+          <button key={id} type="button" className={`list-item${group === id && !settingsFilter.trim() ? " is-selected" : ""}`} aria-current={group === id ? "page" : undefined}
+            onClick={() => { setGroup(id); setSettingsFilter(""); scrollRef.current?.scrollTo({ top: 0 }); }}>
+            <span>{label}</span>
+            {count ? <span className="list-meta">{count}</span> : null}
+          </button>
+        ))}
+      </nav>
+      <div className="fontinfo-scroll" ref={scrollRef} data-show={settingsFilter.trim() ? "all" : group}>
         {(info.warnings.length > 0 || info.incompatible > 0) && (
           <div className="fi-warnings" role="status">
             {info.warnings.map((w) => <p key={w} className="notice notice-warning k-label">⚠ {translateMessage(w)}</p>)}
@@ -239,7 +279,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           </div>
         )}
 
-        <section className="fi-section" aria-labelledby="fi-general">
+        <section className="fi-section" data-group="general" aria-labelledby="fi-general">
           <h2 id="fi-general" className="k-subtitle">{t("General")}</h2>
           <div className="fi-row">
             <label className="info-field"><span className="k-caption muted">{t("Family name")}</span>
@@ -285,7 +325,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           <p className="k-caption muted">{t("These names go into the exported font's name table. Leave a field empty to leave it out.")}</p>
         </section>
 
-        <section className="fi-section" aria-labelledby="fi-axes">
+        <section className="fi-section" data-group="axes" aria-labelledby="fi-axes">
           <div className="fi-head">
             <h2 id="fi-axes" className="k-subtitle">{t("Axes")}</h2>
             <span className="spacer" />
@@ -450,7 +490,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           )}
         </section>
 
-        <section className="fi-section" aria-labelledby="fi-masters">
+        <section className="fi-section" data-group="masters" aria-labelledby="fi-masters">
           <div className="fi-head">
             <h2 id="fi-masters" className="k-subtitle">{t("Masters")}</h2>
             <span className="spacer" />
@@ -650,7 +690,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           )}
         </section>
 
-        <section className="fi-section" aria-labelledby="fi-instances">
+        <section className="fi-section" data-group="exports" aria-labelledby="fi-instances">
           <div className="fi-head">
             <h2 id="fi-instances" className="k-subtitle">{t("Instances")}</h2>
             <span className="spacer" />
@@ -736,7 +776,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           )}
         </section>
 
-        <section className="fi-section" aria-labelledby="fi-variable">
+        <section className="fi-section" data-group="exports" aria-labelledby="fi-variable">
           <div className="fi-head">
             <h2 id="fi-variable" className="k-subtitle">{t("Variable fonts")}</h2>
             <span className="spacer" />
@@ -804,9 +844,9 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           )}
         </section>
 
-        <FeaturesSection version={version} onChanged={onChanged} onError={onError} />
+        <div className="fi-group-wrap" data-group="features"><FeaturesSection version={version} onChanged={onChanged} onError={onError} /></div>
 
-        <section className="fi-section" aria-labelledby="fi-order">
+        <section className="fi-section" data-group="other" aria-labelledby="fi-order">
           <div className="fi-head">
             <h2 id="fi-order" className="k-subtitle">{t("Glyph order")}</h2>
             <span className="k-caption muted">{t("The order glyphs export in. One name per line; .notdef is always first.")}</span>
@@ -831,12 +871,17 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           )}
         </section>
 
-        <section className="fi-section" aria-labelledby="fi-notes">
+        <section className="fi-section" data-group="notes" aria-labelledby="fi-notes">
           <div className="fi-head">
             <h2 id="fi-notes" className="k-subtitle">{t("Notes")}</h2>
-            <span className="k-caption muted">{t("Saved with the font, never exported.")}</span>
+            <span className="k-caption muted">{t("Saved with the font, never exported. Markdown: # headings, **bold**, _italic_, - lists, [links](https://…).")}</span>
+            <span className="spacer" />
+            <div className="segmented" role="group" aria-label={t("Notes view")}>
+              <button type="button" className={`segment${!notesPreview ? " is-selected" : ""}`} aria-pressed={!notesPreview} onClick={() => setNotesPreview(false)}>{t("Edit")}</button>
+              <button type="button" className={`segment${notesPreview ? " is-selected" : ""}`} aria-pressed={notesPreview} onClick={() => setNotesPreview(true)}>{t("Preview")}</button>
+            </div>
           </div>
-          <textarea
+          {notesPreview ? (info.notes.trim() ? <NotesPreview text={info.notes} /> : <p className="k-caption muted">{t("No notes yet.")}</p>) : <textarea
             className="notes-area"
             aria-label={t("Notes")}
             defaultValue={info.notes}
@@ -844,10 +889,10 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
             placeholder={t("Notes to yourself about this font.")}
             onBlur={(e) => { const v = e.currentTarget.value; if (v !== info.notes) apply(() => backend.setNotes(v)); }}
             onKeyDown={(e) => { if (e.key === "Escape") { e.currentTarget.value = info.notes; e.currentTarget.blur(); } }}
-          />
+          />}
         </section>
 
-        <section className="fi-section" aria-labelledby="fi-params">
+        <section className="fi-section" data-group="params" aria-labelledby="fi-params">
           <div className="fi-head">
             <h2 id="fi-params" className="k-subtitle">{t("Custom parameters")}</h2>
             <span className="k-caption muted">{t("Settings from a Glyphs source. They're kept with the font and written back by Save As .glyphs. Kernest applies Export sbix Table, SBIX to SVG and Color Layers to SVG when it exports; it keeps the others without using them.")}</span>
@@ -893,7 +938,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           )}
         </section>
 
-        <section className="fi-section" aria-labelledby="fi-hinting">
+        <section className="fi-section" data-group="other" aria-labelledby="fi-hinting">
           <div className="fi-head">
             <h2 id="fi-hinting" className="k-subtitle">{t("Hinting")}</h2>
             <span className="k-caption muted">{t("TrueType autohinting on export (TTF and WOFF2). Turn it on in the Export dialog.")}</span>
@@ -945,7 +990,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           <p className="k-caption muted">{t("Zones and stems under Masters guide PostScript hinting. For TrueType, ttfautohint ignores manual zones it can't use.")}</p>
         </section>
 
-        <section className="fi-section" aria-labelledby="fi-grid">
+        <section className="fi-section" data-group="other" aria-labelledby="fi-grid">
           <div className="fi-head">
             <h2 id="fi-grid" className="k-subtitle">{t("Grid")}</h2>
             <span className="k-caption muted">{t("Snap points to a grid while drawing and dragging. Spacing 0 turns the grid off.")}</span>
@@ -970,7 +1015,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
           </div>
         </section>
 
-        <section className="fi-section" aria-labelledby="fi-palettes">
+        <section className="fi-section" data-group="other" aria-labelledby="fi-palettes">
           <div className="fi-head">
             <h2 id="fi-palettes" className="k-subtitle">{t("Colour palettes")}</h2>
             <span className="k-caption muted">{t("Colours for colour layers (COLR and CPAL). Palette 1 is the default; others, such as one for dark backgrounds, have the same number of colours.")}</span>

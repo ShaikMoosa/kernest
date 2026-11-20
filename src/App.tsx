@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import { backend, errorMessage, initialSettings, isTauri, type Appearance, type Milestone, type Onboarding, type UpdateInfo, type BatchOperation, type ClipGlyph, type CompareView, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PasteMode, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement } from "./lib/backend";
-import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, REPO_URL, loadRecents, openExternal, pickCompareSource, pickFeaFile, pickFontToOpen, pickGlyphsSavePath, pickMetricsSource, pickSavePath, pickScript, pickSourceToImport, pickSvgFiles, rememberRecent, type RecentFont } from "./lib/desktop";
+import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, REPO_URL, loadRecents, openExternal, pickCompareSource, pickFeaFile, pickFontToOpen, pickGlyphsSavePath, pickMetricsSource, pickSavePath, pickScript, pickSourceToImport, pickSvgFiles, rememberRecent, showStartAtLaunch, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu, type MenuItem } from "./components/TitleBar";
 import { SHORTCUT_ACTIONS, effectiveShortcut, matchShortcut, parseShortcut } from "./lib/shortcuts";
 import { loadTheme, saveTheme, type ThemePref } from "./lib/theme";
@@ -211,10 +211,16 @@ export default function App() {
   }, [show, recordMilestone]);
 
   /** Asks before throwing away unsaved changes. Resolves true when it is OK to continue. */
+  // S50 · "Save changes to …?" before closing, opening or replacing an edited font.
+  const [savePrompt, setSavePrompt] = useState<{ name: string; resolve: (choice: "save" | "discard" | "cancel") => void } | null>(null);
+  const saveRef = useRef<() => Promise<boolean>>(async () => false);
+  const fontNameRef = useRef("");
   const confirmDiscard = useCallback(async () => {
     if (!dirtyRef.current) return true;
-    const msg = t("You have unsaved changes. Discard them?");
-    return isTauri ? ask(msg, { title: "Kernest", kind: "warning", okLabel: t("Discard"), cancelLabel: t("Cancel") }) : window.confirm(msg);
+    const choice = await new Promise<"save" | "discard" | "cancel">((resolve) => setSavePrompt({ name: fontNameRef.current, resolve }));
+    setSavePrompt(null);
+    if (choice === "save") return saveRef.current();
+    return choice === "discard";
   }, []);
 
   // Closing the window (caption button, Alt+F4) also asks first.
@@ -288,7 +294,11 @@ export default function App() {
   openAnyRef.current = openAny;
   useEffect(() => {
     if (!isTauri) return;
-    backend.takeLaunchPaths().then((p) => { if (p[0]) openAnyRef.current(p[0]); }, () => {});
+    backend.takeLaunchPaths().then((p) => {
+      if (p[0]) openAnyRef.current(p[0]);
+      // Start window › Show at launch turned off: reopen the most recent font instead.
+      else if (!showStartAtLaunch()) { const last = loadRecents()[0]; if (last) openAnyRef.current(last.path); }
+    }, () => {});
     const offOpen = listen<string[]>("open-paths", (e) => { if (e.payload[0]) openAnyRef.current(e.payload[0]); });
     const offDrop = getCurrentWebview().onDragDropEvent((e) => {
       const p = e.payload;
@@ -322,17 +332,19 @@ export default function App() {
     show(view);
   }, [font?.masterId, show]);
 
-  const saveAs = useCallback(async () => {
-    if (!font) return;
+  const saveAs = useCallback(async (): Promise<boolean> => {
+    if (!font) return false;
     try {
       const path = await pickSavePath(font.familyName);
-      if (!path) return;
+      if (!path) return false;
       const saved = await backend.saveFont(path);
       setRecents(rememberRecent(saved, font.familyName));
       await refreshStatusAfterSave();
       setToast({ kind: "info", text: t("Saved to {path}", { path: saved }) });
+      return true;
     } catch (e) {
       fail(e);
+      return false;
     }
   }, [font, refreshStatusAfterSave, fail]);
 
@@ -348,18 +360,22 @@ export default function App() {
     }
   }, [font, fail]);
 
-  const save = useCallback(async () => {
-    if (!font) return;
+  const save = useCallback(async (): Promise<boolean> => {
+    if (!font) return false;
     if (!font.path) return saveAs();
     try {
       const saved = await backend.saveFont();
       setRecents(rememberRecent(saved, font.familyName));
       await refreshStatusAfterSave();
       setToast({ kind: "info", text: t("Saved {name}", { name: font.familyName }) });
+      return true;
     } catch (e) {
       fail(e);
+      return false;
     }
   }, [font, saveAs, refreshStatusAfterSave, fail]);
+  saveRef.current = save;
+  fontNameRef.current = font?.familyName ?? "";
 
   const closeFont = useCallback(async () => {
     if (!(await confirmDiscard())) return;
@@ -379,6 +395,14 @@ export default function App() {
   }, []);
   const openGlyph = useCallback((name: string) => openTab(`g:${name}`), [openTab]);
   const textCounter = useRef(0);
+  // Text tabs are named after their sample text.
+  const [textTitles, setTextTitles] = useState<Record<string, string>>({});
+  const titleSetters = useRef(new Map<string, (title: string) => void>());
+  const textTitleSetter = (id: string) => {
+    let f = titleSetters.current.get(id);
+    if (!f) { f = (title: string) => setTextTitles((m) => (m[id] === title ? m : { ...m, [id]: title })); titleSetters.current.set(id, f); }
+    return f;
+  };
   const newTextTab = useCallback(() => openTab(`text:${++textCounter.current}`), [openTab]);
   const openKerning = useCallback(() => openTab("kerning"), [openTab]);
   const navigateTour = useCallback((step: number) => {
@@ -965,7 +989,8 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [shortcutHandlers, settings.shortcuts, font, inGlyph, glyphTargets, openHandbook, undoRedo]);
 
-  const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? t("Kerning") : id === "info" ? t("Font Info") : t("Text {n}", { n: id.slice(5) }));
+  const tabLabel = (id: string) => (id.startsWith("g:") ? id.slice(2) : id === "kerning" ? t("Kerning") : id === "info" ? t("Font Info")
+    : textTitles[id] ? (textTitles[id].length > 18 ? `${textTitles[id].slice(0, 17)}…` : textTitles[id]) : t("Text {n}", { n: id.slice(5) }));
   const glyphList = useMemo(() => (font ? font.glyphs.map((g) => ({ name: g.name, width: g.width })) : []), [font]);
 
   /** The shortcut shown in a menu, honouring any rebinding stored in settings. */
@@ -1285,20 +1310,23 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <button className="btn btn-secondary" title={t("Text Preview (Ctrl+T)")}
+              onClick={() => { const text = tabs.find((id) => id.startsWith("text:")); if (text) setActive(text); else newTextTab(); }}>{t("Text Preview")}</button>
             <button className="btn btn-secondary" onClick={openInfo} title={t("Font Info (Ctrl+I)")}>{t("Font Info")}</button>
             <button className="btn btn-primary" onClick={() => setExporting(true)} title={t("Export fonts (Ctrl+E)")}>{t("Export")}</button>
           </div>
-          {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} onSelectionChange={setFontSelection} onAddGlyphs={showAddGlyphs} onSetExport={(names, on) => backend.setGlyphExport(names, on).then(onStructureChanged, fail)} onSetFilters={(filters) => backend.setFilters(filters).then(onStructureChanged, fail)} onSetTags={(glyph, tags) => backend.setGlyphTags(glyph, tags).then(onStructureChanged, fail)} onSetProductionName={(glyph, name) => backend.setProductionName(glyph, name).then(onStructureChanged, fail)} onSetUnicodes={setUnicodes} onSetGroups={(glyph, left, right) => backend.setGlyphGroups(glyph, left, right).then(onStructureChanged, fail)} onRenameGlyphs={() => setRenameOpen(true)} onBatch={runBatch} onReorder={reorderGlyphs} onRenameGlyph={renameOne} onSetMetric={(glyph, metric, value) => backend.setMetric(glyph, font.masterId, metric, value).then((r) => onStructureChanged(r.status), fail)} onAddMissing={(language) => backend.addMissing(language).then((r) => onStructureChanged(r.status), fail)} />}
+          {active === null && <FontViewScreen key={font.familyName + font.path} font={font} onOpenGlyph={openGlyph} onSelectionChange={setFontSelection} onAddGlyphs={showAddGlyphs} onSetExport={(names, on) => backend.setGlyphExport(names, on).then(onStructureChanged, fail)} onSetFilters={(filters) => backend.setFilters(filters).then(onStructureChanged, fail)} onSetTags={(glyph, tags) => backend.setGlyphTags(glyph, tags).then(onStructureChanged, fail)} onSetProductionName={(glyph, name) => backend.setProductionName(glyph, name).then(onStructureChanged, fail)} onSetUnicodes={setUnicodes} onSetGroups={(glyph, left, right) => backend.setGlyphGroups(glyph, left, right).then(onStructureChanged, fail)} onRenameGlyphs={() => setRenameOpen(true)} onBatch={runBatch} onReorder={reorderGlyphs} onRenameGlyph={renameOne} onSetMetric={(glyph, metric, value) => backend.setMetric(glyph, font.masterId, metric, value).then((r) => onStructureChanged(r.status), fail)} onAddMissing={(language) => backend.addMissing(language).then((r) => onStructureChanged(r.status), fail)}
+            onAddNamed={(name) => backend.addGlyphs(name, []).then((r) => { onStructureChanged(r.status); setToast({ kind: "info", text: r.added.length ? tn(r.added.length, "Added {n} glyph", "Added {n} glyphs") : t("{name} is already in the font", { name }) }); }, fail)} />}
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onStructureChanged={onStructureChanged} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showImage={showImage} showAnnotations={showAnnotations} showBoundingBox={showBoundingBox} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} handleSize={settings.appearance.handleSize} onDrawn={() => recordMilestone("drawn")} reporters={enabledReporters} />
+                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onStructureChanged={onStructureChanged} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showImage={showImage} showAnnotations={showAnnotations} showBoundingBox={showBoundingBox} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} onToggleView={(v) => ({ nodes: toggleNodes, metrics: toggleMetrics, anchors: toggleAnchors, guides: toggleGuides, background: toggleBackground })[v]()} handleSize={settings.appearance.handleSize} onDrawn={() => recordMilestone("drawn")} reporters={enabledReporters} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} onGenerateInstances={generateInstances} />
               ) : id === "kerning" ? (
-                <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={s => { onCommitted(s); recordMilestone("kerned"); }} onError={fail} />
+                <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={s => { onCommitted(s); recordMilestone("kerned"); }} onError={fail} fontSelection={fontSelection} onOpenText={newTextTab} />
               ) : (
-                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} textWidth={settings.appearance.textWidth} onMilestone={recordMilestone} />
+                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} textWidth={settings.appearance.textWidth} onMilestone={recordMilestone} onTitle={textTitleSetter(id)} />
               )}
             </div>
           ))}
@@ -1312,9 +1340,35 @@ export default function App() {
           onForgetRecent={(p) => setRecents(forgetRecent(p))}
           onSample={openSample}
           onImport={() => importSource(false)}
+          updateInfo={settings.updates.enabled || manualUpdateCheck ? updateInfo : null}
+          onHandbook={(section) => { openExternal(section ? `${HANDBOOK_URL}#${section}` : HANDBOOK_URL).catch(fail); }}
+          onShortcuts={() => openSettingsAt("shortcuts")}
+          onWhatsNew={() => { openExternal(`${REPO_URL}/releases/latest`).catch(fail); }}
         />
       )}
       {about && <AboutDialog onClose={() => setAbout(false)} />}
+      {savePrompt && (
+        <div className="scrim" role="presentation">
+          <div className="dialog save-prompt" role="alertdialog" aria-modal="true" aria-labelledby="save-prompt-title" aria-describedby="save-prompt-text"
+            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); savePrompt.resolve("cancel"); } }}>
+            <div className="save-prompt-body">
+              <span className="save-prompt-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M5 4h11l3 3v13H5z" /><path d="M8 4v5h7V4M8 20v-6h8v6" /></svg>
+              </span>
+              <div>
+                <h2 id="save-prompt-title" className="k-subtitle">{t("Save changes to “{name}”?", { name: savePrompt.name })}</h2>
+                <p id="save-prompt-text" className="k-body muted">{t("Your changes will be lost if you don't save them.")}</p>
+              </div>
+            </div>
+            <footer className="dialog-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => savePrompt.resolve("discard")}>{t("Don't Save")}</button>
+              <span className="spacer" />
+              <button type="button" className="btn btn-secondary" onClick={() => savePrompt.resolve("cancel")}>{t("Cancel")}</button>
+              <button type="button" className="btn btn-primary" autoFocus onClick={() => savePrompt.resolve("save")}>{t("Save")}</button>
+            </footer>
+          </div>
+        </div>
+      )}
       {dropping && (
         <div className="drop-overlay" aria-hidden="true">
           <div className="drop-card k-subtitle">{t("Drop to open a .kernest font, or import .glyphs, .ufo or .designspace")}</div>

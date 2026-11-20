@@ -222,20 +222,62 @@ export interface RecentFont {
 }
 
 const RECENTS_KEY = "kernest.recentFonts";
+
+/** A Windows path with backslashes, as Explorer shows it. */
+export function windowsPath(path: string): string {
+  return /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("\\\\") ? path.replace(/\//g, "\\") : path;
+}
+
+/** Paths compared as Windows does: case and slash direction don't matter. */
+function samePath(path: string): string {
+  return path.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+}
+
+/** The folder a recent font is in, shortened from the user's profile folder (Documents\Fonts). */
+export function shortFolder(path: string): string {
+  const parts = windowsPath(path).split("\\");
+  parts.pop();
+  const folder = parts.join("\\");
+  const m = /^[a-zA-Z]:\\Users\\[^\\]+\\(.+)$/.exec(folder);
+  return m ? m[1] : folder;
+}
+
+/** The file or folder name at the end of a path. */
+export function baseName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
 const MAX_RECENTS = 12;
+const START_AT_LAUNCH_KEY = "kernest.showStartAtLaunch";
+
+/** Start window › Show at launch. Off: Kernest reopens the most recent font when it starts. */
+export function showStartAtLaunch(): boolean {
+  try { return localStorage.getItem(START_AT_LAUNCH_KEY) !== "0"; } catch { return true; }
+}
+
+export function setShowStartAtLaunch(show: boolean) {
+  try { localStorage.setItem(START_AT_LAUNCH_KEY, show ? "1" : "0"); } catch { /* a convenience only */ }
+}
 
 export function loadRecents(): RecentFont[] {
   try {
     const raw = localStorage.getItem(RECENTS_KEY);
     const list = raw ? (JSON.parse(raw) as RecentFont[]) : [];
-    return Array.isArray(list) ? list.filter((r) => typeof r.path === "string") : [];
+    if (!Array.isArray(list)) return [];
+    // One entry per file, however its path was spelled ("/" or "\\", any case).
+    const seen = new Set<string>();
+    return list
+      .filter((r) => typeof r.path === "string")
+      .map((r) => ({ ...r, path: windowsPath(r.path) }))
+      .filter((r) => !seen.has(samePath(r.path)) && !!seen.add(samePath(r.path)));
   } catch {
     return [];
   }
 }
 
 export function rememberRecent(path: string, familyName: string): RecentFont[] {
-  const next = [{ path, familyName, openedAt: Date.now() }, ...loadRecents().filter((r) => r.path !== path)].slice(0, MAX_RECENTS);
+  path = windowsPath(path);
+  const next = [{ path, familyName, openedAt: Date.now() }, ...loadRecents().filter((r) => samePath(r.path) !== samePath(path))].slice(0, MAX_RECENTS);
   try {
     localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
   } catch {
@@ -245,7 +287,7 @@ export function rememberRecent(path: string, familyName: string): RecentFont[] {
 }
 
 export function forgetRecent(path: string): RecentFont[] {
-  const next = loadRecents().filter((r) => r.path !== path);
+  const next = loadRecents().filter((r) => samePath(r.path) !== samePath(path));
   try {
     localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
   } catch {

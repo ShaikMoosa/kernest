@@ -12,6 +12,8 @@ export interface GlyphSetInfo {
   id: string;
   name: string;
   count: number;
+  /** Some of the set's characters, for the New Font preview. */
+  sample: string;
 }
 
 export interface MasterInfo {
@@ -1915,6 +1917,8 @@ const MOCK_LANGUAGES: [string, string[]][] = [
   ["Hebrew", ["hebrew"]],
 ];
 
+const mockSample = (id: string) => String.fromCodePoint(...(MOCK_SETS[id] ?? []).filter((cp) => cp > 0x20).slice(0, 64));
+
 const hexCp = (cp: number) => cp.toString(16).toUpperCase().padStart(4, "0");
 
 const mockSettings: Settings = initialSettings();
@@ -1923,16 +1927,16 @@ const mockSettingsView = (): Settings => structuredClone(mockSettings);
 const mockBackend: Backend = {
   async glyphSets() {
     return [
-      { id: "latin-basic", name: "Latin Basic (ASCII)", count: 95 },
-      { id: "latin-1", name: "Latin-1 Supplement", count: 95 },
-      { id: "punctuation", name: "General Punctuation", count: 9 },
-      { id: "cyrillic", name: "Cyrillic Basic", count: 64 },
-      { id: "latin-ext-a", name: "Latin Extended-A", count: 128 },
-      { id: "latin-ext-additional", name: "Latin Extended Additional", count: 256 },
-      { id: "greek", name: "Greek", count: 135 },
-      { id: "cyrillic-extended", name: "Cyrillic Extended", count: 298 },
-      { id: "arabic", name: "Arabic", count: 972 },
-      { id: "hebrew", name: "Hebrew", count: 57 },
+      { id: "latin-basic", name: "Latin Basic (ASCII)", count: 95, sample: mockSample("latin-basic") },
+      { id: "latin-1", name: "Latin-1 Supplement", count: 95, sample: mockSample("latin-1") },
+      { id: "punctuation", name: "General Punctuation", count: 9, sample: mockSample("punctuation") },
+      { id: "cyrillic", name: "Cyrillic Basic", count: 64, sample: mockSample("cyrillic") },
+      { id: "latin-ext-a", name: "Latin Extended-A", count: 128, sample: mockSample("latin-ext-a") },
+      { id: "latin-ext-additional", name: "Latin Extended Additional", count: 256, sample: mockSample("latin-ext-additional") },
+      { id: "greek", name: "Greek", count: 135, sample: mockSample("greek") },
+      { id: "cyrillic-extended", name: "Cyrillic Extended", count: 298, sample: mockSample("cyrillic-extended") },
+      { id: "arabic", name: "Arabic", count: 972, sample: mockSample("arabic") },
+      { id: "hebrew", name: "Hebrew", count: 57, sample: mockSample("hebrew") },
     ];
   },
   async newFont(setup) {

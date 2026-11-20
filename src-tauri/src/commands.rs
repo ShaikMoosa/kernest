@@ -93,6 +93,8 @@ pub struct GlyphSetInfo {
     id: &'static str,
     name: &'static str,
     count: usize,
+    /// Up to 64 of the set's characters, for the New Font preview.
+    sample: String,
 }
 
 #[derive(Serialize)]
@@ -740,10 +742,30 @@ fn replace(state: &AppState, doc: Document) -> CmdResult<FontView> {
 pub fn glyph_sets() -> Vec<GlyphSetInfo> {
     GLYPH_SETS
         .iter()
-        .map(|s| GlyphSetInfo {
-            id: s.id,
-            name: s.name,
-            count: codepoints_for(&[s.id]).len(),
+        .map(|s| {
+            let codepoints = codepoints_for(&[s.id]);
+            // Letters first, then figures, then the rest, as a type specimen shows them.
+            let mut chars: Vec<char> = codepoints
+                .iter()
+                .filter_map(|&c| char::from_u32(c))
+                .filter(|c| !c.is_whitespace() && !c.is_control())
+                .collect();
+            chars.sort_by_key(|c| {
+                if c.is_alphabetic() {
+                    0
+                } else if c.is_numeric() {
+                    1
+                } else {
+                    2
+                }
+            });
+            let sample = chars.into_iter().take(64).collect();
+            GlyphSetInfo {
+                id: s.id,
+                name: s.name,
+                count: codepoints.len(),
+                sample,
+            }
         })
         .collect()
 }
