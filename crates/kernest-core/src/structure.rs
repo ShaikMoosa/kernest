@@ -96,6 +96,65 @@ pub fn set_master_guides(font: &Font, master_id: &str, guides: Vec<crate::Guide>
     Ok(f)
 }
 
+/// Sets a master's line spacing and underline values; `None` leaves a value to the
+/// compiler. Win values are distances, so they can't be negative.
+pub fn set_vertical_metrics(
+    font: &Font,
+    master_id: &str,
+    vertical: crate::VerticalMetrics,
+) -> R<Font> {
+    let v = &vertical;
+    let all = [
+        v.typo_ascender,
+        v.typo_descender,
+        v.typo_line_gap,
+        v.hhea_ascender,
+        v.hhea_descender,
+        v.hhea_line_gap,
+        v.win_ascent,
+        v.win_descent,
+        v.underline_thickness,
+        v.underline_position,
+    ];
+    if all
+        .iter()
+        .flatten()
+        .any(|x| !x.is_finite() || x.abs() > 32767.0)
+    {
+        return Err("Line spacing values must be numbers between -32767 and 32767.".into());
+    }
+    if [
+        v.win_ascent,
+        v.win_descent,
+        v.typo_line_gap,
+        v.hhea_line_gap,
+        v.underline_thickness,
+    ]
+    .iter()
+    .flatten()
+    .any(|x| *x < 0.0)
+    {
+        return Err(
+            "Win ascent, win descent, line gaps and underline thickness can't be negative.".into(),
+        );
+    }
+    let mut f = font.clone();
+    let m = f
+        .masters
+        .iter_mut()
+        .find(|m| m.id == master_id)
+        .ok_or_else(|| format!("No master with id \"{master_id}\""))?;
+    m.vertical = vertical;
+    Ok(f)
+}
+
+/// Turns "Use Typo Metrics" (OS/2 fsSelection bit 7) on or off for the whole font.
+pub fn set_use_typo_metrics(font: &Font, on: bool) -> R<Font> {
+    let mut f = font.clone();
+    f.info.use_typo_metrics = on;
+    Ok(f)
+}
+
 /// Moves one guide between a layer's local list and its master's global list,
 /// keeping its position, angle, name and lock. Appended to the target list.
 pub fn move_guide(font: &Font, glyph: &str, key: &str, index: usize, to_global: bool) -> R<Font> {
@@ -635,6 +694,30 @@ pub fn warnings(font: &Font) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::sample::sample_font;
+
+    #[test]
+    fn sets_line_spacing_and_refuses_bad_values() {
+        let f = crate::sample::sample_font();
+        let v = crate::VerticalMetrics {
+            win_ascent: Some(1100.0),
+            typo_line_gap: Some(200.0),
+            ..Default::default()
+        };
+        let g = set_vertical_metrics(&f, "m01", v).unwrap();
+        assert_eq!(g.masters[0].vertical, v);
+        let bad = crate::VerticalMetrics {
+            win_descent: Some(-5.0),
+            ..Default::default()
+        };
+        assert!(set_vertical_metrics(&f, "m01", bad).is_err());
+        assert!(set_vertical_metrics(&f, "nope", v).is_err());
+        assert!(
+            set_use_typo_metrics(&f, true)
+                .unwrap()
+                .info
+                .use_typo_metrics
+        );
+    }
 
     #[test]
     fn hinting_settings() {

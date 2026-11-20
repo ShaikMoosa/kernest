@@ -1,5 +1,5 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { backend, type Axis, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type VariableFontSetting } from "../lib/backend";
+import { backend, type Axis, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type VariableFontSetting, type VerticalMetrics } from "../lib/backend";
 import { designBounds, designToUser, hasMap, userToDesign } from "../lib/axisMap";
 import { hasLabels, statStyleName } from "../lib/statName";
 import { pickMasterSource } from "../lib/desktop";
@@ -50,6 +50,19 @@ let report: (label: string) => void = () => {};
 const FieldError = createContext<(message: string) => void>(() => {});
 
 /** A text/number input that commits on Enter or blur and reverts on Escape. */
+const LINE_SPACING: { key: keyof VerticalMetrics; label: string }[] = [
+  { key: "typoAscender", label: "Typo ascender" },
+  { key: "typoDescender", label: "Typo descender" },
+  { key: "typoLineGap", label: "Typo line gap" },
+  { key: "hheaAscender", label: "hhea ascender" },
+  { key: "hheaDescender", label: "hhea descender" },
+  { key: "hheaLineGap", label: "hhea line gap" },
+  { key: "winAscent", label: "Win ascent" },
+  { key: "winDescent", label: "Win descent" },
+  { key: "underlineThickness", label: "Underline thickness" },
+  { key: "underlinePosition", label: "Underline position" },
+];
+
 function Field({ value, onCommit, width = 72, mono = true, label, numeric = true, placeholder }: {
   /** Returning (a promise of) false means the value was refused: the field shows the old one again. */
   value: string | number; onCommit: (v: string) => unknown; width?: number; mono?: boolean; label: string; numeric?: boolean;
@@ -440,6 +453,10 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                   title={t("Edges that line up on one pixel row at small sizes")} onClick={() => setHintsOpen(hintsOpen === `${m.id}:zones` ? null : `${m.id}:zones`)}>
                   {m.alignmentZones.length ? tn(m.alignmentZones.length, "{n} zone", "{n} zones") : t("Zones")}
                 </button>
+                <button className={`btn btn-sm ${Object.values(m.vertical ?? {}).some((v) => v != null) ? "btn-primary" : "btn-secondary"}`} aria-expanded={hintsOpen === `${m.id}:spacing`}
+                  title={t("Line spacing and underline values written to the OS/2, hhea and post tables")} onClick={() => setHintsOpen(hintsOpen === `${m.id}:spacing` ? null : `${m.id}:spacing`)}>
+                  {t("Line spacing")}
+                </button>
                 <button className={`btn btn-sm ${m.stems.length ? "btn-primary" : "btn-secondary"}`} aria-expanded={hintsOpen === `${m.id}:stems`}
                   title={t("The common stroke widths, used for hinting")} onClick={() => setHintsOpen(hintsOpen === `${m.id}:stems` ? null : `${m.id}:stems`)}>
                   {m.stems.length ? tn(m.stems.length, "{n} stem", "{n} stems") : t("Stems")}
@@ -470,6 +487,24 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                   <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setAlignmentZones(m.id, [...m.alignmentZones, { position: 0, size: 10 }]))}>
                     <AddIcon size={14} /> {t("Add zone")}
                   </button>
+                </div>
+              )}
+              {hintsOpen === `${m.id}:spacing` && (
+                <div className="fi-hint-editor">
+                  <p className="k-caption muted">{t("How far apart lines of text sit, and where the underline goes. Leave a field empty and it's worked out from the ascender and descender on export.")}</p>
+                  <div className="fi-hint-rows fi-spacing-rows">
+                    {LINE_SPACING.map(({ key, label }) => (
+                      <label key={key} className="info-field"><span className="k-caption muted">{t(label)}</span>
+                        <Field label={`${m.name} ${t(label)}`} value={m.vertical?.[key] ?? ""} placeholder={t("auto")}
+                          onCommit={(v) => apply(() => backend.setVerticalMetrics(m.id, { ...(m.vertical ?? {}), [key]: v.trim() === "" ? null : num(v) }))} />
+                      </label>
+                    ))}
+                  </div>
+                  <label className="check-row">
+                    <input type="checkbox" checked={info.useTypoMetrics} onChange={(e) => apply(() => backend.setUseTypoMetrics(e.target.checked))} />
+                    <span className="k-body">{t("Use Typo Metrics")}</span>
+                    <span className="k-caption muted">{t("whole font: apps space lines by the typo values")}</span>
+                  </label>
                 </div>
               )}
               {hintsOpen === `${m.id}:stems` && (

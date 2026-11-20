@@ -870,3 +870,4 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .glyph-interp-warning { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--k-status-warning); box-shadow: 0 0 0 2px var(--k-bg-surface); }
 .interp-banner { background: var(--k-status-warning-subtle); color: var(--k-text-primary); border: 1px solid var(--k-status-warning); }
 .interp-banner .btn { margin-top: var(--k-space-8); }
+.fi-spacing-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--k-space-8); }

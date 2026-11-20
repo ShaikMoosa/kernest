@@ -417,4 +417,8 @@ export const ENGINE_MESSAGES = [
   "{n} colour layer{s} in the text colour (colorPalette *) {was} left out.",
   "Guides, backgrounds and tags couldn't be read: {e}",
   "Master guides couldn't be read: {e}",
+  // Line spacing
+  "Line spacing values must be numbers between -32767 and 32767.",
+  "Win ascent, win descent, line gaps and underline thickness can't be negative.",
+  "Line spacing needs the desktop app (npm run tauri dev).",
 ];

@@ -302,6 +302,20 @@ export interface AxisValue {
   linkedValue?: number | null;
 }
 
+/** OpenType line spacing and underline values; a missing one is worked out on export. */
+export interface VerticalMetrics {
+  typoAscender?: number | null;
+  typoDescender?: number | null;
+  typoLineGap?: number | null;
+  hheaAscender?: number | null;
+  hheaDescender?: number | null;
+  hheaLineGap?: number | null;
+  winAscent?: number | null;
+  winDescent?: number | null;
+  underlineThickness?: number | null;
+  underlinePosition?: number | null;
+}
+
 export interface MasterView {
   id: string;
   name: string;
@@ -309,6 +323,8 @@ export interface MasterView {
   metrics: Metrics;
   alignmentZones: Zone[];
   stems: Stem[];
+  /** Missing in the browser preview. */
+  vertical?: VerticalMetrics;
 }
 
 /** A current glyph whose incoming layer from another font can't interpolate. */
@@ -532,6 +548,8 @@ export interface FontInfo {
   psHinting: PsHinting;
   /** The edit view's snap grid, if set. */
   grid: Grid | null;
+  /** Applications use the typo metrics for line spacing (OS/2 fsSelection bit 7). */
+  useTypoMetrics: boolean;
   /** Colour palettes (CSS colours #rrggbbaa); every palette has the same length. */
   palettes: string[][];
   /** Per-master palette overrides keyed by master id; empty means none. */
@@ -775,6 +793,8 @@ export interface Backend {
   setGrid(grid: Grid | null): Promise<FontInfo>;
   /** Replaces a master's global guides, drawn in every glyph of that master. */
   setMasterGuides(masterId: string, guides: Guide[]): Promise<FontInfo>;
+  setVerticalMetrics(masterId: string, vertical: VerticalMetrics): Promise<FontInfo>;
+  setUseTypoMetrics(on: boolean): Promise<FontInfo>;
   /** Replaces a layer's local guides. */
   setGuides(glyph: string, masterId: string, guides: Guide[]): Promise<LayerView>;
   /** Moves guide `index` between the layer's local list and the master's global list. */
@@ -1234,6 +1254,8 @@ const tauriBackend: Backend = {
   setPsHinting: (ps) => invoke("set_ps_hinting", { psHinting: ps }),
   setGrid: (grid) => invoke("set_grid", { grid }),
   setMasterGuides: (masterId, guides) => invoke("set_master_guides", { masterId, guides }),
+  setVerticalMetrics: (masterId, vertical) => invoke("set_vertical_metrics", { masterId, vertical }),
+  setUseTypoMetrics: (on) => invoke("set_use_typo_metrics", { on }),
   setGuides: (glyph, masterId, guides) => invoke("set_guides", { glyph, masterId, guides }),
   setGuideScope: (glyph, masterId, index, toGlobal) => invoke("set_guide_scope", { glyph, masterId, index, toGlobal }),
   transform: (glyph, masterId, selection, affine, origin, allMasters, onBackground) =>
@@ -1596,7 +1618,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, grid: d.grid ?? null, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, grid: d.grid ?? null, useTypoMetrics: false, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -1779,6 +1801,12 @@ const mockBackend: Backend = {
   },
   async setMasterGuides() {
     throw "Guides need the desktop app (npm run tauri dev).";
+  },
+  async setVerticalMetrics() {
+    throw "Line spacing needs the desktop app (npm run tauri dev).";
+  },
+  async setUseTypoMetrics() {
+    throw "Line spacing needs the desktop app (npm run tauri dev).";
   },
   async setGuides() {
     throw "Guides need the desktop app (npm run tauri dev).";

@@ -299,6 +299,8 @@ Open **Font Info** (Ctrl+I) to set:
 
 Switch the master you're editing with the buttons at the top right. Previews interpolate live. Kernest checks that every glyph can be interpolated, meaning the same number of paths, nodes and components in each master, and lists the glyphs that can't be in the **Incompatible** category of Font View.
 
+**Line spacing** (Font Info › Masters, on each master) sets how far apart lines of text sit and where the underline goes: typo, hhea and win ascender, descender and line gap, plus underline thickness and position. Leave a field empty and it's worked out from the ascender and descender on export. Win ascent, win descent, line gaps and underline thickness can't be negative. **Use Typo Metrics** applies to the whole font: apps then space lines by the typo values. A font that sets any of these saves at format version 12.
+
 ### Interpolation warnings
 
 A glyph can be compatible and still morph badly between masters. Kernest compares every master and intermediate layer with the default master and warns when:
@@ -394,7 +396,7 @@ Kernest brings over the axes, masters, outlines, components, anchors, kerning, i
 
 Kerning pairs that point at a group with no glyphs in it are left out (they can't do anything). A pair with the value 0 is kept when one side is a glyph, because it cancels the group kerning for that glyph.
 
-Line spacing values are used when you export but can't be edited in Font Info yet.
+To see or change them, use **Line spacing** on a master in Font Info › Masters.
 
 ### SVG outlines
 

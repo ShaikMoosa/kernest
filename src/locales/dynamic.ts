@@ -338,4 +338,15 @@ export const DYNAMIC_KEYS = [
   // Interpolation quality
   "Interpolation",
   "No interpolation warnings",
+  // Line spacing
+  "Typo ascender",
+  "Typo descender",
+  "Typo line gap",
+  "hhea ascender",
+  "hhea descender",
+  "hhea line gap",
+  "Win ascent",
+  "Win descent",
+  "Underline thickness",
+  "Underline position",
 ];

@@ -79,6 +79,7 @@ pub struct MasterView {
     metrics: Metrics,
     alignment_zones: Vec<Zone>,
     stems: Vec<Stem>,
+    vertical: kernest_core::VerticalMetrics,
 }
 
 #[derive(Serialize)]
@@ -105,6 +106,8 @@ pub struct FontInfoView {
     ps_hinting: PsHinting,
     /// The edit view's snap grid, if set.
     grid: Option<Grid>,
+    /// OS/2 fsSelection bit 7: applications use the typo metrics for line spacing.
+    use_typo_metrics: bool,
     /// Colour palettes (CSS colours `#rrggbbaa`), all the same length.
     palettes: Vec<Vec<kernest_core::color::Color>>,
     /// Per-master palette overrides, keyed by master id; empty means none.
@@ -139,6 +142,7 @@ fn info_view(doc: &Document) -> FontInfoView {
                 metrics: m.metrics,
                 alignment_zones: m.alignment_zones.clone(),
                 stems: m.stems.clone(),
+                vertical: m.vertical,
             })
             .collect(),
         instances: f.instances.clone(),
@@ -148,6 +152,7 @@ fn info_view(doc: &Document) -> FontInfoView {
         control_instructions: f.info.control_instructions.clone(),
         ps_hinting: f.info.ps_hinting.unwrap_or_default(),
         grid: f.info.grid,
+        use_typo_metrics: f.info.use_typo_metrics,
         palettes: f.palettes.clone(),
         master_palettes: f.master_palettes.clone(),
         default_master_id: default_master(f).id.clone(),
@@ -269,6 +274,24 @@ pub fn set_ps_hinting(
 #[tauri::command]
 pub fn set_grid(state: State<AppState>, grid: Option<Grid>) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_grid(f, grid))
+}
+
+/// Sets one master's line spacing and underline values.
+#[tauri::command]
+pub fn set_vertical_metrics(
+    state: State<AppState>,
+    master_id: String,
+    vertical: kernest_core::VerticalMetrics,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| {
+        structure::set_vertical_metrics(f, &master_id, vertical)
+    })
+}
+
+/// Turns "Use Typo Metrics" on or off.
+#[tauri::command]
+pub fn set_use_typo_metrics(state: State<AppState>, on: bool) -> CmdResult<FontInfoView> {
+    edit(&state, |f| structure::set_use_typo_metrics(f, on))
 }
 
 /// Replaces a master's global guides.

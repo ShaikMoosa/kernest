@@ -64,6 +64,8 @@ fn main() {
             fontinfo::set_ps_hinting,
             fontinfo::set_grid,
             fontinfo::set_master_guides,
+            fontinfo::set_vertical_metrics,
+            fontinfo::set_use_typo_metrics,
             fontinfo::set_palettes,
             fontinfo::set_master_palettes,
             fontinfo::set_axes,
