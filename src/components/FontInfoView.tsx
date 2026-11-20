@@ -1,5 +1,5 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { backend, type Axis, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type VariableFontSetting, type VerticalMetrics } from "../lib/backend";
+import { backend, type Axis, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type VariableFontSetting, type VerticalMetrics, type VirtualMaster } from "../lib/backend";
 import { designBounds, designToUser, hasMap, userToDesign } from "../lib/axisMap";
 import { hasLabels, statStyleName } from "../lib/statName";
 import { pickMasterSource } from "../lib/desktop";
@@ -62,6 +62,33 @@ const LINE_SPACING: { key: keyof VerticalMetrics; label: string }[] = [
   { key: "underlineThickness", label: "Underline thickness" },
   { key: "underlinePosition", label: "Underline position" },
 ];
+
+/** Glyph swaps for one export: "Rename Glyphs" (a=b, …) and "Remove Glyphs" (a, …). */
+function SwapFields({ rename, remove, onChange }: { rename?: [string, string][]; remove?: string[]; onChange: (rename: [string, string][], remove: string[]) => unknown }) {
+  const report = useContext(FieldError);
+  return (
+    <>
+      <label className="info-field" title={t("Swap glyph drawings in this export: dollar=dollar.alt gives dollar the drawing of dollar.alt")}>
+        <span className="k-caption muted">{t("Rename Glyphs")}</span>
+        <Field label={t("Rename Glyphs")} value={(rename ?? []).map(([a, b]) => `${a}=${b}`).join(", ")} width={200} mono={false} numeric={false} placeholder="dollar=dollar.alt"
+          onCommit={(v) => {
+            const pairs: [string, string][] = [];
+            for (const part of v.split(/[,\n]+/).map((x) => x.trim()).filter(Boolean)) {
+              const [a, b] = part.split("=").map((x) => x.trim());
+              if (!a || !b) { report(t("{name}: write a swap as glyph=otherglyph.", { name: part })); return false; }
+              pairs.push([a, b]);
+            }
+            return onChange(pairs, remove ?? []);
+          }} />
+      </label>
+      <label className="info-field" title={t("Glyphs left out of this export, such as the alternates swapped in above")}>
+        <span className="k-caption muted">{t("Remove Glyphs")}</span>
+        <Field label={t("Remove Glyphs")} value={(remove ?? []).join(", ")} width={160} mono={false} numeric={false}
+          onCommit={(v) => onChange(rename ?? [], v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean))} />
+      </label>
+    </>
+  );
+}
 
 function Field({ value, onCommit, width = 72, mono = true, label, numeric = true, placeholder }: {
   /** Returning (a promise of) false means the value was refused: the field shows the old one again. */
@@ -538,6 +565,29 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
               )}
             </div>
           ))}
+          <div className="fi-head fi-subhead">
+            <h3 className="k-label">{t("Virtual masters")}</h3>
+            <span className="k-caption muted">{t("A location only glyphs with intermediate layers there use, such as a Crossbar axis that changes A, E, F and H. Other glyphs stay as they are.")}</span>
+            <span className="spacer" />
+            <button className="btn btn-secondary btn-sm" disabled={info.axes.length === 0}
+              onClick={() => apply(() => backend.setVirtualMasters([...info.virtualMasters, { name: t("Virtual master {n}", { n: info.virtualMasters.length + 1 }), location: Object.fromEntries(info.axes.map((a) => [a.tag, designBounds(a)[1]])) }]))}>
+              <AddIcon size={14} /> {t("Add virtual master")}
+            </button>
+          </div>
+          {info.virtualMasters.map((vm: VirtualMaster, i: number) => {
+            const put = (p: Partial<VirtualMaster>) => apply(() => backend.setVirtualMasters(info.virtualMasters.map((x, j) => (j === i ? { ...x, ...p } : x))));
+            return (
+              <div key={i} className="fi-row fi-master fi-virtual">
+                <label className="info-field"><span className="k-caption muted">{t("Name")}</span>
+                  <Field label={t("Virtual master name")} value={vm.name} width={160} mono={false} numeric={false} onCommit={(v) => put({ name: v })} />
+                </label>
+                {locFields(vm.location, (loc) => put({ location: loc }), vm.name)}
+                <span className="spacer" />
+                <button className="icon-btn" aria-label={t("Remove {name}", { name: vm.name })} title={t("Remove virtual master")}
+                  onClick={() => apply(() => backend.setVirtualMasters(info.virtualMasters.filter((_, j) => j !== i)))}><CloseIcon size={14} /></button>
+              </div>
+            );
+          })}
           {adding && (
             <div className="fi-master fi-adding">
               <div className="fi-row">
@@ -631,6 +681,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                 <span className="k-caption">{t("Export")}</span>
               </label>
               <span className="spacer" />
+              <SwapFields rename={it.renameGlyphs} remove={it.removeGlyphs} onChange={(renameGlyphs, removeGlyphs) => patch({ renameGlyphs, removeGlyphs })} />
               <button className="icon-btn" aria-label={t("Remove {name}", { name: it.name })} title={t("Remove instance")} onClick={() => setInstances(curInst().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
             </div>
             );
@@ -698,6 +749,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                     onCommit={(v) => patch({ glyphs: v.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean) })} />
                 </label>
                 <span className="k-caption muted fi-vf-glyphs-hint">{t("Empty keeps every glyph.")}</span>
+                <SwapFields rename={vf.renameGlyphs} remove={vf.removeGlyphs} onChange={(renameGlyphs, removeGlyphs) => patch({ renameGlyphs, removeGlyphs })} />
               </div>
             </div>
             );

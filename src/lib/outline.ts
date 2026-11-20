@@ -32,6 +32,8 @@ export interface EditPath {
   locked?: boolean;
   /** Drawn with a pen instead of filled. */
   stroke?: PathStroke;
+  /** A mask: subtracted from the shapes below it. */
+  mask?: boolean;
 }
 
 export const isOn = (n: EditNode) => n.kind !== "offcurve";
@@ -72,7 +74,7 @@ export function pathsToSvg(paths: EditPath[]): string {
   return d;
 }
 
-export const clonePaths = (paths: EditPath[]): EditPath[] => paths.map((p) => ({ closed: p.closed, locked: p.locked, stroke: p.stroke, nodes: p.nodes.map((n) => ({ ...n })) }));
+export const clonePaths = (paths: EditPath[]): EditPath[] => paths.map((p) => ({ closed: p.closed, locked: p.locked, stroke: p.stroke, mask: p.mask, nodes: p.nodes.map((n) => ({ ...n })) }));
 
 /** Index of the node before/after `i` in a path, or -1 at the ends of an open path. */
 export function neighbour(p: EditPath, i: number, dir: 1 | -1): number {
@@ -137,7 +139,7 @@ export function deleteSelection(base: EditPath[], selection: Set<string>): EditP
     if (drop.size === 0) return result.push(p);
     const kept = p.nodes.filter((_, i) => !drop.has(i)).map((n) => ({ ...n }));
     const nodes = normalizeSegments({ closed: p.closed, nodes: kept });
-    if (nodes.filter(isOn).length >= 2) result.push({ closed: p.closed, locked: p.locked, stroke: p.stroke, nodes });
+    if (nodes.filter(isOn).length >= 2) result.push({ closed: p.closed, locked: p.locked, stroke: p.stroke, mask: p.mask, nodes });
   });
   return result;
 }
@@ -207,6 +209,7 @@ export function transformPaths(paths: EditPath[], t: number[]): EditPath[] {
     closed: p.closed,
     locked: p.locked,
     stroke: p.stroke,
+    mask: p.mask,
     nodes: p.nodes.map((n) => ({ ...n, x: t[0] * n.x + t[2] * n.y + t[4], y: t[1] * n.x + t[3] * n.y + t[5] })),
   }));
 }

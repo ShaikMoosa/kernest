@@ -307,6 +307,7 @@ mod tests {
                 .collect(),
             locked: false,
             stroke: None,
+            mask: false,
         })
     }
 
@@ -354,6 +355,7 @@ mod tests {
                 nodes,
                 locked: false,
                 stroke: None,
+                mask: false,
             })
         };
         let mut l = sample_font().glyphs[0].layers[0].clone();

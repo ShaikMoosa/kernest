@@ -537,6 +537,7 @@ mod tests {
         Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: true,
             nodes: vec![
                 Node::new(x0, y0, NodeKind::Line),

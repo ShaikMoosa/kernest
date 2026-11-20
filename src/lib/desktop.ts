@@ -104,6 +104,17 @@ export async function pickMetricsSource(): Promise<string | null> {
 }
 
 /** Picks another font to copy masters from (Font Info › Masters › Add from font…). */
+/** Glyph › Add Image…: a PNG, JPEG or GIF to place on the layer. */
+export async function pickImage(): Promise<string | null> {
+  if (!isTauri) return null;
+  const picked = await open({
+    multiple: false,
+    title: t("Add Image"),
+    filters: [{ name: t("Images"), extensions: ["png", "jpg", "jpeg", "gif"] }],
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
 export async function pickMasterSource(): Promise<string | null> {
   if (!isTauri) return null;
   const picked = await open({

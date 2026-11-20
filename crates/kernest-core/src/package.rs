@@ -41,11 +41,13 @@ use crate::model::{
 /// alignment zones, stems, manual hints and hinting settings (older versions
 /// would drop them on save); version 11 adds saved export presets; version 12 adds
 /// line spacing metrics (typo, hhea, win, underline and Use Typo Metrics); version 13
-/// adds kept custom parameters and backup layers.
+/// adds kept custom parameters, backup layers, strokes and corner/cap/segment
+/// components; version 14 adds masks, annotations, placed images, interpolation
+/// curves, virtual masters and glyph swaps.
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 13;
+pub const FORMAT_VERSION: u32 = 14;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -242,15 +244,41 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
             .iter()
             .any(|g| g.layers.iter().any(|l| !l.hints.is_empty()));
     let has_v13 = !font.info.custom_parameters.is_empty()
+        || font.glyphs.iter().any(|g| {
+            g.layers.iter().any(|l| {
+                l.backup.is_some()
+                    || !l.parts.is_empty()
+                    || l.shapes
+                        .iter()
+                        .any(|s| matches!(s, crate::model::Shape::Path(p) if p.stroke.is_some()))
+            })
+        });
+    let has_v14 = !font.info.virtual_masters.is_empty()
         || font
-            .glyphs
+            .instances
             .iter()
-            .any(|g| g.layers.iter().any(|l| l.backup.is_some()));
+            .any(|i| !i.rename_glyphs.is_empty() || !i.remove_glyphs.is_empty())
+        || font
+            .variable_fonts
+            .iter()
+            .any(|v| !v.rename_glyphs.is_empty() || !v.remove_glyphs.is_empty())
+        || font.glyphs.iter().any(|g| {
+            g.layers.iter().any(|l| {
+                !l.annotations.is_empty()
+                    || l.image.is_some()
+                    || !l.hoi.is_empty()
+                    || l.shapes
+                        .iter()
+                        .any(|s| matches!(s, crate::model::Shape::Path(p) if p.mask))
+            })
+        });
     let has_vertical =
         font.info.use_typo_metrics || font.masters.iter().any(|m| !m.vertical.is_empty());
     let file = FontFile {
-        format_version: if has_v13 {
+        format_version: if has_v14 {
             FORMAT_VERSION
+        } else if has_v13 {
+            13
         } else if has_vertical {
             12
         } else if !font.export_presets.is_empty() {
@@ -571,6 +599,8 @@ mod tests {
                 italic: false,
                 base: "Regular".into(),
             }),
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         });
         save(&font, &path).unwrap();
         let fj = fs::read_to_string(path.join("font.json")).unwrap();
@@ -615,6 +645,7 @@ mod tests {
             shapes: vec![Shape::Path(Path {
                 locked: false,
                 stroke: None,
+                mask: false,
                 closed: true,
                 nodes: vec![
                     Node::new(80.0, 0.0, NodeKind::Line),

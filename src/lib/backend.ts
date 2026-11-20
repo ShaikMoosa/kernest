@@ -240,6 +240,14 @@ export interface LayerView {
   strokeSvg?: string;
   /** Paths (counting paths only) drawn by the engine rather than filled by the editor. */
   enginePaths?: number[];
+  /** The layer has masks: strokeSvg is the whole masked outline. */
+  engineAll?: boolean;
+  /** Review notes on the canvas. */
+  annotations?: Annotation[];
+  /** The placed image, if any. */
+  image?: LayerImage | null;
+  /** Drawing order of the shapes (paths and components numbered separately). */
+  shapeOrder?: { kind: "path" | "component"; index: number }[];
   /** Corner, cap and segment components on this layer's paths. */
   parts?: PathPart[];
   anchors: { name: string; x: number; y: number }[];
@@ -327,6 +335,65 @@ export interface CustomParameter {
   name: string;
   value: string;
   disabled?: boolean;
+}
+
+/** A note or correction mark on a layer. */
+/** How a node travels from one master to the next one up an axis (see Rust `hoi::HoiKind`). */
+export type HoiKind =
+  | { type: "through"; x: number; y: number }
+  | { type: "handles"; a: [number, number]; b: [number, number] }
+  | { type: "rotation"; center: [number, number]; turn?: "auto" | "clockwise" | "counterclockwise" };
+
+/** One node's interpolation curve along one axis, kept on the lower master. */
+export interface HoiCurve {
+  axis: string;
+  path: number;
+  node: number;
+  kind: HoiKind;
+}
+
+/** What the interpolation-curve tool shows for one master layer and axis. */
+export interface HoiView {
+  axes: string[];
+  axis: string;
+  upName?: string | null;
+  downName?: string | null;
+  /** Node positions per path in the next master up / down (null when not compatible). */
+  up?: [number, number][][] | null;
+  down?: [number, number][][] | null;
+  curves: HoiCurve[];
+}
+
+export interface Annotation {
+  kind: "text" | "arrow" | "circle" | "plus" | "minus";
+  x: number;
+  y: number;
+  text?: string;
+  /** Arrow direction in degrees (0 points right). */
+  angle?: number;
+  /** Text box width or circle diameter; 0 means the default. */
+  size?: number;
+}
+
+/** An image placed on a layer, positioned by its bottom-left corner. */
+export interface LayerImage {
+  path: string;
+  x: number;
+  y: number;
+  scaleX: number;
+  scaleY: number;
+  angle?: number;
+  /** [x, y, width, height] in image points from the bottom-left corner. */
+  crop?: [number, number, number, number] | null;
+  locked?: boolean;
+}
+
+/** The picture of a layer image, for drawing. */
+export interface ImageData {
+  dataUrl: string | null;
+  width: number;
+  height: number;
+  file: string;
 }
 
 /** A corner, cap or segment component placed on a path node. */
@@ -442,6 +509,16 @@ export interface Instance {
   widthClass?: number;
   /** Style linking: this instance is the bold/italic of the `base` instance. */
   styleLink?: StyleLink;
+  /** Glyph swaps at export: each pair trades drawings ("Rename Glyphs"). */
+  renameGlyphs?: [string, string][];
+  /** Glyphs left out of this export ("Remove Glyphs"). */
+  removeGlyphs?: string[];
+}
+
+/** A virtual master: a named location only glyphs with intermediate layers there use. */
+export interface VirtualMaster {
+  name: string;
+  location: Location;
 }
 
 export interface NewFontSetup {
@@ -469,6 +546,8 @@ export interface VariableFontSetting {
   axes?: VariableAxisSubset[];
   /** Glyphs to include (empty = all); components are pulled in automatically. Omitted when empty. */
   glyphs?: string[];
+  renameGlyphs?: [string, string][];
+  removeGlyphs?: string[];
 }
 
 export interface VariableAxisSubset {
@@ -590,6 +669,8 @@ export interface FontInfo {
   useTypoMetrics: boolean;
   /** Source parameters Kernest keeps but doesn't use (written back to .glyphs). */
   customParameters: CustomParameter[];
+  /** Virtual masters: named locations used only by glyphs with intermediate layers there. */
+  virtualMasters: VirtualMaster[];
   /** Colour palettes (CSS colours #rrggbbaa); every palette has the same length. */
   palettes: string[][];
   /** Per-master palette overrides keyed by master id; empty means none. */
@@ -836,6 +917,7 @@ export interface Backend {
   setVerticalMetrics(masterId: string, vertical: VerticalMetrics): Promise<FontInfo>;
   setUseTypoMetrics(on: boolean): Promise<FontInfo>;
   setCustomParameters(parameters: CustomParameter[]): Promise<FontInfo>;
+  setVirtualMasters(virtualMasters: VirtualMaster[]): Promise<FontInfo>;
   /** Replaces a layer's local guides. */
   setGuides(glyph: string, masterId: string, guides: Guide[]): Promise<LayerView>;
   /** Moves guide `index` between the layer's local list and the master's global list. */
@@ -946,6 +1028,14 @@ export interface Backend {
   expandStrokes(glyph: string, masterId: string): Promise<LayerView>;
   addPixelGlyph(size: number): Promise<DocStatus>;
   addPathPart(glyph: string, masterId: string, part: PathPart): Promise<LayerView>;
+  setPathMask(glyph: string, masterId: string, path: number, mask: boolean): Promise<LayerView>;
+  hoiView(glyph: string, masterId: string, axis: string): Promise<HoiView>;
+  setHoi(glyph: string, masterId: string, axis: string, path: number, node: number, kind: HoiKind | null): Promise<LayerView>;
+  setAnnotations(glyph: string, masterId: string, annotations: Annotation[]): Promise<LayerView>;
+  setLayerImage(glyph: string, masterId: string, image: LayerImage | null): Promise<LayerView>;
+  addLayerImage(glyph: string, masterId: string, file: string): Promise<LayerView>;
+  layerImageData(glyph: string, masterId: string): Promise<ImageData | null>;
+  reorderShapes(glyph: string, masterId: string, order: number[], allLayers: boolean): Promise<LayerView>;
   setPathPart(glyph: string, masterId: string, index: number, part: PathPart | null): Promise<LayerView>;
   decomposeParts(glyph: string, masterId: string): Promise<LayerView>;
   setPixels(glyph: string, masterId: string, cells: [number, number][], on: boolean): Promise<LayerView>;
@@ -1308,6 +1398,7 @@ const tauriBackend: Backend = {
   setVerticalMetrics: (masterId, vertical) => invoke("set_vertical_metrics", { masterId, vertical }),
   setUseTypoMetrics: (on) => invoke("set_use_typo_metrics", { on }),
   setCustomParameters: (parameters) => invoke("set_custom_parameters", { parameters }),
+  setVirtualMasters: (virtualMasters) => invoke("set_virtual_masters", { virtualMasters }),
   setGuides: (glyph, masterId, guides) => invoke("set_guides", { glyph, masterId, guides }),
   setGuideScope: (glyph, masterId, index, toGlobal) => invoke("set_guide_scope", { glyph, masterId, index, toGlobal }),
   transform: (glyph, masterId, selection, affine, origin, allMasters, onBackground) =>
@@ -1373,6 +1464,14 @@ const tauriBackend: Backend = {
   expandStrokes: (glyph, masterId) => invoke("expand_strokes", { glyph, masterId }),
   addPixelGlyph: (size) => invoke("add_pixel_glyph", { size }),
   addPathPart: (glyph, masterId, part) => invoke("add_path_part", { glyph, masterId, part }),
+  setPathMask: (glyph, masterId, path, mask) => invoke("set_path_mask", { glyph, masterId, path, mask }),
+  hoiView: (glyph, masterId, axis) => invoke("hoi_view", { glyph, masterId, axis }),
+  setHoi: (glyph, masterId, axis, path, node, kind) => invoke("set_hoi", { glyph, masterId, axis, path, node, kind }),
+  setAnnotations: (glyph, masterId, annotations) => invoke("set_annotations", { glyph, masterId, annotations }),
+  setLayerImage: (glyph, masterId, image) => invoke("set_layer_image", { glyph, masterId, image }),
+  addLayerImage: (glyph, masterId, file) => invoke("add_layer_image", { glyph, masterId, file }),
+  layerImageData: (glyph, masterId) => invoke("layer_image_data", { glyph, masterId }),
+  reorderShapes: (glyph, masterId, order, allLayers) => invoke("reorder_shapes", { glyph, masterId, order, allLayers }),
   setPathPart: (glyph, masterId, index, part) => invoke("set_path_part", { glyph, masterId, index, part }),
   decomposeParts: (glyph, masterId) => invoke("decompose_parts", { glyph, masterId }),
   setPixels: (glyph, masterId, cells, on) => invoke("set_pixels", { glyph, masterId, cells, on }),
@@ -1680,7 +1779,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, grid: d.grid ?? null, useTypoMetrics: false, customParameters: [], palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, grid: d.grid ?? null, useTypoMetrics: false, customParameters: [], virtualMasters: [], palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -1869,6 +1968,9 @@ const mockBackend: Backend = {
   },
   async setUseTypoMetrics() {
     throw "Line spacing needs the desktop app (npm run tauri dev).";
+  },
+  async setVirtualMasters() {
+    throw "Virtual masters need the desktop app (npm run tauri dev).";
   },
   async setCustomParameters() {
     throw "Custom parameters need the desktop app (npm run tauri dev).";
@@ -2110,6 +2212,30 @@ const mockBackend: Backend = {
   },
   async expandStrokes() {
     throw "Strokes need the desktop app (npm run tauri dev).";
+  },
+  async setAnnotations() {
+    throw "Annotations need the desktop app (npm run tauri dev).";
+  },
+  async setLayerImage() {
+    throw "Images need the desktop app (npm run tauri dev).";
+  },
+  async addLayerImage() {
+    throw "Images need the desktop app (npm run tauri dev).";
+  },
+  async layerImageData() {
+    return null;
+  },
+  async hoiView() {
+    return { axes: [], axis: "", curves: [] };
+  },
+  async setHoi() {
+    throw "Interpolation curves need the desktop app (npm run tauri dev).";
+  },
+  async setPathMask() {
+    throw "Masks need the desktop app (npm run tauri dev).";
+  },
+  async reorderShapes() {
+    throw "Masks need the desktop app (npm run tauri dev).";
   },
   async addPathPart() {
     throw "Corner components need the desktop app (npm run tauri dev).";

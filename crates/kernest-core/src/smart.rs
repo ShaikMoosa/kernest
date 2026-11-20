@@ -139,6 +139,7 @@ fn push_flat(
             Shape::Path(p) => out.push(Shape::Path(Path {
                 locked: false,
                 stroke: p.stroke.clone(),
+                mask: p.mask,
                 closed: p.closed,
                 nodes: p
                     .nodes
@@ -223,6 +224,7 @@ fn push_decomposed(
             Shape::Path(p) => out.push(Shape::Path(Path {
                 locked: false,
                 stroke: p.stroke.clone(),
+                mask: p.mask,
                 closed: p.closed,
                 nodes: p
                     .nodes
@@ -505,6 +507,7 @@ mod tests {
         Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: true,
             nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
                 .into_iter()

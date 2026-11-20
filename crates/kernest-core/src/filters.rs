@@ -378,6 +378,7 @@ mod tests {
         l.shapes = vec![Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -451,6 +452,7 @@ mod tests {
         l.shapes = vec![Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: true,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -477,6 +479,7 @@ mod tests {
         l.shapes.push(Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: true,
             nodes: vec![
                 node(200.0, 0.0, NodeKind::Line),
@@ -495,6 +498,7 @@ mod tests {
         l.shapes = vec![Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: false,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -591,6 +595,7 @@ mod tests {
         l.shapes = vec![Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: false,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -608,6 +613,7 @@ mod tests {
         l.shapes = vec![Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: false,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),
@@ -634,6 +640,7 @@ mod tests {
         l.shapes = vec![Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: false,
             nodes: vec![
                 node(0.0, 0.0, NodeKind::Line),

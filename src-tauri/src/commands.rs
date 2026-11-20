@@ -267,6 +267,9 @@ pub struct PathDto {
     /// The path's stroke, if it is drawn with a pen (kept through edits).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) stroke: Option<kernest_core::stroke::PathStroke>,
+    /// Whether the path is a mask (subtracted from the shapes below it).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) mask: bool,
 }
 
 #[derive(Serialize)]
@@ -325,8 +328,18 @@ pub struct LayerView {
     /// Which paths (counting paths only) `stroke_svg` draws; the editor doesn't
     /// fill these itself.
     engine_paths: Vec<usize>,
+    /// The layer has masks: `stroke_svg` is the whole masked outline, components
+    /// included, and the editor draws the cut-away parts in grey under it.
+    engine_all: bool,
+    /// The drawing order of the layer's shapes: which path or component comes
+    /// first, second… (paths and components numbered separately).
+    shape_order: Vec<ShapeRef>,
     /// Corner, cap and segment components placed on this layer's paths.
     parts: Vec<kernest_core::parts::PathPart>,
+    /// Review notes on the canvas.
+    annotations: Vec<kernest_core::Annotation>,
+    /// The placed image, if any.
+    image: Option<kernest_core::LayerImage>,
     pub(crate) anchors: Vec<Anchor>,
     /// This layer's manual PostScript hints (empty means auto stems are used).
     pub(crate) hints: Vec<Hint>,
@@ -495,9 +508,48 @@ fn layer_view_font(
         paths,
         components,
         component_svg,
-        stroke_svg: engine_svg(font, layer),
-        engine_paths: engine_paths(layer),
+        stroke_svg: if kernest_core::masking::has_masks(layer) {
+            kernest_core::geometry::svg_path(font, layer)
+        } else {
+            engine_svg(font, layer)
+        },
+        engine_paths: if kernest_core::masking::has_masks(layer) {
+            (0..layer
+                .shapes
+                .iter()
+                .filter(|s| matches!(s, Shape::Path(_)))
+                .count())
+                .collect()
+        } else {
+            engine_paths(layer)
+        },
+        engine_all: kernest_core::masking::has_masks(layer),
+        shape_order: {
+            let (mut p, mut c) = (0, 0);
+            layer
+                .shapes
+                .iter()
+                .map(|s| match s {
+                    Shape::Path(_) => {
+                        p += 1;
+                        ShapeRef {
+                            kind: "path",
+                            index: p - 1,
+                        }
+                    }
+                    _ => {
+                        c += 1;
+                        ShapeRef {
+                            kind: "component",
+                            index: c - 1,
+                        }
+                    }
+                })
+                .collect()
+        },
         parts: layer.parts.clone(),
+        annotations: layer.annotations.clone(),
+        image: layer.image.clone(),
         anchors: layer.anchors.clone(),
         hints: layer.hints.clone(),
         auto_hints: kernest_core::hinting::auto_stems(
@@ -551,6 +603,7 @@ fn outline_views(
                 closed: p.closed,
                 locked: p.locked,
                 stroke: p.stroke.clone(),
+                mask: p.mask,
                 nodes: p
                     .nodes
                     .iter()
@@ -627,6 +680,7 @@ pub(crate) fn to_path(p: &PathDto) -> CmdResult<KPath> {
     Ok(KPath {
         locked: p.locked,
         stroke: p.stroke.clone(),
+        mask: p.mask,
         closed: p.closed,
         nodes: p
             .nodes
@@ -1186,6 +1240,13 @@ fn set_path_locked_in(
     layer_view_of(doc, glyph, key)
 }
 
+/// One entry of a layer's shape order.
+#[derive(Serialize)]
+pub struct ShapeRef {
+    kind: &'static str,
+    index: usize,
+}
+
 /// Paths the engine draws: stroked ones and ones with corner, cap or segment
 /// components (counting paths only).
 fn engine_paths(layer: &Layer) -> Vec<usize> {
@@ -1229,6 +1290,145 @@ fn engine_svg(font: &Font, layer: &Layer) -> String {
         .map(|(_, s)| s.clone())
         .collect();
     kernest_core::geometry::svg_path(font, &only)
+}
+
+/// Makes the `path`-th path a mask (or not), in every master.
+#[tauri::command]
+pub fn set_path_mask(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    path: usize,
+    mask: bool,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    stroke_edit(doc, &glyph, &master_id, |f| {
+        kernest_core::masking::set_mask(f, &glyph, &master_id, path, mask)
+    })
+}
+
+/// What the HOI tool shows for one master layer and axis: where each node sits in
+/// the next master down and up the axis, and the layer's interpolation curves.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HoiView {
+    /// Axes with a master further up or down from this one.
+    axes: Vec<String>,
+    axis: String,
+    up_name: Option<String>,
+    down_name: Option<String>,
+    /// Node positions per path (paths only), when that master's layer is compatible.
+    up: Option<PathNodes>,
+    down: Option<PathNodes>,
+    curves: Vec<kernest_core::hoi::HoiCurve>,
+}
+
+/// Node positions per path.
+type PathNodes = Vec<Vec<[f64; 2]>>;
+
+fn path_nodes(l: &kernest_core::Layer) -> PathNodes {
+    l.shapes
+        .iter()
+        .filter_map(|s| match s {
+            kernest_core::Shape::Path(p) => Some(p.nodes.iter().map(|n| [n.x, n.y]).collect()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The HOI tool's view of a master layer along `axis` (the first axis that has a
+/// neighbour when `axis` is empty or has none).
+#[tauri::command]
+pub fn hoi_view(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    axis: String,
+) -> CmdResult<HoiView> {
+    use kernest_core::hoi::{next_down, next_up};
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let f = &doc.font;
+    let g = f.glyph(&glyph).ok_or("That glyph doesn't exist.")?;
+    let layer = g.layer(&master_id).ok_or("That layer doesn't exist.")?;
+    let axes: Vec<String> = f
+        .axes
+        .iter()
+        .filter(|a| {
+            next_up(f, &layer.master_id, &a.tag).is_some()
+                || next_down(f, &layer.master_id, &a.tag).is_some()
+        })
+        .map(|a| a.tag.clone())
+        .collect();
+    let axis = if axes.contains(&axis) {
+        axis
+    } else {
+        axes.first().cloned().unwrap_or_default()
+    };
+    let mine = path_nodes(layer);
+    let shape_of = |m: Option<&kernest_core::Master>| -> (Option<String>, Option<PathNodes>) {
+        let Some(m) = m else { return (None, None) };
+        let nodes = g
+            .layer(&m.id)
+            .filter(|l| l.is_master())
+            .map(path_nodes)
+            .filter(|n| {
+                n.len() == mine.len() && n.iter().zip(&mine).all(|(a, b)| a.len() == b.len())
+            });
+        (Some(m.name.clone()), nodes)
+    };
+    let (up_name, up) = shape_of(next_up(f, &layer.master_id, &axis));
+    let (down_name, down) = shape_of(next_down(f, &layer.master_id, &axis));
+    Ok(HoiView {
+        curves: layer
+            .hoi
+            .iter()
+            .filter(|c| c.axis == axis)
+            .cloned()
+            .collect(),
+        axes,
+        axis,
+        up_name,
+        down_name,
+        up,
+        down,
+    })
+}
+
+/// Sets or (with no kind) removes a node's interpolation curve along an axis.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn set_hoi(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    axis: String,
+    path: usize,
+    node: usize,
+    kind: Option<kernest_core::hoi::HoiKind>,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    stroke_edit(doc, &glyph, &master_id, |f| {
+        kernest_core::hoi::set_curve(f, &glyph, &master_id, &axis, path, node, kind)
+    })
+}
+
+/// Shape Order: puts the layer's shapes (paths and components) in a new order.
+#[tauri::command]
+pub fn reorder_shapes(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    order: Vec<usize>,
+    all_layers: bool,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    stroke_edit(doc, &glyph, &master_id, |f| {
+        kernest_core::masking::reorder_shapes(f, &glyph, &master_id, &order, all_layers)
+    })
 }
 
 /// Places a corner, cap or segment component on a path node, in every master.
@@ -2040,6 +2240,7 @@ mod tests {
         let ok = PathDto {
             locked: false,
             stroke: None,
+            mask: false,
             closed: true,
             nodes: vec![
                 node(0., 0., Line),
@@ -2051,6 +2252,7 @@ mod tests {
         let only_off = PathDto {
             locked: false,
             stroke: None,
+            mask: false,
             closed: true,
             nodes: vec![node(0., 0., Offcurve), node(1., 1., Offcurve)],
         };
@@ -2058,6 +2260,7 @@ mod tests {
         let open_off = PathDto {
             locked: false,
             stroke: None,
+            mask: false,
             closed: false,
             nodes: vec![node(0., 0., Offcurve), node(1., 1., Line)],
         };
@@ -2065,6 +2268,7 @@ mod tests {
         let three = PathDto {
             locked: false,
             stroke: None,
+            mask: false,
             closed: true,
             nodes: vec![
                 node(0., 0., Line),
@@ -2078,6 +2282,7 @@ mod tests {
         let cubic = PathDto {
             locked: false,
             stroke: None,
+            mask: false,
             closed: false,
             nodes: vec![
                 node(0., 0., Line),
@@ -2090,6 +2295,7 @@ mod tests {
         let nan = PathDto {
             locked: false,
             stroke: None,
+            mask: false,
             closed: false,
             nodes: vec![node(f64::NAN, 0., Line)],
         };

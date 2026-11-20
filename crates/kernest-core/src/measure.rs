@@ -128,6 +128,7 @@ mod tests {
         l.shapes = vec![Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: true,
             nodes: vec![
                 Node::new(0.0, 0.0, NodeKind::Line),

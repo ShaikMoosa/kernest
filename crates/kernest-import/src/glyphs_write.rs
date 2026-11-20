@@ -183,7 +183,12 @@ fn shapes_list(list: &[Shape], attr: Option<&str>) -> String {
                     .map(|s| format!("strokeWidth = {};", num(s.width))),
                 _ => None,
             };
-            let all: Vec<&str> = attr.into_iter().chain(stroke.as_deref()).collect();
+            let mask = matches!(sh, Shape::Path(p) if p.mask).then_some("mask = 1;");
+            let all: Vec<&str> = attr
+                .into_iter()
+                .chain(stroke.as_deref())
+                .chain(mask)
+                .collect();
             if !all.is_empty() {
                 text.pop();
                 let _ = write!(text, "attr = {{\n{}\n}};\n}}", all.join("\n"));
@@ -304,7 +309,9 @@ fn layer_body(l: &Layer) -> String {
 
 fn layer_body_with(l: &Layer, attr: Option<&str>) -> String {
     format!(
-        "{}{}{}{}{}{}width = {};",
+        "{}{}{}{}{}{}{}{}width = {};",
+        annotations(l),
+        background_image(l),
         metrics_keys(l),
         anchors(l),
         background(l),
@@ -313,6 +320,85 @@ fn layer_body_with(l: &Layer, attr: Option<&str>) -> String {
         stroke_data(l),
         num(l.width)
     )
+}
+
+/// A layer's annotations as Glyphs writes them.
+fn annotations(l: &Layer) -> String {
+    use kernest_core::AnnotationKind as K;
+    if l.annotations.is_empty() {
+        return String::new();
+    }
+    let items: Vec<String> = l
+        .annotations
+        .iter()
+        .map(|a| {
+            let kind = match a.kind {
+                K::Text => "Text",
+                K::Arrow => "Arrow",
+                K::Circle => "Circle",
+                K::Plus => "Plus",
+                K::Minus => "Minus",
+            };
+            let mut e = String::from("{\n");
+            if a.angle != 0.0 {
+                let _ = writeln!(e, "angle = {};", num(a.angle));
+            }
+            let _ = writeln!(e, "pos = ({},{});", num(a.x), num(a.y));
+            if !a.text.is_empty() {
+                let _ = writeln!(e, "text = {};", q(&a.text));
+            }
+            let _ = writeln!(e, "type = {kind};");
+            if a.size != 0.0 {
+                let _ = writeln!(e, "width = {};", num(a.size));
+            }
+            e.push('}');
+            e
+        })
+        .collect();
+    format!("annotations = (\n{}\n);\n", items.join(",\n"))
+}
+
+/// A layer's placed image as a Glyphs `backgroundImage`.
+fn background_image(l: &Layer) -> String {
+    let Some(im) = &l.image else {
+        return String::new();
+    };
+    let r = im.angle.to_radians();
+    let t = [
+        im.scale_x * r.cos(),
+        im.scale_x * r.sin(),
+        -im.scale_y * r.sin(),
+        im.scale_y * r.cos(),
+        im.x,
+        im.y,
+    ];
+    let mut e = String::from("backgroundImage = {\n");
+    if let Some(c) = im.crop {
+        let _ = writeln!(
+            e,
+            "crop = \"{{{{{}, {}}}, {{{}, {}}}}}\";",
+            num(c[0]),
+            num(c[1]),
+            num(c[2]),
+            num(c[3])
+        );
+    }
+    let _ = writeln!(e, "imagePath = {};", q(&im.path));
+    if im.locked {
+        e.push_str("locked = 1;\n");
+    }
+    let _ = writeln!(
+        e,
+        "transform = \"{{{}, {}, {}, {}, {}, {}}}\";",
+        num(t[0]),
+        num(t[1]),
+        num(t[2]),
+        num(t[3]),
+        num(t[4]),
+        num(t[5])
+    );
+    e.push_str("};\n");
+    e
 }
 
 /// Kernest's full stroke settings (caps, joins, pen points, brush) by path number,
@@ -328,12 +414,23 @@ fn stroke_data(l: &Layer) -> String {
         .enumerate()
         .filter_map(|(i, p)| p.stroke.as_ref().map(|s| (i, s)))
         .collect();
-    if strokes.is_empty() {
-        return String::new();
+    let mut body = String::new();
+    if !strokes.is_empty() {
+        let json = serde_json::to_string(&strokes).unwrap_or_default();
+        body.push_str(&format!("\"{STROKE_KEY}\" = {};\n", q(&json)));
     }
-    let json = serde_json::to_string(&strokes).unwrap_or_default();
-    format!("userData = {{\n\"{STROKE_KEY}\" = {};\n}};\n", q(&json))
+    if !l.hoi.is_empty() {
+        let json = serde_json::to_string(&l.hoi).unwrap_or_default();
+        body.push_str(&format!("\"{HOI_KEY}\" = {};\n", q(&json)));
+    }
+    if body.is_empty() {
+        return body;
+    }
+    format!("userData = {{\n{body}}};\n")
 }
+
+/// The userData key that holds Kernest's interpolation curves.
+pub(crate) const HOI_KEY: &str = "com.kernest.hoi";
 
 /// The userData key that holds Kernest's stroke settings.
 pub(crate) const STROKE_KEY: &str = "com.kernest.strokes";
@@ -828,6 +925,24 @@ pub fn glyphs_source(font: &Font) -> String {
             entries.join("\n")
         ));
     }
+    for vm in &info.virtual_masters {
+        let entries: Vec<String> = vm
+            .location
+            .iter()
+            .filter_map(|(tag, v)| {
+                let axis = font.axes.iter().find(|a| &a.tag == tag)?;
+                Some(format!(
+                    "{{\nAxis = {};\nLocation = {};\n}}",
+                    q(&axis.name),
+                    num(*v)
+                ))
+            })
+            .collect();
+        params.push(format!(
+            "{{\nname = \"Virtual Master\";\nvalue = (\n{}\n);\n}}",
+            entries.join(",\n")
+        ));
+    }
     if info.use_typo_metrics {
         params.push("{\nname = \"Use Typo Metrics\";\nvalue = 1;\n}".to_string());
     }
@@ -1055,6 +1170,28 @@ pub fn glyphs_source(font: &Font) -> String {
                             let _ = writeln!(e, "linkStyle = {};", q(&link.base));
                         }
                     }
+                    let mut ip: Vec<String> = Vec::new();
+                    if !i.rename_glyphs.is_empty() {
+                        let v: Vec<String> = i
+                            .rename_glyphs
+                            .iter()
+                            .map(|[a, b]| q(&format!("{a}={b}")))
+                            .collect();
+                        ip.push(format!(
+                            "{{\nname = \"Rename Glyphs\";\nvalue = (\n{}\n);\n}}",
+                            v.join(",\n")
+                        ));
+                    }
+                    if !i.remove_glyphs.is_empty() {
+                        let v: Vec<String> = i.remove_glyphs.iter().map(|g| q(g)).collect();
+                        ip.push(format!(
+                            "{{\nname = \"Remove Glyphs\";\nvalue = (\n{}\n);\n}}",
+                            v.join(",\n")
+                        ));
+                    }
+                    if !ip.is_empty() {
+                        let _ = writeln!(e, "customParameters = (\n{}\n);", ip.join(",\n"));
+                    }
                     let _ = writeln!(e, "name = {};\n}}", q(&i.name));
                     e
                 })
@@ -1064,6 +1201,17 @@ pub fn glyphs_source(font: &Font) -> String {
                 "{{\nname = fileName;\nvalue = {};\n}}",
                 q(&vf.file_name)
             )];
+            if !vf.rename_glyphs.is_empty() {
+                let v: Vec<String> = vf
+                    .rename_glyphs
+                    .iter()
+                    .map(|[a, b]| q(&format!("{a}={b}")))
+                    .collect();
+                vp.push(format!(
+                    "{{\nname = \"Rename Glyphs\";\nvalue = (\n{}\n);\n}}",
+                    v.join(",\n")
+                ));
+            }
             if !vf.glyphs.is_empty() {
                 let names: Vec<String> = vf.glyphs.iter().map(|g| q(g)).collect();
                 vp.push(format!(

@@ -11,6 +11,7 @@ fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Shape {
     Shape::Path(Path {
         locked: false,
         stroke: None,
+        mask: false,
         closed: true,
         nodes: vec![
             Node::new(x0, y0, NodeKind::Line),
@@ -54,6 +55,7 @@ fn ellipse(cx: f64, cy: f64, rx: f64, ry: f64, clockwise: bool) -> Shape {
     Shape::Path(Path {
         locked: false,
         stroke: None,
+        mask: false,
         closed: true,
         nodes,
     })

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
+import { backend, type Annotation, type HoiKind, type HoiView, type ImageData, type LayerImage, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
 import {
@@ -7,12 +7,15 @@ import {
   type Bounds, type EditNode, type EditPath,
 } from "../lib/outline";
 import { CloseIcon, SearchIcon } from "./Icons";
+import { pickImage } from "../lib/desktop";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { t, tn, translateMessage } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
 import { PaintDialog } from "./PaintDialog";
 import { PixelPreviewPanel } from "./PixelPreviewPanel";
 
-type Tool = "select" | "pen" | "rect" | "ellipse" | "knife" | "pixel" | "hand" | "measure";
+type Tool = "select" | "pen" | "rect" | "ellipse" | "knife" | "pixel" | "annotate" | "hoi" | "hand" | "measure";
+type AnnotSub = "select" | Annotation["kind"];
 interface Pt { x: number; y: number }
 interface View { s: number; ox: number; oy: number }
 /** A component as drawn: the server's outline plus a live offset while dragging. */
@@ -27,6 +30,8 @@ const TOOLS: { id: Tool; key: string; shift?: boolean; label: string; icon: Reac
   { id: "ellipse", key: "e", shift: true, label: "Ellipse (Shift+E)", icon: <ellipse cx="12" cy="12" rx="7.5" ry="6.5" /> },
   { id: "knife", key: "e", label: "Knife (E)", icon: <><path d="M4 20l9-9" /><path d="M13 11l3.2-5.4a2.1 2.1 0 0 1 3.6 2.1L15 13z" /></> },
   { id: "pixel", key: "x", label: "Pixel (X)", icon: <><rect x="4" y="4" width="7" height="7" /><rect x="13" y="13" width="7" height="7" /><rect x="4" y="13" width="7" height="7" opacity="0.4" /></> },
+  { id: "annotate", key: "a", label: "Annotate (A)", icon: <><path d="M5 4h14v11H9l-4 4z" /><path d="M9 9h6" /></> },
+  { id: "hoi", key: "i", label: "Interpolation curves (I)", icon: <><path d="M5 18C6 9 13 6 19 6" strokeDasharray="2 2" /><path d="M5 15l3 3-3 3-3-3z" /><path d="M19 3l3 3-3 3-3-3z" /></> },
   { id: "measure", key: "l", label: "Measure (L)", icon: <><path d="M4 20L20 4" /><path d="M4 15v5h5" /><path d="M20 9V4h-5" /></> },
   { id: "hand", key: "h", label: "Hand (H) · or hold Space", icon: <path d="M8 12V6.5a1.5 1.5 0 0 1 3 0V11V5a1.5 1.5 0 0 1 3 0v6V6.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-1a6 6 0 0 1-4.6-2.2L4 15a1.5 1.5 0 0 1 2.2-2z" /> },
 ];
@@ -189,6 +194,10 @@ interface Props {
   showGuides?: boolean;
   /** View › Show Background: the background drawing behind the outline. */
   showBackground?: boolean;
+  /** View › Show Image: the layer's placed image (always shown for empty glyphs). */
+  showImage?: boolean;
+  /** View › Show Annotations: review notes on the canvas. */
+  showAnnotations?: boolean;
   /** View › Show Bounding Box: a dashed box around the drawing. */
   showBoundingBox?: boolean;
   /** View › Show Sidebar: the Transform/Hints/Pixel preview column. */
@@ -203,7 +212,7 @@ interface Props {
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, masterKey, onPickLayer, reporters = [] }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showImage = true, showAnnotations = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, masterKey, onPickLayer, reporters = [] }: Props) {
   const master = masterKey ?? masterId;
   const nodeScale = handleSize === "small" ? 0.75 : handleSize === "large" ? 1.5 : 1;
   // ---------- Reporter plug-ins ----------
@@ -372,6 +381,21 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   // Choosing a corner, cap or segment glyph for a node.
   const [partPick, setPartPick] = useState<{ kind: PathPart["kind"]; path: number; node: number } | null>(null);
   const [partsOpen, setPartsOpen] = useState(true);
+  // Placed image: its picture, a live drag offset, and the panel.
+  const [imageData, setImageData] = useState<ImageData | null>(null);
+  const [imgDrag, setImgDrag] = useState<{ dx: number; dy: number } | null>(null);
+  const [imageOpen, setImageOpen] = useState(false);
+  // Annotation tool: the palette's sub-tool, the selected note, a live drag offset.
+  const [annSub, setAnnSub] = useState<AnnotSub>("select");
+  const [annSel, setAnnSel] = useState<number | null>(null);
+  const [annDrag, setAnnDrag] = useState<{ dx: number; dy: number } | null>(null);
+  // Interpolation curves (HOI tool): the view for this layer, the axis, the chosen node, a live knob.
+  const [hoi, setHoi] = useState<HoiView | null>(null);
+  const [hoiAxis, setHoiAxis] = useState("");
+  const [hoiSel, setHoiSel] = useState<{ pi: number; ni: number } | null>(null);
+  const [hoiDrag, setHoiDrag] = useState<{ pi: number; ni: number; x: number; y: number } | null>(null);
+  const [shapesOpen, setShapesOpen] = useState(false);
+  const [orderAll, setOrderAll] = useState(true);
   // A smart handle being dragged: which component, which handle, the value so far.
   const [smartDrag, setSmartDrag] = useState<{ ci: number; h: SmartHandle; value: number } | null>(null);
   const [localGuides, setLocalGuides] = useState<Guide[]>([]);
@@ -597,6 +621,66 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     });
   }, [glyph, masterId, accept, onError]);
 
+  const saveAnnotations = useCallback((list: Annotation[]) => {
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await backend.setAnnotations(glyph, masterId, list));
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [glyph, masterId, accept, onError]);
+
+  /** Glyph › Add Image… (or the Image panel): pick a file and place it. */
+  const addImage = useCallback(async () => {
+    try {
+      const file = await pickImage();
+      if (!file) return;
+      accept(await backend.addLayerImage(glyph, masterId, file));
+      setImageOpen(true);
+    } catch (e) {
+      onError(e);
+    }
+  }, [glyph, masterId, accept, onError]);
+
+  // The placed image's picture: fetched when the image (or its file) changes.
+  const imagePath = layer?.image?.path ?? null;
+  useEffect(() => {
+    if (!imagePath) { setImageData(null); return; }
+    let live = true;
+    backend.layerImageData(glyph, masterId).then((d) => { if (live) setImageData(d); }, () => { if (live) setImageData(null); });
+    return () => { live = false; };
+  }, [glyph, masterId, imagePath]);
+  useEffect(() => {
+    if (tool !== "hoi") { setHoi(null); setHoiSel(null); return; }
+    let live = true;
+    backend.hoiView(glyph, masterId, hoiAxis).then((v) => { if (live) setHoi(v); }, (e) => { if (live) { setHoi(null); onError(e); } });
+    return () => { live = false; };
+    // The layer object changes after every edit, which refreshes the curves.
+  }, [glyph, masterId, tool, hoiAxis, layer, onError]);
+  useEffect(() => {
+    if (!active || tool !== "annotate" || annSel === null) return;
+    const on = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const list = layer?.annotations ?? [];
+        saveAnnotations(list.filter((_, i) => i !== annSel));
+        setAnnSel(null);
+      }
+    };
+    window.addEventListener("keydown", on, true);
+    return () => window.removeEventListener("keydown", on, true);
+  }, [active, tool, annSel, layer, saveAnnotations]);
+  useEffect(() => {
+    if (!active) return;
+    const on = () => { addImage(); };
+    window.addEventListener("kernest:add-image", on);
+    return () => window.removeEventListener("kernest:add-image", on);
+  }, [active, addImage]);
+
   /** Runs a stroke command and shows the layer it returns. */
   const strokeCall = useCallback((run: () => Promise<LayerView>) => {
     chain.current = chain.current.then(async () => {
@@ -813,6 +897,22 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     const r = svgRef.current!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
+  /** Every on-curve node with where it goes: the next master up and down, its curve and the midpoint knob. */
+  const hoiKnobs = () => {
+    const out: { pi: number; ni: number; p0: [number, number]; p1?: [number, number]; down?: [number, number]; kind: HoiKind | null; mid: [number, number] }[] = [];
+    if (!hoi) return out;
+    paths.forEach((path, pi) => path.nodes.forEach((n, ni) => {
+      if (!isOn(n)) return;
+      const p0: [number, number] = [n.x, n.y];
+      const p1 = hoi.up?.[pi]?.[ni];
+      const down = hoi.down?.[pi]?.[ni];
+      let kind: HoiKind | null = hoi.curves.find((c) => c.path === pi && c.node === ni)?.kind ?? null;
+      if (hoiDrag && hoiDrag.pi === pi && hoiDrag.ni === ni) kind = { type: "through", x: hoiDrag.x, y: hoiDrag.y };
+      const mid = p1 ? hoiAt(kind, p0, p1, 0.5) : p0;
+      out.push({ pi, ni, p0, p1, down, kind, mid });
+    }));
+    return out;
+  };
   const gridStep = layer?.grid && layer.grid.spacing > 0 && layer.grid.subdivision > 0 ? layer.grid.spacing / layer.grid.subdivision : 0;
   const snapV = (v: number) => (gridStep ? Math.round(v / gridStep) * gridStep : Math.round(v));
   const round = (p: Pt): Pt => ({ x: snapV(p.x), y: snapV(p.y) });
@@ -866,6 +966,37 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   }
 
   /** Topmost component whose filled outline contains the point. */
+  /** The annotation under a screen point: near its spot, or on a circle's ring. */
+  function hitAnnotation(sp: Pt): number | null {
+    const list = layer?.annotations ?? [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const a = list[i];
+      const p = toScreen(a.x, a.y);
+      const d = Math.hypot(p.x - sp.x, p.y - sp.y);
+      if (a.kind === "circle" && Math.abs(d - ((a.size || 120) / 2) * view.s) <= HIT + 2) return i;
+      if (a.kind === "text") {
+        const w = Math.max(60, (a.size || 200) * view.s);
+        const lines = (a.text || "x").split("\n").length;
+        if (sp.x >= p.x && sp.x <= p.x + w && sp.y >= p.y && sp.y <= p.y + lines * 16 + 12) return i;
+      }
+      if (d <= HIT + 6) return i;
+    }
+    return null;
+  }
+
+  /** Whether a font-unit point is on the (unlocked, shown) placed image. */
+  function hitImage(wp: Pt): boolean {
+    const im = layer?.image;
+    if (!im || im.locked || !showImage || !imageData?.width) return false;
+    // Into the image's own frame: undo the position, the rotation and the scale.
+    const r = (-(im.angle ?? 0) * Math.PI) / 180;
+    const dx = wp.x - im.x, dy = wp.y - im.y;
+    const lx = (dx * Math.cos(r) - dy * Math.sin(r)) / im.scaleX;
+    const ly = (dx * Math.sin(r) + dy * Math.cos(r)) / im.scaleY;
+    const [cx, cy, cw, ch] = im.crop ?? [0, 0, imageData.width, imageData.height];
+    return lx >= cx && lx <= cx + cw && ly >= cy && ly <= cy + ch;
+  }
+
   function hitComponent(wp: Pt): number | null {
     const els = svgRef.current?.querySelectorAll<SVGPathElement>("path[data-comp]") ?? [];
     for (let i = els.length - 1; i >= 0; i--) {
@@ -935,6 +1066,37 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       setMeasureLine({ p0: p, p1: p });
       setMeasurement(null);
       drag.current = { mode: "measure", startScreen: sp, startWorld: p, base, baseComps, baseAnchors, moved: false };
+      return;
+    }
+
+    if (activeTool === "annotate") {
+      const list = layer.annotations ?? [];
+      if (annSub === "select") {
+        const hit = hitAnnotation(sp);
+        setAnnSel(hit);
+        if (hit !== null) drag.current = { mode: "annot", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
+        return;
+      }
+      const p = round(wp);
+      const fresh: Annotation = { kind: annSub, x: p.x, y: p.y, ...(annSub === "arrow" ? { angle: 225 } : {}), ...(annSub === "circle" ? { size: 120 } : {}), ...(annSub === "text" ? { text: "", size: 200 } : {}) };
+      saveAnnotations([...list, fresh]);
+      setAnnSel(list.length);
+      if (annSub === "text") setAnnSub("select");
+      return;
+    }
+
+    if (activeTool === "hoi") {
+      // A midpoint knob starts a drag; a node chooses which curve the panel edits.
+      for (const k of hoiKnobs()) {
+        const s = toScreen(k.mid[0], k.mid[1]);
+        if (Math.hypot(s.x - sp.x, s.y - sp.y) <= HIT) {
+          setHoiSel({ pi: k.pi, ni: k.ni });
+          if (hoi?.up) drag.current = { mode: "hoi", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, pi: k.pi, ni: k.ni };
+          return;
+        }
+      }
+      const node = hoiKnobs().find((k) => { const s = toScreen(k.p0[0], k.p0[1]); return Math.hypot(s.x - sp.x, s.y - sp.y) <= HIT; });
+      setHoiSel(node ? { pi: node.pi, ni: node.ni } : null);
       return;
     }
 
@@ -1039,6 +1201,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           drag.current = { mode: "new-guide", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, angle };
         } else {
           if (!e.shiftKey) { setSelection(new Set()); setCompSel(new Set()); setAnchorSel(new Set()); }
+          if (!e.shiftKey && hitImage(wp)) {
+            drag.current = { mode: "image", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
+            return;
+          }
           drag.current = { mode: "marquee", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, additive: e.shiftKey };
         }
       }
@@ -1105,6 +1271,19 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     if (!d.moved && Math.hypot(sp.x - d.startScreen.x, sp.y - d.startScreen.y) < 3) return;
     d.moved = true;
 
+    if (d.mode === "image") {
+      setImgDrag({ dx: Math.round(wp.x - d.startWorld.x), dy: Math.round(wp.y - d.startWorld.y) });
+      return;
+    }
+    if (d.mode === "hoi") {
+      const p = round(wp);
+      setHoiDrag({ pi: d.pi!, ni: d.ni!, x: p.x, y: p.y });
+      return;
+    }
+    if (d.mode === "annot") {
+      setAnnDrag({ dx: Math.round(wp.x - d.startWorld.x), dy: Math.round(wp.y - d.startWorld.y) });
+      return;
+    }
     if (d.mode === "smart") {
       setSmartDrag((sd) => {
         if (!sd) return sd;
@@ -1220,6 +1399,30 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     const d = drag.current;
     drag.current = null;
     if (!d) return;
+    if (d.mode === "image") {
+      const off = imgDrag;
+      setImgDrag(null);
+      if (off && d.moved && layer?.image && (off.dx || off.dy)) {
+        const im = layer.image;
+        strokeCall(() => backend.setLayerImage(glyph, masterId, { ...im, x: im.x + off.dx, y: im.y + off.dy }));
+      }
+      return;
+    }
+    if (d.mode === "hoi") {
+      const k = hoiDrag;
+      setHoiDrag(null);
+      if (k && d.moved && hoi) strokeCall(() => backend.setHoi(glyph, masterId, hoi.axis, k.pi, k.ni, { type: "through", x: k.x, y: k.y }));
+      return;
+    }
+    if (d.mode === "annot") {
+      const off = annDrag;
+      setAnnDrag(null);
+      if (off && d.moved && annSel !== null && (off.dx || off.dy)) {
+        const list = layer?.annotations ?? [];
+        saveAnnotations(list.map((a, i) => (i === annSel ? { ...a, x: a.x + off.dx, y: a.y + off.dy } : a)));
+      }
+      return;
+    }
     if (d.mode === "smart") {
       const sd = smartDrag;
       setSmartDrag(null);
@@ -1725,6 +1928,34 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               ? <line key={`hint${i}`} x1={x} x2={x} y1={top} y2={bot} className={`hint-ghost${auto ? " is-auto" : ""}`} pointerEvents="none" />
               : <rect key={`hint${i}`} x={x} y={top} width={h.width * view.s} height={bot - top} className={`hint-band${auto ? " is-auto" : ""}`} pointerEvents="none" />;
           })}
+          {/* Placed image (a scan to trace): never exports; shown for empty glyphs too. */}
+          {layer.image && (showImage || (paths.length === 0 && comps.length === 0)) && (() => {
+            const im = layer.image;
+            const off = imgDrag ?? { dx: 0, dy: 0 };
+            const ok = imageData?.dataUrl && imageData.width > 0;
+            if (!ok) {
+              const a = toScreen(im.x + off.dx, im.y + off.dy + 400), b = toScreen(im.x + off.dx + 400, im.y + off.dy);
+              return (
+                <g pointerEvents="none">
+                  <rect x={a.x} y={a.y} width={b.x - a.x} height={b.y - a.y} className="image-missing" />
+                  <text x={a.x + 12} y={a.y + 24} className="image-missing-label">{t("Image not found")}</text>
+                  <text x={a.x + 12} y={a.y + 42} className="image-missing-file">{im.path}</text>
+                </g>
+              );
+            }
+            const w = imageData!.width, h = imageData!.height;
+            const crop = im.crop ?? [0, 0, w, h];
+            const clipId = `imgclip-${glyph.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+            return (
+              <g transform={world} pointerEvents="none">
+                <g transform={`translate(${im.x + off.dx} ${im.y + off.dy}) rotate(${im.angle ?? 0}) scale(${im.scaleX} ${-im.scaleY})`}>
+                  <clipPath id={clipId}><rect x={crop[0]} y={-(crop[1] + crop[3])} width={crop[2]} height={crop[3]} /></clipPath>
+                  <image href={imageData!.dataUrl!} x={0} y={-h} width={w} height={h} clipPath={`url(#${clipId})`} preserveAspectRatio="none" className={`layer-image${im.locked ? " is-locked" : ""}`} />
+                  <rect x={crop[0]} y={-(crop[1] + crop[3])} width={crop[2]} height={crop[3]} className="layer-image-frame" vectorEffect="non-scaling-stroke" />
+                </g>
+              </g>
+            );
+          })()}
           {/* Background: a reference drawing behind the outline; never exports. */}
           {showBackground && !editingBackground && layer.background && (
             <g transform={world} pointerEvents="none">
@@ -1738,7 +1969,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             {editingBackground && <path d={pathsToSvg(layer.paths) + layer.componentSvg} className="background-fill" fillRule="nonzero" pointerEvents="none" />}
             {comps.map((c, i) => (
               <g key={`c${i}`} transform={`translate(${c.dx} ${c.dy})`}>
-                <path d={c.svg} data-comp={i} className={`component-fill${compSel.has(i) ? " is-selected" : ""}`} />
+                <path d={c.svg} data-comp={i} className={`component-fill${compSel.has(i) ? " is-selected" : ""}${layer.engineAll ? " is-masked-away" : ""}`} />
               </g>
             ))}
             {/* Smart handles: drag along the axis' line to set its value. */}
@@ -1767,7 +1998,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               <path d={pathsToSvg(paths.filter((p, i) => i !== focusPath && !p.stroke && !enginePaths.has(i)))} className="glyph-fill is-dimmed" fillRule="nonzero" pointerEvents="none" />
               {!paths[focusPath].stroke && !enginePaths.has(focusPath) && <path d={pathsToSvg([paths[focusPath]])} className="glyph-fill" fillRule="nonzero" />}
             </> : <path d={outline} className="glyph-fill" fillRule="nonzero" />}
+            {layer.engineAll && <path d={pathsToSvg(paths.filter((p) => !p.mask && !p.stroke))} className="glyph-fill is-masked-away" fillRule="nonzero" pointerEvents="none" />}
             {layer.strokeSvg && <path d={layer.strokeSvg} className="glyph-fill" fillRule="nonzero" pointerEvents="none" />}
+            {paths.some((p) => p.mask) && <path d={pathsToSvg(paths.filter((p) => p.mask))} className="mask-outline" fill="none" strokeWidth={1.5 / view.s} pointerEvents="none" />}
             {(layer.parts ?? []).map((pt, i) => {
               const nd = paths[pt.path]?.nodes[pt.node];
               if (!nd) return null;
@@ -1922,6 +2155,66 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               </g>
             );
           })()}
+          {showAnnotations && (layer.annotations ?? []).map((a, i) => {
+            const off = annDrag && annSel === i ? annDrag : { dx: 0, dy: 0 };
+            const p = toScreen(a.x + off.dx, a.y + off.dy);
+            const sel = activeTool === "annotate" && annSel === i;
+            const cls = `annotation is-${a.kind}${sel ? " is-selected" : ""}`;
+            if (a.kind === "text") {
+              const w = (a.size || 200) * view.s;
+              const lines = (a.text || t("Note")).split("\n");
+              return (
+                <g key={`an${i}`} className={cls} pointerEvents="none">
+                  <rect x={p.x} y={p.y} width={Math.max(60, w)} height={lines.length * 16 + 12} rx={4} />
+                  <text x={p.x + 8} y={p.y + 18}>{lines.map((l, k) => <tspan key={k} x={p.x + 8} dy={k ? 16 : 0}>{l}</tspan>)}</text>
+                </g>
+              );
+            }
+            if (a.kind === "arrow") {
+              const r = ((a.angle ?? 0) * Math.PI) / 180;
+              const dx = Math.cos(r), dy = -Math.sin(r);
+              const tail = { x: p.x - dx * 90, y: p.y - dy * 90 };
+              const head = (s: number) => ({ x: p.x - dx * 14 + -dy * 7 * s, y: p.y - dy * 14 + dx * 7 * s });
+              const h1 = head(1), h2 = head(-1);
+              return (
+                <g key={`an${i}`} className={cls} pointerEvents="none">
+                  <line x1={tail.x} y1={tail.y} x2={p.x} y2={p.y} />
+                  <path d={`M${h1.x} ${h1.y}L${p.x} ${p.y}L${h2.x} ${h2.y}`} fill="none" />
+                </g>
+              );
+            }
+            if (a.kind === "circle") {
+              return <circle key={`an${i}`} className={cls} cx={p.x} cy={p.y} r={((a.size || 120) / 2) * view.s} fill="none" pointerEvents="none" />;
+            }
+            return (
+              <g key={`an${i}`} className={cls} pointerEvents="none">
+                <line x1={p.x - 9} y1={p.y} x2={p.x + 9} y2={p.y} />
+                {a.kind === "plus" && <line x1={p.x} y1={p.y - 9} x2={p.x} y2={p.y + 9} />}
+              </g>
+            );
+          })}
+          {activeTool === "hoi" && hoi && hoiKnobs().map((k) => {
+            const sel = hoiSel?.pi === k.pi && hoiSel.ni === k.ni;
+            const cur = toScreen(k.p0[0], k.p0[1]);
+            const dia = (p: Pt, cls: string) => <path className={cls} d={`M${p.x} ${p.y - 5}L${p.x + 5} ${p.y}L${p.x} ${p.y + 5}L${p.x - 5} ${p.y}Z`} />;
+            let line = "";
+            if (k.p1) {
+              for (let i = 0; i <= 24; i++) {
+                const q = hoiAt(k.kind, k.p0, k.p1, i / 24), s = toScreen(q[0], q[1]);
+                line += `${i ? "L" : "M"}${s.x} ${s.y}`;
+              }
+            }
+            const mid = toScreen(k.mid[0], k.mid[1]);
+            return (
+              <g key={`hoi${k.pi}:${k.ni}`} className={`hoi${sel ? " is-selected" : ""}${k.kind ? " is-curved" : ""}`} pointerEvents="none">
+                {line && <path className="hoi-line" d={line} fill="none" />}
+                {k.down && dia(toScreen(k.down[0], k.down[1]), "hoi-down")}
+                {k.p1 && dia(toScreen(k.p1[0], k.p1[1]), "hoi-up")}
+                {dia(cur, "hoi-here")}
+                {k.p1 && <circle className="hoi-knob" cx={mid.x} cy={mid.y} r={4} />}
+              </g>
+            );
+          })}
           {smartDrag && (() => {
             const c = comps[smartDrag.ci];
             const { h } = smartDrag;
@@ -1940,6 +2233,89 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           })()}
           {marquee && <rect className="marquee" x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)} />}
         </svg>
+        {activeTool === "annotate" && (() => {
+          const list = layer.annotations ?? [];
+          const sel = annSel !== null ? list[annSel] : undefined;
+          const put = (patch: Partial<Annotation>) => annSel !== null && saveAnnotations(list.map((x, i) => (i === annSel ? { ...x, ...patch } : x)));
+          const tools: [AnnotSub, string, string][] = [["select", "↖", t("Select annotations")], ["text", "T", t("Text note")], ["arrow", "↗", t("Arrow")], ["circle", "○", t("Circle")], ["plus", "+", t("Plus: make thicker")], ["minus", "−", t("Minus: make thinner")]];
+          return (
+            <div className="annot-palette" role="toolbar" aria-label={t("Annotate")}>
+              <span className="k-caption muted">{t("Annotate")}</span>
+              {tools.map(([id, glyphChar, label]) => (
+                <button key={id} type="button" className={`icon-btn${annSub === id ? " is-active" : ""}`} aria-pressed={annSub === id} title={label} aria-label={label} onClick={() => setAnnSub(id)}>{glyphChar}</button>
+              ))}
+              {sel && <>
+                <span className="toolbar-sep" />
+                {sel.kind === "text" && (
+                  <textarea className="metric-input annot-text-input" rows={2} defaultValue={sel.text ?? ""} key={`${annSel}:${sel.text}`} aria-label={t("Note")} placeholder={t("Note")}
+                    onBlur={(e) => { const v = e.currentTarget.value; if (v !== (sel.text ?? "")) put({ text: v }); }} />
+                )}
+                {sel.kind === "arrow" && <MetricField onInvalid={onError} label={t("Angle °")} value={sel.angle ?? 0} onCommit={(v) => put({ angle: v })} />}
+                {(sel.kind === "circle" || sel.kind === "text") && <MetricField onInvalid={onError} label={sel.kind === "circle" ? t("Diameter") : t("Width")} value={sel.size || (sel.kind === "circle" ? 120 : 200)} onCommit={(v) => put({ size: Math.max(1, v) })} />}
+                <button type="button" className="icon-btn" aria-label={t("Delete annotation")} title={t("Delete annotation")}
+                  onClick={() => { saveAnnotations(list.filter((_, i) => i !== annSel)); setAnnSel(null); }}><CloseIcon size={14} /></button>
+              </>}
+            </div>
+          );
+        })()}
+        {activeTool === "hoi" && hoi && (() => {
+          const k = hoiSel ? hoiKnobs().find((x) => x.pi === hoiSel.pi && x.ni === hoiSel.ni) : undefined;
+          const put = (kind: HoiKind | null) => k && strokeCall(() => backend.setHoi(glyph, masterId, hoi.axis, k.pi, k.ni, kind));
+          const kind = k?.kind ?? null;
+          const type = kind?.type ?? "linear";
+          const midOf = (a: [number, number], b: [number, number]): [number, number] => [Math.round((a[0] + b[0]) / 2), Math.round((a[1] + b[1]) / 2)];
+          const choose = (v: string) => {
+            if (!k?.p1) return;
+            const [p0, p1] = [k.p0, k.p1];
+            if (v === "linear") put(null);
+            else if (v === "through") { const m = midOf(p0, p1); put({ type: "through", x: m[0], y: m[1] }); }
+            else if (v === "handles") put({ type: "handles", a: [Math.round(p0[0] + (p1[0] - p0[0]) / 3), Math.round(p0[1] + (p1[1] - p0[1]) / 3)], b: [Math.round(p0[0] + ((p1[0] - p0[0]) * 2) / 3), Math.round(p0[1] + ((p1[1] - p0[1]) * 2) / 3)] });
+            else put({ type: "rotation", center: midOf(p0, p1), turn: "auto" });
+          };
+          return (
+            <div className="annot-palette hoi-panel" role="toolbar" aria-label={t("Interpolation curves")}>
+              <span className="k-caption muted">{t("Interpolation curves")}</span>
+              {hoi.axes.length > 1 && (
+                <select className="metric-input" aria-label={t("Axis")} value={hoi.axis} onChange={(e) => { setHoiAxis(e.target.value); setHoiSel(null); }}>
+                  {hoi.axes.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+              )}
+              {hoi.axes.length === 0 && <span className="k-caption">{t("Interpolation curves need two masters on an axis.")}</span>}
+              {hoi.axes.length > 0 && !hoi.upName && <span className="k-caption">{t("No master further up this axis: curves go on the lower master.")}</span>}
+              {hoi.upName && !hoi.up && <span className="k-caption">{t("{name} isn't compatible with this master.", { name: hoi.upName })}</span>}
+              {hoi.upName && hoi.up && !k && <span className="k-caption muted">{t("To {name}: pick a node.", { name: hoi.upName })}</span>}
+              {k?.p1 && <>
+                <span className="toolbar-sep" />
+                <select className="metric-input" aria-label={t("Curve type")} value={type} onChange={(e) => choose(e.target.value)}>
+                  <option value="linear">{t("Linear")}</option>
+                  <option value="through">{t("Intermediate point")}</option>
+                  <option value="handles">{t("Handles")}</option>
+                  <option value="rotation">{t("Rotation")}</option>
+                </select>
+                {kind?.type === "through" && <>
+                  <MetricField onInvalid={onError} label="X" value={kind.x} onCommit={(v) => put({ ...kind, x: v })} />
+                  <MetricField onInvalid={onError} label="Y" value={kind.y} onCommit={(v) => put({ ...kind, y: v })} />
+                </>}
+                {kind?.type === "handles" && <>
+                  <MetricField onInvalid={onError} label={t("Handle 1 X")} value={kind.a[0]} onCommit={(v) => put({ ...kind, a: [v, kind.a[1]] })} />
+                  <MetricField onInvalid={onError} label={t("Handle 1 Y")} value={kind.a[1]} onCommit={(v) => put({ ...kind, a: [kind.a[0], v] })} />
+                  <MetricField onInvalid={onError} label={t("Handle 2 X")} value={kind.b[0]} onCommit={(v) => put({ ...kind, b: [v, kind.b[1]] })} />
+                  <MetricField onInvalid={onError} label={t("Handle 2 Y")} value={kind.b[1]} onCommit={(v) => put({ ...kind, b: [kind.b[0], v] })} />
+                </>}
+                {kind?.type === "rotation" && <>
+                  <MetricField onInvalid={onError} label={t("Center X")} value={kind.center[0]} onCommit={(v) => put({ ...kind, center: [v, kind.center[1]] })} />
+                  <MetricField onInvalid={onError} label={t("Center Y")} value={kind.center[1]} onCommit={(v) => put({ ...kind, center: [kind.center[0], v] })} />
+                  <button type="button" className="btn btn-secondary btn-sm" title={t("Put the centre halfway between the two masters' positions")} onClick={() => put({ ...kind, center: midOf(k.p0, k.p1!) })}>{t("Center")}</button>
+                  <select className="metric-input" aria-label={t("Direction")} value={kind.turn ?? "auto"} onChange={(e) => put({ ...kind, turn: e.target.value as "auto" | "clockwise" | "counterclockwise" })}>
+                    <option value="auto">{t("Auto")}</option>
+                    <option value="clockwise">{t("Clockwise")}</option>
+                    <option value="counterclockwise">{t("Counterclockwise")}</option>
+                  </select>
+                </>}
+              </>}
+            </div>
+          );
+        })()}
         {askPixelGlyph && (
           <div className="scrim" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && setAskPixelGlyph(false)}>
             <div className="dialog dialog-sm" role="dialog" aria-modal="true" aria-labelledby="pixel-glyph-title">
@@ -2195,6 +2571,114 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           )}
         </div>
         )}
+        <div className="transform-panel image-panel">
+          <button type="button" className="transform-head" aria-expanded={imageOpen} onClick={() => setImageOpen((o) => !o)}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+            {t("Image")}
+            {layer.image && <span className="k-caption muted">{layer.image.path.split(/[\\/]/).pop()}</span>}
+          </button>
+          {imageOpen && (() => {
+            const disabled = editingBackground || layer.glyphLocked;
+            const im = layer.image;
+            if (!im) {
+              return (
+                <div className="transform-body">
+                  <p className="k-caption muted stroke-note">{t("Place a scan or sketch behind the outline to trace it. Images never export.")}</p>
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={addImage}>{t("Add Image…")}</button>
+                </div>
+              );
+            }
+            const w = imageData?.width ?? 0, h = imageData?.height ?? 0;
+            const put = (patch: Partial<LayerImage>) => strokeCall(() => backend.setLayerImage(glyph, masterId, { ...im, ...patch }));
+            return (
+              <div className="transform-body stroke-body">
+                {!imageData?.dataUrl && <p className="notice notice-warning k-caption">{t("Image not found: {file}", { file: imageData?.file ?? im.path })}</p>}
+                <div className="part-scale">
+                  <MetricField onInvalid={onError} label="X" value={im.x} disabled={disabled || im.locked} onCommit={(v) => put({ x: v })} />
+                  <MetricField onInvalid={onError} label="Y" value={im.y} disabled={disabled || im.locked} onCommit={(v) => put({ y: v })} />
+                </div>
+                <div className="part-scale">
+                  <MetricField onInvalid={onError} label={t("W")} value={w ? w * im.scaleX : null} disabled={disabled || im.locked || !w} onCommit={(v) => w && put({ scaleX: v / w })} />
+                  <MetricField onInvalid={onError} label={t("H")} value={h ? h * im.scaleY : null} disabled={disabled || im.locked || !h} onCommit={(v) => h && put({ scaleY: v / h })} />
+                  <MetricField onInvalid={onError} decimals label={t("Rotate °")} value={im.angle ?? 0} disabled={disabled || im.locked} onCommit={(v) => put({ angle: v })} />
+                </div>
+                <label className="check-row" title={t("A locked image can't be moved or changed")}>
+                  <input type="checkbox" checked={!!im.locked} disabled={disabled} onChange={(e) => put({ locked: e.target.checked })} />
+                  <span className="k-body">{t("Lock image")}</span>
+                </label>
+                <div className="hints-add">
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={disabled || im.locked || !w}
+                    title={t("Show only the part of the image inside the glyph's width, from descender to ascender")}
+                    onClick={() => {
+                      const { ascender, descender } = layer.metrics;
+                      const cx = Math.max(0, (0 - im.x) / im.scaleX), cy = Math.max(0, (descender - im.y) / im.scaleY);
+                      const cw = Math.min(w - cx, layer.width / im.scaleX), ch = Math.min(h - cy, (ascender - descender) / im.scaleY);
+                      if (cw > 0 && ch > 0) put({ crop: [cx, cy, cw, ch] });
+                    }}>{t("Crop to Layer Bounds")}</button>
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={disabled || im.locked || !im.crop} onClick={() => put({ crop: null })}>{t("Reset Crop")}</button>
+                </div>
+                <div className="hints-add">
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={!imageData?.dataUrl} onClick={() => imageData && revealItemInDir(imageData.file).catch(onError)}>{t("Reveal")}</button>
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={addImage}>{t("Replace…")}</button>
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => strokeCall(() => backend.setLayerImage(glyph, masterId, null))}>{t("Remove")}</button>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+        <div className="transform-panel shapes-panel">
+          <button type="button" className="transform-head" aria-expanded={shapesOpen} onClick={() => setShapesOpen((o) => !o)}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+            {t("Shapes")}
+            <span className="k-caption muted">{paths.length + comps.length}</span>
+          </button>
+          {shapesOpen && (() => {
+            const disabled = editingBackground || layer.glyphLocked;
+            // The layer's shapes in drawing order: paths and components interleaved as stored.
+            const order = layer.shapeOrder ?? [...paths.map((_, i) => ({ kind: "path" as const, index: i })), ...comps.map((_, i) => ({ kind: "component" as const, index: i }))];
+            const move = (from: number, to: number) => {
+              if (to < 0 || to >= order.length) return;
+              const ids = order.map((_, i) => i);
+              const [x] = ids.splice(from, 1);
+              ids.splice(to, 0, x);
+              strokeCall(() => backend.reorderShapes(glyph, masterId, ids, orderAll));
+            };
+            return (
+              <div className="transform-body stroke-body">
+                <p className="k-caption muted stroke-note">{t("Top draws first. A mask cuts every shape above it in this list.")}</p>
+                <ol className="shape-list">
+                  {order.map((s, i) => {
+                    const p = s.kind === "path" ? paths[s.index] : null;
+                    const label = s.kind === "path" ? t("Path {n}", { n: s.index + 1 }) : comps[s.index]?.base ?? "";
+                    return (
+                      <li key={i} className={`shape-row${s.kind === "path" && strokePath === s.index ? " is-selected" : ""}`}>
+                        <span className="k-body">{label}</span>
+                        {p?.mask && <span className="pill pill-group">{t("mask")}</span>}
+                        {p?.stroke && <span className="pill pill-group">{t("stroke")}</span>}
+                        {p?.locked && <span className="k-caption muted">🔒</span>}
+                        <span className="spacer" />
+                        <button type="button" className="icon-btn" disabled={disabled || i === 0} aria-label={t("Move up")} title={t("Move up")} onClick={() => move(i, i - 1)}>↑</button>
+                        <button type="button" className="icon-btn" disabled={disabled || i === order.length - 1} aria-label={t("Move down")} title={t("Move down")} onClick={() => move(i, i + 1)}>↓</button>
+                      </li>
+                    );
+                  })}
+                </ol>
+                <label className="check-row" title={t("Reorder the shapes the same way in every master")}>
+                  <input type="checkbox" checked={orderAll} onChange={(e) => setOrderAll(e.target.checked)} />
+                  <span className="k-body">{t("All masters")}</span>
+                </label>
+                {strokePath !== null && strokeTarget && (
+                  <label className="check-row" title={t("Subtracts this path from the shapes above it in the list")}>
+                    <input type="checkbox" checked={!!strokeTarget.mask} disabled={disabled || !strokeTarget.closed}
+                      onChange={(e) => strokeCall(() => backend.setPathMask(glyph, masterId, strokePath, e.target.checked))} />
+                    <span className="k-body">{t("Mask")}</span>
+                    <span className="k-caption muted">{t("Subtracts this path from the shapes above it in the list")}</span>
+                  </label>
+                )}
+              </div>
+            );
+          })()}
+        </div>
         <div className="transform-panel stroke-panel">
           <button type="button" className="transform-head" aria-expanded={strokeOpen} onClick={() => setStrokeOpen((o) => !o)}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
@@ -2430,12 +2914,38 @@ function AnchorNameField({ name, onRename }: { name: string; onRename: (n: strin
   );
 }
 
+/** Where a node is at time `t` on its interpolation curve (mirrors Rust `HoiKind::at`). */
+function hoiAt(kind: HoiKind | null, p0: [number, number], p1: [number, number], t: number): [number, number] {
+  const lerp = (a: number, b: number) => a + (b - a) * t;
+  if (!kind) return [lerp(p0[0], p1[0]), lerp(p0[1], p1[1])];
+  const m = 1 - t;
+  if (kind.type === "through") {
+    const c = [2 * kind.x - (p0[0] + p1[0]) / 2, 2 * kind.y - (p0[1] + p1[1]) / 2];
+    return [m * m * p0[0] + 2 * m * t * c[0] + t * t * p1[0], m * m * p0[1] + 2 * m * t * c[1] + t * t * p1[1]];
+  }
+  if (kind.type === "handles") {
+    const f = (a: number, b: number, c: number, d: number) => m * m * m * a + 3 * m * m * t * b + 3 * m * t * t * c + t * t * t * d;
+    return [f(p0[0], kind.a[0], kind.b[0], p1[0]), f(p0[1], kind.a[1], kind.b[1], p1[1])];
+  }
+  const [cx, cy] = kind.center;
+  const r0 = Math.hypot(p0[0] - cx, p0[1] - cy), r1 = Math.hypot(p1[0] - cx, p1[1] - cy);
+  if (r0 < 1e-9 || r1 < 1e-9) return [lerp(p0[0], p1[0]), lerp(p0[1], p1[1])];
+  const a0 = Math.atan2(p0[1] - cy, p0[0] - cx), a1 = Math.atan2(p1[1] - cy, p1[0] - cx);
+  const tau = Math.PI * 2;
+  let d = (((a1 - a0) % tau) + tau) % tau;
+  if (kind.turn === "clockwise" || ((kind.turn ?? "auto") === "auto" && d > Math.PI)) d -= tau;
+  const a = a0 + d * t, r = lerp(r0, r1);
+  return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+}
+
 function hint(tool: Tool): string {
   switch (tool) {
     case "select": return t("Click or drag to select · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes");
     case "pen": return t("Click for corners, drag for curves · click the first point to close · Esc ends the path");
     case "rect": return t("Drag to draw a rectangle · Shift for a square");
     case "pixel": return t("Click a grid cell to add or remove a pixel · drag to paint");
+    case "annotate": return t("Pick a mark in the palette and click to place it · select to move or delete");
+    case "hoi": return t("Drag a node's midpoint knob to curve its way to the next master · click a node to choose the curve type");
     case "ellipse": return t("Drag to draw an ellipse · Shift for a circle");
     case "knife": return t("Drag a line across the outline to cut paths · Esc cancels");
     case "measure": return t("Drag a line across the outline to measure distances and angles · Esc clears");

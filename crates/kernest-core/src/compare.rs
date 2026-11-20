@@ -276,6 +276,7 @@ mod tests {
             closed: true,
             locked: false,
             stroke: None,
+            mask: false,
             nodes: vec![
                 crate::model::Node::new(x0, y0, crate::model::NodeKind::Line),
                 crate::model::Node::new(x1, y0, crate::model::NodeKind::Line),
@@ -439,6 +440,9 @@ mod tests {
             background: None,
             backup: None,
             parts: Vec::new(),
+            annotations: Vec::new(),
+            image: None,
+            hoi: Vec::new(),
         };
         assert_eq!(outline_counts(&l), (1, 4));
     }

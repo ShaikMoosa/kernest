@@ -454,4 +454,18 @@ export const ENGINE_MESSAGES = [
   "Choose an on-curve node.",
   "The last node of an open path starts no segment.",
   "Corner components need the desktop app (npm run tauri dev).",
+  // 2.9: masks, images, annotations, virtual masters, swaps, interpolation curves
+  "An annotation has an invalid position or size.",
+  "Interpolation curves go on master layers.",
+  "That point isn't valid.",
+  "The image needs a size above 0.",
+  "The new order must list every shape once.",
+  "There is no master further up this axis to interpolate to.",
+  "Couldn't read the image: {e}",
+  "Kernest can show PNG, JPEG and GIF images.",
+  "A virtual master needs a name.",
+  "There are two virtual masters named \"{name}\".",
+  "{name}: there is no axis \"{tag}\".",
+  "{name}: {axis} {value} is outside the axis range; widen the axis in Font Info › Axes first.",
+  "\"{name}\": write a swap as glyph=otherglyph.",
 ];

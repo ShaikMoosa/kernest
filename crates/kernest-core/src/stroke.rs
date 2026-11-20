@@ -255,13 +255,20 @@ pub fn has_strokes(layer: &Layer) -> bool {
 /// Also applies corner, cap and segment components, which change the outline the
 /// strokes follow.
 pub fn expand_font(font: &crate::model::Font) -> crate::model::Font {
+    // Interpolation curves become intermediate layers first, so they get
+    // strokes, parts and masks like any other layer.
+    let baked = crate::hoi::bake(font);
+    let font = &baked;
     let mut f = font.clone();
     for g in &mut f.glyphs {
         for l in &mut g.layers {
             if !l.parts.is_empty() {
                 *l = crate::parts::apply(font, l);
             }
-            if has_strokes(l) {
+            if crate::masking::has_masks(l) {
+                // Masks resolve strokes and components themselves.
+                *l = crate::masking::apply(font, l);
+            } else if has_strokes(l) {
                 *l = expand_layer(font, l);
             }
         }
@@ -853,6 +860,7 @@ mod tests {
             ],
             locked: false,
             stroke: None,
+            mask: false,
         }
     }
 
@@ -935,6 +943,7 @@ mod tests {
                 Node::new(0.0, 100.0, NodeKind::Line),
             ],
             locked: false,
+            mask: false,
             stroke: Some(PathStroke {
                 width: 10.0,
                 join: StrokeJoin::Miter,
@@ -989,6 +998,7 @@ mod tests {
                 Node::new(200.0, 0.0, NodeKind::Line),
             ],
             locked: false,
+            mask: false,
             stroke: Some(PathStroke {
                 width: w,
                 join: StrokeJoin::Round,
@@ -1080,6 +1090,7 @@ mod tests {
             ],
             locked: false,
             stroke: None,
+            mask: false,
         }));
         l.anchors = vec![
             crate::model::Anchor {

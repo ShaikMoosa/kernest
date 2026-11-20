@@ -7,6 +7,7 @@ mod export;
 mod features;
 mod fontinfo;
 mod glyphs;
+mod images;
 mod import;
 mod launch;
 mod layers;
@@ -67,6 +68,7 @@ fn main() {
             fontinfo::set_vertical_metrics,
             fontinfo::set_use_typo_metrics,
             fontinfo::set_custom_parameters,
+            fontinfo::set_virtual_masters,
             fontinfo::set_palettes,
             fontinfo::set_master_palettes,
             fontinfo::set_axes,
@@ -117,6 +119,14 @@ fn main() {
             commands::path_edit,
             commands::add_pixel_glyph,
             commands::set_pixels,
+            commands::set_path_mask,
+            commands::hoi_view,
+            commands::set_hoi,
+            images::set_annotations,
+            images::set_layer_image,
+            images::add_layer_image,
+            images::layer_image_data,
+            commands::reorder_shapes,
             commands::add_path_part,
             commands::set_path_part,
             commands::decompose_parts,

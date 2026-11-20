@@ -149,6 +149,8 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
             weight_class: None,
             width_class: None,
             style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         })
         .collect();
 
@@ -180,6 +182,8 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
                 })
                 .collect(),
             glyphs: Vec::new(),
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         })
         .collect();
     Ok(Imported { font, warnings })
@@ -453,6 +457,7 @@ fn build(
             .as_ref()
             .is_some_and(|s| s.contains(&7)),
         custom_parameters: Vec::new(),
+        virtual_masters: Vec::new(),
     };
 
     // Masters, with the default one first so it is the reference for empty layers.
@@ -657,6 +662,7 @@ fn layer(id: &str, g: &norad::Glyph, skipped: &mut usize) -> Layer {
         l.shapes.push(Shape::Path(KPath {
             locked: false,
             stroke: None,
+            mask: false,
             closed,
             nodes,
         }));

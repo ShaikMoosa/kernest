@@ -381,6 +381,8 @@ fn named_instances(font: &FontRef, kernest_axes: &[Axis]) -> Vec<Instance> {
                 weight_class: None,
                 width_class: None,
                 style_link: None,
+                rename_glyphs: Vec::new(),
+                remove_glyphs: Vec::new(),
             }
         })
         .collect()
@@ -462,6 +464,7 @@ fn font_info(font: &FontRef, upem: u16) -> FontInfo {
         custom_parameters: Vec::new(),
         ps_hinting: None,
         control_instructions: String::new(),
+        virtual_masters: Vec::new(),
     }
 }
 
@@ -506,6 +509,7 @@ fn shapes_from(elems: &[PathElement]) -> Vec<Shape> {
             nodes: std::mem::take(nodes),
             locked: false,
             stroke: None,
+            mask: false,
         }));
     };
     for e in elems {

@@ -477,6 +477,7 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .fi-row { display: flex; align-items: flex-end; gap: var(--k-space-8); flex-wrap: wrap; }
 .fi-master, .fi-instance, .fi-vf { padding: var(--k-space-12); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-lg); background: var(--k-bg-app); }
 .fi-master { display: flex; flex-direction: column; gap: var(--k-space-8); }
+.fi-master.fi-virtual { flex-direction: row; align-items: flex-end; }
 .fi-hint-editor { display: flex; flex-direction: column; gap: var(--k-space-8); padding: var(--k-space-12); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-md); background: var(--k-bg-surface); }
 .fi-hint-rows { display: flex; flex-direction: column; gap: var(--k-space-4); }
 .fi-hint-row { display: flex; align-items: flex-end; gap: var(--k-space-8); }
@@ -893,3 +894,33 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .smart-diamond { fill: var(--k-status-danger); stroke: var(--k-bg-surface); cursor: grab; }
 .smart-track { stroke: var(--k-status-danger); stroke-dasharray: 4 3; opacity: 0.7; }
 .smart-label { font: 600 12px/1 var(--k-font-ui, sans-serif); fill: var(--k-status-danger); paint-order: stroke; stroke: var(--k-bg-surface); stroke-width: 3px; }
+.glyph-fill.is-masked-away, .component-fill.is-masked-away { opacity: 0.25; }
+.mask-outline { stroke: var(--k-accent-default); stroke-dasharray: 6 4; }
+.shape-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.shape-row { display: flex; align-items: center; gap: var(--k-space-4); padding: 2px var(--k-space-6); border-radius: var(--k-radius-md); }
+.shape-row.is-selected { background: var(--k-accent-subtle, rgba(99,91,255,0.12)); }
+.layer-image { opacity: 0.55; }
+.layer-image-frame { fill: none; stroke: var(--k-border-strong); stroke-width: 1px; stroke-dasharray: 4 3; }
+.image-missing { fill: var(--k-status-warning-subtle); stroke: var(--k-status-warning); stroke-dasharray: 6 4; }
+.image-missing-label { font: 600 13px/1 var(--k-font-ui, sans-serif); fill: var(--k-text-danger); }
+.image-missing-file { font: 400 11px/1 var(--k-font-ui, sans-serif); fill: var(--k-text-secondary, #666); }
+.annotation line, .annotation path, .annotation circle, circle.annotation { stroke: var(--k-status-danger); stroke-width: 2.5px; fill: none; stroke-linecap: round; }
+.annotation.is-text rect { fill: #fff6e5; stroke: #f0a020; stroke-width: 1px; }
+.annotation.is-text text { font: 400 12px/1.3 var(--k-font-ui, sans-serif); fill: #3a2a00; }
+.annotation.is-selected line, .annotation.is-selected path, circle.annotation.is-selected { stroke: var(--k-accent-default); }
+.annotation.is-text.is-selected rect { stroke: var(--k-accent-default); stroke-width: 2px; }
+.annot-palette { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); display: flex; align-items: center; gap: var(--k-space-4); padding: var(--k-space-6) var(--k-space-10); background: var(--k-bg-surface); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-lg); box-shadow: 0 2px 8px rgba(0,0,0,.08); z-index: 5; }
+.annot-palette .icon-btn.is-active { background: var(--k-accent-default); color: var(--k-text-on-accent); }
+.annot-text-input { width: 220px; height: auto; text-align: start; font: 400 12px/1.4 var(--k-font-ui, sans-serif); padding: 4px 6px; }
+
+/* Interpolation curves (HOI tool): blue here, purple the master up the axis, yellow the one down. */
+.hoi .hoi-line { stroke: #7b5cd6; stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.7; }
+.hoi.is-curved .hoi-line { stroke-dasharray: none; opacity: 1; }
+.hoi.is-selected .hoi-line { stroke-width: 2; }
+.hoi .hoi-here { fill: var(--k-accent-default); stroke: var(--k-bg-canvas, #fff); stroke-width: 1; }
+.hoi .hoi-up { fill: #7b5cd6; stroke: var(--k-bg-canvas, #fff); stroke-width: 1; }
+.hoi .hoi-down { fill: #e0b400; stroke: var(--k-bg-canvas, #fff); stroke-width: 1; }
+.hoi .hoi-knob { fill: var(--k-bg-canvas, #fff); stroke: #7b5cd6; stroke-width: 1.5; }
+.hoi.is-selected .hoi-knob { fill: #7b5cd6; }
+.hoi-panel { flex-wrap: wrap; max-width: calc(100% - 24px); }
+.hoi-panel select.metric-input { width: auto; min-width: 9em; }

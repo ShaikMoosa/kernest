@@ -241,6 +241,17 @@ The **Pixel** tool (X) draws a glyph out of components of a glyph named `pixel`,
 - If the font has no `pixel` glyph yet, Kernest offers to create one: a square the size of the grid, not exported.
 - Change the `pixel` glyph (a dot, a cross, a diamond) and every pixel glyph changes with it.
 
+### Masks and shape order
+
+A **mask** is a path that cuts away from the shapes drawn before it, like a stencil, without changing their outlines. Use it to notch a stem or trim a serif while keeping both shapes editable.
+
+- Open **Shapes** in the editor sidebar. It lists the layer's paths and components in drawing order, top drawn first.
+- Select a path and tick **Mask** to make it a mask: it then cuts every shape above it in the list (the shapes drawn before it), and the editor shows it as a dashed outline with the cut-away area greyed.
+- **↑** and **↓** move the selected shape. With **All masters** ticked, the same move happens in every master and intermediate layer, so the glyph stays compatible.
+- The Mask setting applies to the same path in every master. Masters with different masks are reported as incompatible.
+
+Masks are applied when you export (fonts and UFO sources); the exported glyph has the cut outline and no mask. Save As .glyphs keeps masks, and Glyphs shows them as its own masks.
+
 ### Locks and focus
 
 - **Lock a path:** right-click an edge › **Lock Path** (or **Unlock Path**). A locked path can't be selected, moved or edited; the knife and filters leave it alone.
@@ -278,6 +289,28 @@ Each layer can hold a background drawing, shown tinted behind the outline. Use i
 - **Show or hide:** View › Show Background (Ctrl+Shift+B).
 
 The background is saved in the `.kernest` file and never exported into the font.
+
+### Images
+
+Place a scan or a sketch behind a glyph to trace it.
+
+- **Glyph › Add Image…** picks a PNG, JPEG or GIF file. The image sits behind the outline at its own size; drag it to move it (unless it's locked).
+- The **Image** panel in the editor sidebar sets its position (X, Y), size (W, H, in font units), rotation and lock. **Crop to Layer Bounds** shows only the part inside the glyph's width, from descender to ascender; **Reset Crop** shows all of it again. **Reveal** opens the file's folder; **Replace…** picks another file; **Remove** takes the image away.
+- Each master and layer has its own image.
+- **View › Show Image** shows or hides every image.
+
+Kernest stores the image's file path, not the picture: relative to the font's folder when the image is inside it, so a folder you move together keeps working. If the file is missing, the editor shows an "Image not found" box in its place. Images are never exported. Save As .glyphs keeps them as Glyphs background images.
+
+### Annotations
+
+Annotations are review notes on the canvas, for yourself or for someone checking the design. Choose the **Annotate** tool (A), then pick a mark in its palette:
+
+- **Text note:** click to place, then type the note in the palette. Its width can be set.
+- **Arrow:** points at something; set its angle.
+- **Circle:** rings an area; set its diameter.
+- **Plus** and **Minus:** mark a spot to make thicker or thinner.
+
+With the select arrow in the palette, click a mark to select it, drag to move it, and press Delete (or **×**) to remove it. **View › Show Annotations** shows or hides them all. Annotations are saved with the layer, are never exported, and come back from Save As .glyphs.
 
 ### Editor sidebar
 
@@ -348,13 +381,29 @@ Open **Font Info** (Ctrl+I) to set:
   - **Generate as New Font** turns the instances into masters of a brand-new font, opened in its own window: one master per instance at its location, with the outlines interpolated. Handy for turning a variable design into a static family you can then edit per style.
 - **Variable fonts:** by default export builds one variable font covering every axis. **Add variable font** defines extra variable fonts from the same family: each keeps a name, a file name, a range of each axis (empty ends use the axis range) and a set of glyphs (empty keeps every glyph). Export writes one variable file per entry, so a family can ship e.g. a full Weight×Width font plus a lighter Text-only cut.
 
+- **Virtual masters** (Font Info › Masters): a named location that only glyphs with intermediate layers there use. Use it for an axis that changes only a few glyphs, such as a Crossbar axis that raises the bar of A, E, F and H: add the axis, add a virtual master at its far end, then give those glyphs an intermediate layer at that location. Every other glyph stays as drawn along that axis. Locations must lie inside each axis' range. Save As .glyphs writes them as Glyphs' Virtual Master parameter.
+- **Glyph swaps:** each instance and each variable font can swap glyph drawings when it's exported. **Rename Glyphs** takes pairs such as `dollar=dollar.alt`: the exported `dollar` gets the drawing of `dollar.alt` (and the other way round). **Remove Glyphs** lists glyphs to leave out of that export, such as the alternates you swapped in. Use it for a style whose default `g` is the single-storey form, for example. Save As .glyphs writes both as Glyphs parameters.
+
+A font with masks, annotations, images, interpolation curves, virtual masters or glyph swaps saves at format version 14.
+
 **File › Compare with Font…** opens a report comparing the open font with another font: family info, metrics, axes, masters, glyphs and kerning, side by side, with the differences listed. Use it to check what changed between two versions or against a reference font.
 
 Switch the master you're editing with the buttons at the top right. Previews interpolate live. Kernest checks that every glyph can be interpolated, meaning the same number of paths, nodes and components in each master, and lists the glyphs that can't be in the **Incompatible** category of Font View.
 
-**Custom parameters** (Font Info) lists the settings from a Glyphs source that Kernest doesn't use itself, with their values exactly as Glyphs writes them (`1`, `"text"`, `(a, b)`, `{key = value;}`). They're kept with the font and written back by Save As .glyphs, but not applied when Kernest exports. Edit a value, switch one off with **On**, add one with **Add parameter**, or remove it; a value Glyphs couldn't read is refused. A font with custom parameters or backup layers saves at format version 13.
+**Custom parameters** (Font Info) lists the settings from a Glyphs source that Kernest doesn't use itself, with their values exactly as Glyphs writes them (`1`, `"text"`, `(a, b)`, `{key = value;}`). They're kept with the font and written back by Save As .glyphs, but not applied when Kernest exports. Edit a value, switch one off with **On**, add one with **Add parameter**, or remove it; a value Glyphs couldn't read is refused. A font with custom parameters, backup layers, strokes or corner, cap and segment components saves at format version 13.
 
 **Line spacing** (Font Info › Masters, on each master) sets how far apart lines of text sit and where the underline goes: typo, hhea and win ascender, descender and line gap, plus underline thickness and position. Leave a field empty and it's worked out from the ascender and descender on export. Win ascent, win descent, line gaps and underline thickness can't be negative. **Use Typo Metrics** applies to the whole font: apps then space lines by the typo values. A font that sets any of these saves at format version 12.
+
+### Interpolation curves
+
+Normally every node moves in a straight line from one master to the next. With the **Interpolation curves** tool (I), a node can follow a curve instead, so a turning stroke or a swinging tail doesn't shrink or kink halfway.
+
+- Edit the lower master of the two (for example Light, when Light and Bold sit on the Weight axis). Each node shows where it is here (blue), in the next master up the axis (purple) and in the next master down (yellow), with a dotted line for its path.
+- **Drag** the knob in the middle of a node's line to bend the path through that point.
+- **Click** a node to choose its curve in the panel: **Linear** (the straight line), **Intermediate point** (through a point halfway), **Handles** (a curve with two handles), or **Rotation** (a turn around a centre; **Center** puts the centre halfway between the two positions, and the direction can be **Auto**, the shorter way, **Clockwise** or **Counterclockwise**).
+- With more than one axis, pick the axis in the panel. A curve only works when there's a compatible master further up that axis with the same position on every other axis.
+
+Curves don't change the masters. When you export, Kernest adds intermediate layers a quarter, half and three quarters of the way between the two masters, with each curved node on its curve and every other point interpolated as usual. Static instances and variable fonts both follow these layers. Places that already have an intermediate layer keep it. Save As .glyphs keeps curves in Kernest's own layer data.
 
 ### Interpolation warnings
 

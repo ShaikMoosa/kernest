@@ -617,6 +617,26 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     .collect()
             };
         for (i, (style, location, inst)) in targets.iter().enumerate() {
+            // Glyph swaps and removals for this instance.
+            let swapped;
+            let font =
+                match inst.filter(|i| !i.rename_glyphs.is_empty() || !i.remove_glyphs.is_empty()) {
+                    Some(i) => match kernest_core::glyphset::apply_swaps(
+                        font,
+                        &i.rename_glyphs,
+                        &i.remove_glyphs,
+                    ) {
+                        Ok(f) => {
+                            swapped = f;
+                            &swapped
+                        }
+                        Err(e) => {
+                            report.problems.push(format!("{style}: {e}"));
+                            continue;
+                        }
+                    },
+                    None => font,
+                };
             let built = instance_source(font, style, location).and_then(|mut src| {
                 src.instance = *inst;
                 if opts.remove_overlaps {
@@ -1082,6 +1102,8 @@ pub(crate) mod tests {
                 weight_class: None,
                 width_class: None,
                 style_link: None,
+                rename_glyphs: Vec::new(),
+                remove_glyphs: Vec::new(),
             })
             .collect();
         f.export_presets = vec![kernest_core::presets::ExportPreset {
@@ -1342,6 +1364,8 @@ pub(crate) mod tests {
             weight_class: None,
             width_class: None,
             style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         });
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
@@ -1459,6 +1483,8 @@ pub(crate) mod tests {
                         max: Some(500.0),
                     }],
                     glyphs: Vec::new(),
+                    rename_glyphs: Vec::new(),
+                    remove_glyphs: Vec::new(),
                 },
                 VariableFontSetting {
                     name: "Bold".into(),
@@ -1469,6 +1495,8 @@ pub(crate) mod tests {
                         max: Some(700.0),
                     }],
                     glyphs: Vec::new(),
+                    rename_glyphs: Vec::new(),
+                    remove_glyphs: Vec::new(),
                 },
             ],
         )
@@ -1553,6 +1581,8 @@ pub(crate) mod tests {
             weight_class: None,
             width_class: None,
             style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         });
         let out2 = tempfile::tempdir().unwrap();
         let r2 = export(&f2, &ExportOptions::ttf(false, true, out2.path())).unwrap();
@@ -1750,6 +1780,8 @@ pub(crate) mod tests {
             weight_class: None,
             width_class: None,
             style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         });
         f.instances.push(Instance {
             name: "Bold".into(),
@@ -1758,6 +1790,8 @@ pub(crate) mod tests {
             weight_class: None,
             width_class: None,
             style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         });
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
@@ -1850,6 +1884,8 @@ pub(crate) mod tests {
             weight_class: Some(560),
             width_class: Some(4),
             style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         });
         f.instances.push(Instance {
             name: "Bold".into(),
@@ -1862,6 +1898,8 @@ pub(crate) mod tests {
                 italic: false,
                 base: "Regular".into(),
             }),
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         });
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
@@ -2056,6 +2094,7 @@ pub(crate) mod tests {
                 Shape::Path(kernest_core::Path {
                     locked: false,
                     stroke: None,
+                    mask: false,
                     closed: true,
                     nodes: [
                         (x0, 720.0),
@@ -2266,6 +2305,7 @@ pub(crate) mod tests {
                 closed: true,
                 locked: false,
                 stroke: None,
+                mask: false,
                 nodes: points
                     .iter()
                     .map(|&(x, y)| Node::new(x, y, NodeKind::Line))
@@ -2309,6 +2349,7 @@ pub(crate) mod tests {
                 closed: true,
                 locked: false,
                 stroke: None,
+                mask: false,
                 nodes,
             })
         };
@@ -2696,6 +2737,7 @@ pub(crate) mod tests {
             Shape::Path(kernest_core::Path {
                 locked: false,
                 stroke: None,
+                mask: false,
                 closed: true,
                 nodes: [(0.0, 0.0), (80.0, 0.0), (80.0, h), (0.0, h)]
                     .into_iter()
@@ -2834,6 +2876,7 @@ pub(crate) mod tests {
                 l.shapes = vec![Shape::Path(kernest_core::Path {
                     locked: false,
                     stroke: None,
+                    mask: false,
                     closed: true,
                     nodes: [(0.0, 300.0), (600.0, 300.0), (600.0, 400.0), (0.0, 400.0)]
                         .into_iter()
@@ -3226,6 +3269,7 @@ pub(crate) mod tests {
             Shape::Path(kernest_core::Path {
                 locked: false,
                 stroke: None,
+                mask: false,
                 closed: true,
                 nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
                     .into_iter()
@@ -3307,6 +3351,7 @@ pub(crate) mod tests {
             Shape::Path(kernest_core::Path {
                 locked: false,
                 stroke: None,
+                mask: false,
                 closed: true,
                 nodes: [(x, 0.0), (x + 100.0, 0.0), (x + 100.0, 700.0), (x, 700.0)]
                     .into_iter()
@@ -3372,6 +3417,7 @@ pub(crate) mod tests {
             l.shapes = vec![Shape::Path(kernest_core::Path {
                 locked: false,
                 stroke: None,
+                mask: false,
                 closed: true,
                 nodes: [(x0, 0.0), (x1, 0.0), (x1, 500.0), (x0, 500.0)]
                     .into_iter()

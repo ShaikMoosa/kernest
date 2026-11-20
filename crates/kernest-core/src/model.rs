@@ -124,6 +124,18 @@ pub struct FontInfo {
     /// they survive a trip back to `.glyphs`. Not applied on export.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_parameters: Vec<CustomParameter>,
+    /// Virtual masters (S39): named design-space locations that only glyphs with
+    /// intermediate layers there use; every other glyph stays as it is along them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub virtual_masters: Vec<VirtualMaster>,
+}
+
+/// A virtual master: a name and a location on the font's axes (design units).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VirtualMaster {
+    pub name: String,
+    pub location: BTreeMap<String, f64>,
 }
 
 /// A custom parameter: its name and its value as Glyphs writes it (plist text, such
@@ -308,6 +320,12 @@ pub struct VariableFontSetting {
     /// always kept so the subset still composes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub glyphs: Vec<String>,
+    /// Glyph swaps for this variable font (see [`Instance::rename_glyphs`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rename_glyphs: Vec<[String; 2]>,
+    /// Glyphs left out of this variable font.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove_glyphs: Vec<String>,
 }
 
 /// The part of one axis a variable font covers, in user coordinates. A missing
@@ -564,6 +582,78 @@ pub struct Layer {
     /// Corner, cap and segment components placed on this layer's paths.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<crate::parts::PathPart>,
+    /// Review notes on the canvas (S32): never exported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<Annotation>,
+    /// A placed image, such as a scan to trace (S33): never exported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<LayerImage>,
+    /// Higher-order interpolation (S40): curves some nodes follow on their way to
+    /// the next master up an axis.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hoi: Vec<crate::hoi::HoiCurve>,
+}
+
+/// What an annotation draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AnnotationKind {
+    Text,
+    Arrow,
+    Circle,
+    Plus,
+    Minus,
+}
+
+/// A note or correction mark on a glyph layer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Annotation {
+    pub kind: AnnotationKind,
+    pub x: f64,
+    pub y: f64,
+    /// Text annotations: the note.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
+    /// Arrows: the direction they point, in degrees (0 points right).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub angle: f64,
+    /// Text: box width; circles: diameter. 0 means the default size.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub size: f64,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
+}
+
+/// An image placed on a layer. The path is kept as given (relative to the font
+/// file where possible), so images in a folder next to the font travel with it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayerImage {
+    pub path: String,
+    /// Position of the image's bottom-left corner, in font units.
+    pub x: f64,
+    pub y: f64,
+    /// Scale: 1 draws one image point per font unit.
+    #[serde(default = "one")]
+    pub scale_x: f64,
+    #[serde(default = "one")]
+    pub scale_y: f64,
+    /// Rotation in degrees, counter-clockwise, around the bottom-left corner.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub angle: f64,
+    /// The part of the image shown, in image points from its bottom-left corner:
+    /// [x, y, width, height]. `None` shows the whole image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<[f64; 4]>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 /// A straight guide line through `(x, y)` at `angle` degrees from horizontal.
@@ -615,6 +705,9 @@ impl Layer {
             background: None,
             backup: None,
             parts: Vec::new(),
+            annotations: Vec::new(),
+            image: None,
+            hoi: Vec::new(),
         }
     }
 
@@ -788,6 +881,9 @@ pub struct Path {
     /// export).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stroke: Option<crate::stroke::PathStroke>,
+    /// A mask: this path is subtracted from every shape below it (non-destructive).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mask: bool,
 }
 
 /// A point on an outline. Serialised compactly as `"x y kind [smooth]"`,
@@ -1005,6 +1101,7 @@ impl Font {
                 grid: None,
                 use_typo_metrics: false,
                 custom_parameters: Vec::new(),
+                virtual_masters: Vec::new(),
             },
             axes: Vec::new(),
             masters: vec![master],
@@ -1179,6 +1276,13 @@ pub struct Instance {
     /// means export derives the style map from the instance name and location.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style_link: Option<StyleLink>,
+    /// Glyph swaps at export ("Rename Glyphs"): each pair trades drawings, so the
+    /// first glyph is drawn like the second and the other way round.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rename_glyphs: Vec<[String; 2]>,
+    /// Glyphs left out of this export ("Remove Glyphs").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove_glyphs: Vec<String>,
 }
 
 /// How an instance participates in the four-style (RIBBI) style map. `base` is

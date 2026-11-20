@@ -191,6 +191,8 @@ mod tests {
                 weight_class: None,
                 width_class: None,
                 style_link: None,
+                rename_glyphs: Vec::new(),
+                remove_glyphs: Vec::new(),
             }],
             ..Default::default()
         };

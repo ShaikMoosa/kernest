@@ -66,6 +66,7 @@ pub(crate) fn compare(name: &str, reference: &Layer, ref_name: &str, layer: &Lay
                         (x.kind == NodeKind::OffCurve) == (y.kind == NodeKind::OffCurve)
                     })
                     && same_stroke_shape(pa, pb)
+                    && pa.mask == pb.mask
             }
             (
                 Shape::Component {
@@ -608,6 +609,7 @@ mod tests {
             .push(Shape::Path(Path {
                 locked: false,
                 stroke: None,
+                mask: false,
                 closed: true,
                 nodes: vec![],
             }));
@@ -630,6 +632,8 @@ mod tests {
             weight_class: None,
             width_class: None,
             style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         }
     }
 

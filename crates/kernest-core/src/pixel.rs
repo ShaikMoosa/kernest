@@ -32,6 +32,7 @@ pub fn add_pixel_glyph(font: &Font, size: f64) -> R<Font> {
             ],
             locked: false,
             stroke: None,
+            mask: false,
         }));
         g.layers.push(l);
     }

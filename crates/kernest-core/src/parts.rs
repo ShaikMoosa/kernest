@@ -240,6 +240,7 @@ impl WPath {
             nodes: Vec::new(),
             locked: false,
             stroke: None,
+            mask: false,
         };
         self.write_to_exact(&mut p);
         let r = crate::pathops::reverse(&p);
@@ -983,6 +984,7 @@ fn insert_corner(
                 nodes: Vec::new(),
                 locked: false,
                 stroke: None,
+                mask: false,
             };
             o.write_to(&mut p);
             p
@@ -1247,6 +1249,7 @@ mod tests {
             ],
             locked: false,
             stroke: None,
+            mask: false,
         }
     }
 
@@ -1291,6 +1294,7 @@ mod tests {
                 ],
                 locked: false,
                 stroke: None,
+                mask: false,
             },
             vec![],
         );
@@ -1330,6 +1334,7 @@ mod tests {
                 ],
                 locked: false,
                 stroke: None,
+                mask: false,
             },
             vec![],
         );
@@ -1363,6 +1368,7 @@ mod tests {
                 ],
                 locked: false,
                 stroke: None,
+                mask: false,
             },
             vec![],
         );

@@ -292,6 +292,7 @@ fn contour_path(c: &Contour, s: f64, dx: f64, dy: f64) -> Option<KPath> {
     Some(KPath {
         locked: false,
         stroke: None,
+        mask: false,
         closed: true,
         nodes,
     })

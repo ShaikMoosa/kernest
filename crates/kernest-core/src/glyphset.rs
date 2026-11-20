@@ -301,6 +301,7 @@ fn flatten(
             Shape::Path(p) => out.push(Shape::Path(Path {
                 locked: false,
                 stroke: None,
+                mask: false,
                 closed: p.closed,
                 nodes: p
                     .nodes
@@ -393,11 +394,90 @@ pub fn set_unicodes(font: &Font, glyph: &str, text: &str, take_from_others: bool
     Ok(next)
 }
 
+/// Glyph swaps for one export (S39, "Rename Glyphs" and "Remove Glyphs" in
+/// Glyphs): each pair trades drawings (layers), keeping names, Unicode values and
+/// kerning groups, so `dollar=dollar.alt` makes `dollar` look like `dollar.alt`.
+/// Then the glyphs in `remove` are left out, components using them decomposed.
+pub fn apply_swaps(font: &Font, rename: &[[String; 2]], remove: &[String]) -> R<Font> {
+    let mut f = font.clone();
+    for [a, b] in rename {
+        if a == b {
+            continue;
+        }
+        let ia = f
+            .glyphs
+            .iter()
+            .position(|g| &g.name == a)
+            .ok_or_else(|| format!("Rename Glyphs: there is no glyph named \"{a}\"."))?;
+        let ib = f
+            .glyphs
+            .iter()
+            .position(|g| &g.name == b)
+            .ok_or_else(|| format!("Rename Glyphs: there is no glyph named \"{b}\"."))?;
+        let la = std::mem::take(&mut f.glyphs[ia].layers);
+        let lb = std::mem::replace(&mut f.glyphs[ib].layers, la);
+        f.glyphs[ia].layers = lb;
+    }
+    let present: Vec<String> = remove
+        .iter()
+        .filter(|n| f.glyph(n).is_some())
+        .cloned()
+        .collect();
+    if present.is_empty() {
+        return Ok(f);
+    }
+    remove_glyphs(&f, &present)
+}
+
+/// Parses swap lines as typed in Font Info: `a=b` per line (or comma-separated).
+pub fn parse_swaps(text: &str) -> R<Vec<[String; 2]>> {
+    text.split(['\n', ','])
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let (a, b) = l
+                .split_once('=')
+                .ok_or_else(|| format!("\"{l}\": write a swap as glyph=otherglyph."))?;
+            let (a, b) = (a.trim(), b.trim());
+            if a.is_empty() || b.is_empty() {
+                return Err(format!("\"{l}\": write a swap as glyph=otherglyph."));
+            }
+            Ok([a.to_string(), b.to_string()])
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{KernPair, NodeKind, IDENTITY};
     use crate::sample::sample_font;
+
+    #[test]
+    fn swaps_trade_drawings_and_removals_drop_glyphs() {
+        let f = sample_font();
+        let (h, o) = (
+            f.glyph("H").unwrap().layers.clone(),
+            f.glyph("O").unwrap().layers.clone(),
+        );
+        let s = apply_swaps(&f, &[["H".into(), "O".into()]], &["O".into()]).unwrap();
+        assert_eq!(s.glyph("H").unwrap().layers, o, "H now has O's drawing");
+        assert!(s.glyph("O").is_none(), "O is removed");
+        assert_eq!(
+            s.glyph("H").unwrap().unicodes,
+            f.glyph("H").unwrap().unicodes
+        );
+        let _ = h;
+        assert!(apply_swaps(&f, &[["H".into(), "nope".into()]], &[]).is_err());
+        assert_eq!(
+            parse_swaps("dollar=dollar.alt\n a = b ").unwrap(),
+            vec![
+                ["dollar".to_string(), "dollar.alt".to_string()],
+                ["a".to_string(), "b".to_string()]
+            ]
+        );
+        assert!(parse_swaps("dollar").is_err());
+    }
 
     #[test]
     fn parses_unicode_values_in_every_spelling() {

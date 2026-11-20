@@ -164,6 +164,44 @@ pub fn set_custom_parameters(font: &Font, list: Vec<crate::CustomParameter>) -> 
     Ok(f)
 }
 
+/// Replaces the virtual masters. Each needs a name (unique) and a location on the
+/// font's axes, inside each axis' range (extend the axis first if needed).
+pub fn set_virtual_masters(font: &Font, list: Vec<crate::VirtualMaster>) -> R<Font> {
+    let mut names = std::collections::HashSet::new();
+    for vm in &list {
+        let name = vm.name.trim();
+        if name.is_empty() {
+            return Err("A virtual master needs a name.".into());
+        }
+        if !names.insert(name.to_string()) {
+            return Err(format!("There are two virtual masters named \"{name}\"."));
+        }
+        for (tag, v) in &vm.location {
+            let a = font
+                .axes
+                .iter()
+                .find(|a| &a.tag == tag)
+                .ok_or_else(|| format!("{name}: there is no axis \"{tag}\"."))?;
+            let (lo, _, hi) = crate::designspace::design_bounds(a);
+            if !v.is_finite() || *v < lo.min(hi) || *v > lo.max(hi) {
+                return Err(format!(
+                    "{name}: {} {v} is outside the axis range; widen the axis in Font Info › Axes first.",
+                    a.name
+                ));
+            }
+        }
+    }
+    let mut f = font.clone();
+    f.info.virtual_masters = list
+        .into_iter()
+        .map(|mut vm| {
+            vm.name = vm.name.trim().to_string();
+            vm
+        })
+        .collect();
+    Ok(f)
+}
+
 /// Turns "Use Typo Metrics" (OS/2 fsSelection bit 7) on or off for the whole font.
 pub fn set_use_typo_metrics(font: &Font, on: bool) -> R<Font> {
     let mut f = font.clone();
@@ -883,6 +921,8 @@ mod tests {
                 max: Some(700.0),
             }],
             glyphs: Vec::new(),
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         };
         let ok =
             set_variable_fonts(&f, vec![vf("Light", "F-Light"), vf("Bold", "F-Bold")]).unwrap();
@@ -995,6 +1035,8 @@ mod tests {
             weight_class: None,
             width_class: None,
             style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         };
         let f = set_instances(&f, vec![i("Light", 300.0), i("Bold", 700.0)]).unwrap();
         assert_eq!(f.instances.len(), 2);

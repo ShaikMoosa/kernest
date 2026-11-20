@@ -369,7 +369,8 @@ pub fn reduce_for_variable(
     font: &Font,
     setting: &crate::model::VariableFontSetting,
 ) -> Result<Font, String> {
-    let mut f = font.clone();
+    let mut f = crate::glyphset::apply_swaps(font, &setting.rename_glyphs, &setting.remove_glyphs)
+        .map_err(|e| format!("{}: {e}", setting.name))?;
     f.variable_fonts.clear();
     let mut narrowed = f.axes.clone();
     for sub in &setting.axes {
@@ -714,6 +715,8 @@ mod tests {
                     max,
                 }],
                 glyphs,
+                rename_glyphs: Vec::new(),
+                remove_glyphs: Vec::new(),
             };
         // A range that keeps the default needs no new master.
         let r = reduce_for_variable(&f, &setting(Some(400.0), Some(700.0), vec![])).unwrap();

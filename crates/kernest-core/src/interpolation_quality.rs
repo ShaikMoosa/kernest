@@ -576,6 +576,7 @@ mod tests {
             closed: true,
             locked: false,
             stroke: None,
+            mask: false,
             nodes: [(x, 0.0), (x + 100.0, 0.0), (x + 100.0, 100.0), (x, 100.0)]
                 .into_iter()
                 .map(|(x, y)| Node::new(x, y, NodeKind::Line))
@@ -619,6 +620,7 @@ mod tests {
                 closed: false,
                 locked: false,
                 stroke: None,
+                mask: false,
                 nodes: vec![
                     Node::new(0.0, 0.0, NodeKind::Line),
                     Node::new(hin.0, hin.1, NodeKind::OffCurve),

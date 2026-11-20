@@ -110,6 +110,8 @@ export default function App() {
   const [showNodes, toggleNodes] = useViewToggle("kernest.showNodes", true);
   const [showGuides, toggleGuides] = useViewToggle("kernest.showGuides", true);
   const [showBackground, toggleBackground] = useViewToggle("kernest.showBackground", true);
+  const [showImage, toggleImage] = useViewToggle("kernest.showImage", true);
+  const [showAnnotations, toggleAnnotations] = useViewToggle("kernest.showAnnotations", true);
   const [showBoundingBox, toggleBoundingBox] = useViewToggle("kernest.showBoundingBox", false);
   const [showSidebar, toggleSidebar] = useViewToggle("kernest.showSidebar", true);
   const [importNotes, setImportNotes] = useState<{ source: string; familyName: string; warnings: string[] } | null>(null);
@@ -996,6 +998,7 @@ export default function App() {
       label: t("Glyph"),
       items: [
         { label: t("Add Glyphs…"), shortcut: shortcutText("add-glyphs"), onSelect: font ? showAddGlyphs : undefined },
+        { label: t("Add Image…"), onSelect: active?.startsWith("g:") ? () => window.dispatchEvent(new CustomEvent("kernest:add-image")) : undefined },
         { label: glyphTargets.length > 1 ? tn(glyphTargets.length, "Remove {n} Glyph", "Remove {n} Glyphs") : t("Remove Glyph"), shortcut: shortcutText("remove-glyph"), onSelect: font && glyphTargets.length ? () => removeGlyphs(glyphTargets) : undefined },
         { label: t("Rename Glyphs…"), onSelect: font ? () => setRenameOpen(true) : undefined },
         { label: t("Add Component…"), shortcut: shortcutText("add-component"), onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
@@ -1039,6 +1042,8 @@ export default function App() {
       { label: t("Show Anchors"), shortcut: shortcutText("show-anchors"), onSelect: toggleAnchors, checked: showAnchors },
       { label: t("Show Guides"), shortcut: shortcutText("show-guides"), onSelect: toggleGuides, checked: showGuides },
       { label: t("Show Background"), shortcut: shortcutText("show-background"), onSelect: toggleBackground, checked: showBackground },
+      { label: t("Show Image"), onSelect: toggleImage, checked: showImage },
+      { label: t("Show Annotations"), onSelect: toggleAnnotations, checked: showAnnotations },
       { label: t("Show Bounding Box"), shortcut: shortcutText("show-bounding-box"), onSelect: toggleBoundingBox, checked: showBoundingBox },
       { label: t("Show Sidebar"), onSelect: toggleSidebar, checked: showSidebar },
       { label: t("Theme: System"), onSelect: () => setTheme("system"), checked: theme === "system", separatorBefore: true },
@@ -1121,7 +1126,7 @@ export default function App() {
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onStructureChanged={onStructureChanged} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showBoundingBox={showBoundingBox} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} handleSize={settings.appearance.handleSize} onDrawn={() => recordMilestone("drawn")} reporters={enabledReporters} />
+                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onStructureChanged={onStructureChanged} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showImage={showImage} showAnnotations={showAnnotations} showBoundingBox={showBoundingBox} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} handleSize={settings.appearance.handleSize} onDrawn={() => recordMilestone("drawn")} reporters={enabledReporters} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} onGenerateInstances={generateInstances} />
               ) : id === "kerning" ? (

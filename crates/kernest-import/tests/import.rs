@@ -47,6 +47,8 @@ fn two_masters() -> Font {
         weight_class: None,
         width_class: None,
         style_link: None,
+        rename_glyphs: Vec::new(),
+        remove_glyphs: Vec::new(),
     });
     // A brace layer for H and an alternate for o.
     let (mut f, brace) =
@@ -1400,6 +1402,8 @@ fn designspace_variable_fonts_round_trip() {
                 max: Some(500.0),
             }],
             glyphs: Vec::new(),
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         },
         VariableFontSetting {
             name: "Bold".into(),
@@ -1410,6 +1414,8 @@ fn designspace_variable_fonts_round_trip() {
                 max: Some(700.0),
             }],
             glyphs: Vec::new(),
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         },
     ];
     let dir = tempfile::tempdir().unwrap();
@@ -1730,12 +1736,16 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
             file_name: "Test-VF".into(),
             axes: vec![],
             glyphs: vec![],
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         },
         VariableFontSetting {
             name: "Text".into(),
             file_name: "TestText-VF".into(),
             axes: vec![],
             glyphs: vec!["H".into(), "T".into()],
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         },
     ];
     let dir = tempfile::tempdir().unwrap();
@@ -1966,6 +1976,7 @@ fn glyphs_round_trip_keeps_corner_components_live() {
             ],
             locked: false,
             stroke: None,
+            mask: false,
         }));
         g.layers.push(l);
     }
@@ -1998,4 +2009,108 @@ fn glyphs_round_trip_keeps_corner_components_live() {
         let drawn = |f: &Font, l: &kernest_core::Layer| apply(f, l).shapes;
         assert_eq!(drawn(&imp.font, a), drawn(&src, b));
     }
+}
+
+#[test]
+fn glyphs_round_trip_keeps_masks_annotations_images_virtual_masters_and_swaps() {
+    use kernest_core::{Annotation, AnnotationKind, LayerImage, VirtualMaster};
+    let mut src = two_masters();
+    let axis_tag = src.axes[0].tag.clone();
+    {
+        let l = src.glyph_mut("H").unwrap().layer_mut("m01").unwrap();
+        if let Some(Shape::Path(p)) = l.shapes.iter_mut().find(|s| matches!(s, Shape::Path(_))) {
+            p.mask = true;
+        }
+        l.annotations = vec![
+            Annotation {
+                kind: AnnotationKind::Text,
+                x: 10.0,
+                y: 600.0,
+                text: "Bowl too light".into(),
+                angle: 0.0,
+                size: 220.0,
+            },
+            Annotation {
+                kind: AnnotationKind::Arrow,
+                x: 100.0,
+                y: 300.0,
+                text: String::new(),
+                angle: 225.0,
+                size: 0.0,
+            },
+            Annotation {
+                kind: AnnotationKind::Plus,
+                x: 50.0,
+                y: 50.0,
+                text: String::new(),
+                angle: 0.0,
+                size: 0.0,
+            },
+        ];
+        l.image = Some(LayerImage {
+            path: "scans/H.png".into(),
+            x: 20.0,
+            y: -100.0,
+            scale_x: 0.5,
+            scale_y: 0.5,
+            angle: 0.0,
+            crop: Some([0.0, 0.0, 400.0, 900.0]),
+            locked: true,
+        });
+        l.hoi = vec![kernest_core::hoi::HoiCurve {
+            axis: axis_tag.clone(),
+            path: 0,
+            node: 1,
+            kind: kernest_core::hoi::HoiKind::Through { x: 120.0, y: 40.0 },
+        }];
+    }
+    let wght = src.axes[0].clone();
+    src.info.virtual_masters = vec![VirtualMaster {
+        name: "Virtual master 1".into(),
+        location: BTreeMap::from([(wght.tag.clone(), wght.max)]),
+    }];
+    src.instances[0].rename_glyphs = vec![["H".into(), "T".into()]];
+    src.instances[0].remove_glyphs = vec!["T".into()];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Extras29.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let imp = import(&path).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let (a, b) = (
+        imp.font.glyph("H").unwrap().layer("m01").unwrap(),
+        src.glyph("H").unwrap().layer("m01").unwrap(),
+    );
+    let masks = |l: &kernest_core::Layer| {
+        l.shapes
+            .iter()
+            .filter_map(|s| match s {
+                Shape::Path(p) => Some(p.mask),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(masks(a), masks(b));
+    assert_eq!(a.annotations, b.annotations);
+    assert_eq!(a.hoi, b.hoi);
+    let (ia, ib) = (a.image.clone().unwrap(), b.image.clone().unwrap());
+    assert_eq!((ia.path, ia.crop, ia.locked), (ib.path, ib.crop, ib.locked));
+    assert!(
+        (ia.x - ib.x).abs() < 1e-6
+            && (ia.scale_x - ib.scale_x).abs() < 1e-6
+            && ia.angle.abs() < 1e-6
+    );
+    assert_eq!(imp.font.info.virtual_masters, src.info.virtual_masters);
+    let inst = imp
+        .font
+        .instances
+        .iter()
+        .find(|i| i.name == src.instances[0].name)
+        .unwrap();
+    assert_eq!(
+        (&inst.rename_glyphs, &inst.remove_glyphs),
+        (
+            &src.instances[0].rename_glyphs,
+            &src.instances[0].remove_glyphs
+        )
+    );
 }

@@ -75,6 +75,11 @@ pub(crate) fn for_each_path(
         let applied = crate::parts::apply(font, layer);
         return for_each_path(font, &applied, t, depth, f);
     }
+    // Masks then cut the shapes below them.
+    if crate::masking::has_masks(layer) {
+        let applied = crate::masking::apply(font, layer);
+        return for_each_path(font, &applied, t, depth, f);
+    }
     for shape in &layer.shapes {
         match shape {
             Shape::Path(p) if p.stroke.is_some() => {

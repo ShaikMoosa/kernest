@@ -109,6 +109,7 @@ pub struct FontInfoView {
     /// OS/2 fsSelection bit 7: applications use the typo metrics for line spacing.
     use_typo_metrics: bool,
     custom_parameters: Vec<kernest_core::CustomParameter>,
+    virtual_masters: Vec<kernest_core::VirtualMaster>,
     /// Colour palettes (CSS colours `#rrggbbaa`), all the same length.
     palettes: Vec<Vec<kernest_core::color::Color>>,
     /// Per-master palette overrides, keyed by master id; empty means none.
@@ -155,6 +156,7 @@ fn info_view(doc: &Document) -> FontInfoView {
         grid: f.info.grid,
         use_typo_metrics: f.info.use_typo_metrics,
         custom_parameters: f.info.custom_parameters.clone(),
+        virtual_masters: f.info.virtual_masters.clone(),
         palettes: f.palettes.clone(),
         master_palettes: f.master_palettes.clone(),
         default_master_id: default_master(f).id.clone(),
@@ -300,6 +302,17 @@ pub fn set_custom_parameters(
         kernest_import::check_parameter_value(p.name.trim(), &p.value)?;
     }
     edit(&state, |f| structure::set_custom_parameters(f, parameters))
+}
+
+/// Replaces the virtual masters.
+#[tauri::command]
+pub fn set_virtual_masters(
+    state: State<AppState>,
+    virtual_masters: Vec<kernest_core::VirtualMaster>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| {
+        structure::set_virtual_masters(f, virtual_masters)
+    })
 }
 
 /// Turns "Use Typo Metrics" on or off.

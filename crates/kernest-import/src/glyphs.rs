@@ -128,6 +128,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         grid: None,
         use_typo_metrics: g.custom_parameters.use_typo_metrics.unwrap_or(false),
         custom_parameters: Vec::new(),
+        virtual_masters: Vec::new(),
     };
 
     // Glyphs in the file's order, then any the order doesn't mention.
@@ -442,6 +443,8 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             } else {
                 None
             },
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
         })
         .collect();
 
@@ -550,6 +553,8 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             }
             font.info.custom_parameters = custom_parameters(&root);
             font.variable_fonts = variable_settings_from(&root, &font, &mut warnings);
+            read_virtual_masters(&root, &mut font);
+            read_instance_swaps(&root, &mut font);
         }
         Err(e) => warnings.push(format!("Master guides couldn't be read: {e}")),
     }
@@ -736,6 +741,9 @@ fn read_extras(
             };
             skipped_parts += restore_corners(l, ld);
             restore_strokes(l, ld);
+            restore_masks(l, ld);
+            l.annotations = annotations_in(ld);
+            l.image = image_in(ld);
             l.guides = guides_in(ld);
             if let Some(bg) = ld.get("background") {
                 let shapes: Vec<Shape> = match bg.get("shapes").and_then(|s| s.as_array()) {
@@ -901,6 +909,14 @@ fn restore_corners(l: &mut Layer, ld: &glyphs_reader::Plist) -> usize {
 /// Puts back the stroke settings Kernest keeps in a layer's userData (see
 /// `glyphs_write::stroke_data`), by path number.
 fn restore_strokes(l: &mut Layer, ld: &glyphs_reader::Plist) {
+    if let Some(curves) = ld
+        .get("userData")
+        .and_then(|u| u.get(crate::glyphs_write::HOI_KEY))
+        .and_then(|v| v.as_str())
+        .and_then(|t| serde_json::from_str::<Vec<kernest_core::hoi::HoiCurve>>(t).ok())
+    {
+        l.hoi = curves;
+    }
     let Some(text) = ld
         .get("userData")
         .and_then(|u| u.get(crate::glyphs_write::STROKE_KEY))
@@ -925,6 +941,238 @@ fn restore_strokes(l: &mut Layer, ld: &glyphs_reader::Plist) {
             p.stroke = Some(s);
         }
     }
+}
+
+/// "Rename Glyphs" values (`a=b` strings) as swap pairs.
+fn swaps_in(p: &glyphs_reader::Plist) -> Vec<[String; 2]> {
+    p.get("value")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|x| {
+            let (a, b) = x.as_str()?.split_once('=')?;
+            Some([a.trim().to_string(), b.trim().to_string()])
+        })
+        .filter(|[a, b]| !a.is_empty() && !b.is_empty())
+        .collect()
+}
+
+/// "Rename Glyphs" and "Remove Glyphs" on static instances, by instance name.
+fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font) {
+    for inst in root
+        .get("instances")
+        .and_then(|i| i.as_array())
+        .unwrap_or(&[])
+    {
+        if inst.get("type").and_then(|t| t.as_str()) == Some("variable") {
+            continue;
+        }
+        let Some(name) = inst.get("name").and_then(|n| n.as_str()) else {
+            continue;
+        };
+        let Some(target) = font.instances.iter_mut().find(|i| i.name == name) else {
+            continue;
+        };
+        for p in inst
+            .get("customParameters")
+            .and_then(|p| p.as_array())
+            .unwrap_or(&[])
+        {
+            if p.get("disabled").and_then(num).is_some_and(|v| v != 0.0) {
+                continue;
+            }
+            match p.get("name").and_then(|n| n.as_str()) {
+                Some("Rename Glyphs") => target.rename_glyphs = swaps_in(p),
+                Some("Remove Glyphs") => {
+                    target.remove_glyphs = p
+                        .get("value")
+                        .and_then(|v| v.as_array())
+                        .unwrap_or(&[])
+                        .iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The "Virtual Master" parameter: locations by axis name. The axes widen to take
+/// them in, since Glyphs takes axis ranges from the masters.
+fn read_virtual_masters(root: &glyphs_reader::Plist, font: &mut Font) {
+    let params = root
+        .get("customParameters")
+        .and_then(|p| p.as_array())
+        .unwrap_or(&[]);
+    let mut n = 0;
+    for p in params {
+        if p.get("name").and_then(|x| x.as_str()) != Some("Virtual Master") {
+            continue;
+        }
+        let mut location = BTreeMap::new();
+        for entry in p.get("value").and_then(|v| v.as_array()).unwrap_or(&[]) {
+            let (Some(axis), Some(v)) = (
+                entry.get("Axis").and_then(|a| a.as_str()),
+                entry.get("Location").and_then(num),
+            ) else {
+                continue;
+            };
+            if let Some(a) = font
+                .axes
+                .iter_mut()
+                .find(|a| a.name == axis || a.tag == axis)
+            {
+                location.insert(a.tag.clone(), v);
+                let user = if a.map.is_empty() {
+                    v
+                } else {
+                    design_to_user(a, v)
+                };
+                a.min = a.min.min(user);
+                a.max = a.max.max(user);
+            }
+        }
+        if location.is_empty() {
+            continue;
+        }
+        n += 1;
+        font.info.virtual_masters.push(kernest_core::VirtualMaster {
+            name: format!("Virtual master {n}"),
+            location,
+        });
+    }
+}
+
+/// Glyphs path attributes `mask = 1`: the masks of a layer, by path number.
+fn restore_masks(l: &mut Layer, ld: &glyphs_reader::Plist) {
+    let Some(list) = ld.get("shapes").and_then(|s| s.as_array()) else {
+        return;
+    };
+    let masks: Vec<bool> = list
+        .iter()
+        .filter(|s| s.get("ref").is_none())
+        .map(|s| {
+            s.get("attr")
+                .and_then(|a| a.get("mask"))
+                .and_then(num)
+                .is_some_and(|v| v != 0.0)
+        })
+        .collect();
+    if !masks.contains(&true) {
+        return;
+    }
+    for (p, m) in l
+        .shapes
+        .iter_mut()
+        .filter_map(|s| match s {
+            Shape::Path(p) => Some(p),
+            _ => None,
+        })
+        .zip(masks)
+    {
+        p.mask = m;
+    }
+}
+
+/// A layer's annotations (Glyphs 3 names the type; Glyphs 2 numbers it).
+fn annotations_in(ld: &glyphs_reader::Plist) -> Vec<kernest_core::Annotation> {
+    use kernest_core::AnnotationKind as K;
+    ld.get("annotations")
+        .and_then(|a| a.as_array())
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|a| {
+            let kind = match a.get("type") {
+                Some(t) => match t.as_str().map(str::to_ascii_lowercase).as_deref() {
+                    Some("text") => K::Text,
+                    Some("arrow") => K::Arrow,
+                    Some("circle") => K::Circle,
+                    Some("plus") => K::Plus,
+                    Some("minus") => K::Minus,
+                    _ => match num(t).map(|v| v as i64) {
+                        Some(1) => K::Text,
+                        Some(2) => K::Arrow,
+                        Some(3) => K::Circle,
+                        Some(4) => K::Plus,
+                        Some(5) => K::Minus,
+                        _ => return None,
+                    },
+                },
+                None => K::Text,
+            };
+            let (x, y) = a
+                .get("pos")
+                .or_else(|| a.get("position"))
+                .and_then(point)
+                .unwrap_or((0.0, 0.0));
+            Some(kernest_core::Annotation {
+                kind,
+                x,
+                y,
+                text: a
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                angle: a.get("angle").and_then(num).unwrap_or(0.0),
+                size: a.get("width").and_then(num).unwrap_or(0.0),
+            })
+        })
+        .collect()
+}
+
+/// A layer's `backgroundImage`: path, transform (or pos/scale/angle) and crop.
+fn image_in(ld: &glyphs_reader::Plist) -> Option<kernest_core::LayerImage> {
+    let bi = ld.get("backgroundImage")?;
+    let path = bi.get("imagePath").and_then(|p| p.as_str())?.to_string();
+    let nums = |v: &glyphs_reader::Plist| -> Vec<f64> {
+        match v.as_array() {
+            Some(a) => a.iter().filter_map(num).collect(),
+            None => v
+                .as_str()
+                .unwrap_or("")
+                .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == 'e'))
+                .filter_map(|x| x.parse().ok())
+                .collect(),
+        }
+    };
+    let (mut x, mut y, mut sx, mut sy, mut angle) = (0.0, 0.0, 1.0, 1.0, 0.0);
+    if let Some(t) = bi.get("transform").map(nums).filter(|t| t.len() == 6) {
+        sx = t[0].hypot(t[1]);
+        sy = t[2].hypot(t[3]);
+        angle = t[1].atan2(t[0]).to_degrees();
+        x = t[4];
+        y = t[5];
+    }
+    if let Some((px, py)) = bi.get("pos").and_then(point) {
+        x = px;
+        y = py;
+    }
+    if let Some(s) = bi.get("scale").map(nums) {
+        if s.len() == 2 {
+            sx = s[0];
+            sy = s[1];
+        }
+    }
+    if let Some(a) = bi.get("angle").and_then(num) {
+        angle = a;
+    }
+    let crop = bi
+        .get("crop")
+        .map(nums)
+        .filter(|c| c.len() == 4 && c[2] > 0.0 && c[3] > 0.0)
+        .map(|c| [c[0], c[1], c[2], c[3]]);
+    Some(kernest_core::LayerImage {
+        path,
+        x,
+        y,
+        scale_x: if sx == 0.0 { 1.0 } else { sx },
+        scale_y: if sy == 0.0 { 1.0 } else { sy },
+        angle,
+        crop,
+        locked: bi.get("locked").and_then(num).is_some_and(|v| v != 0.0),
+    })
 }
 
 /// The font-level dictionary of a `.glyphs` file (or a package's `fontinfo.plist`).
@@ -977,6 +1225,7 @@ pub(crate) const HANDLED_PARAMETERS: &[&str] = &[
     // Glyphs 2 keeps axes and name fields as font parameters; Kernest reads them into
     // its axes and Font Info names.
     "Axes",
+    "Virtual Master",
     "copyright",
     "description",
     "designer",
@@ -1047,6 +1296,7 @@ fn variable_settings_from(
             .to_string();
         let mut file_name = None;
         let mut glyphs: Vec<String> = Vec::new();
+        let mut rename: Vec<[String; 2]> = Vec::new();
         for p in inst
             .get("customParameters")
             .and_then(|p| p.as_array())
@@ -1093,6 +1343,7 @@ fn variable_settings_from(
                 }
                 // The default master is the font's own origin in Kernest.
                 "Variable Font Origin" => {}
+                "Rename Glyphs" => rename = swaps_in(p),
                 other => {
                     if !ignored.iter().any(|x| x == other) {
                         ignored.push(other.to_string());
@@ -1115,6 +1366,8 @@ fn variable_settings_from(
             file_name,
             axes: Vec::new(),
             glyphs,
+            rename_glyphs: rename,
+            remove_glyphs: Vec::new(),
         });
     }
     if !ignored.is_empty() {
@@ -1304,6 +1557,7 @@ fn shape_v3(d: &glyphs_reader::Plist) -> Option<Shape> {
     Some(Shape::Path(KPath {
         locked: false,
         stroke: None,
+        mask: false,
         closed: d.get("closed").and_then(|c| c.as_i64()).unwrap_or(1) != 0,
         nodes,
     }))
@@ -1338,6 +1592,7 @@ fn shapes_v2(d: &glyphs_reader::Plist) -> Vec<Shape> {
         out.push(Shape::Path(KPath {
             locked: false,
             stroke: None,
+            mask: false,
             closed: p.get("closed").and_then(|c| c.as_i64()).unwrap_or(1) != 0,
             nodes,
         }));
@@ -1750,6 +2005,7 @@ fn layer(id: &str, l: &glyphs_reader::Layer) -> Layer {
                 out.shapes.push(Shape::Path(KPath {
                     locked: false,
                     stroke: None,
+                    mask: false,
                     closed: p.closed,
                     nodes,
                 }));

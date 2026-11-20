@@ -115,6 +115,7 @@ pub(crate) fn from_bez(b: &BezPath, closed: bool) -> Option<Path> {
     Some(Path {
         locked: false,
         stroke: None,
+        mask: false,
         closed,
         nodes,
     })
@@ -257,6 +258,7 @@ mod tests {
         Shape::Path(Path {
             locked: false,
             stroke: None,
+            mask: false,
             closed: true,
             nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
                 .into_iter()
@@ -334,6 +336,7 @@ mod tests {
             Shape::Path(Path {
                 locked: false,
                 stroke: None,
+                mask: false,
                 closed: true,
                 nodes: vec![
                     n(100.0, 0.0, NodeKind::Curve),
