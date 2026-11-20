@@ -389,6 +389,41 @@ export interface LayerImage {
 }
 
 /** The picture of a layer image, for drawing. */
+/** A glyph's sbix bitmap (kind "bitmap") or SVG drawing (kind "svg"), placed in font units. */
+export interface GlyphPicture {
+  kind: "bitmap" | "svg";
+  /** Pixel size, for bitmaps (0 for the SVG). */
+  ppem: number;
+  path: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** The SVG's scale (1 for bitmaps). */
+  scale: number;
+  dataUrl: string | null;
+  file: string;
+}
+
+export interface InstallReport {
+  /** Styles now available in other apps. */
+  installed: string[];
+  report: ExportReport;
+}
+
+export interface ExportDestination {
+  id: "user-fonts" | "adobe" | "web-preview";
+  path: string;
+  exists: boolean;
+}
+
+/** What Kerning › Compress or Clean Up changed. */
+export interface KernTidy {
+  moved: number;
+  removed: number;
+  kept: number;
+}
+
 export interface ImageData {
   dataUrl: string | null;
   width: number;
@@ -671,6 +706,8 @@ export interface FontInfo {
   customParameters: CustomParameter[];
   /** Virtual masters: named locations used only by glyphs with intermediate layers there. */
   virtualMasters: VirtualMaster[];
+  /** Number values for feature tokens ($padding): by name, then by master id. */
+  numbers: Record<string, Record<string, number>>;
   /** Colour palettes (CSS colours #rrggbbaa); every palette has the same length. */
   palettes: string[][];
   /** Per-master palette overrides keyed by master id; empty means none. */
@@ -737,6 +774,10 @@ export interface KernPair {
 export interface KerningList {
   pairs: KernPair[];
   groups: string[];
+  /** Glyphs in each group when it is the left side of a pair (their right group). */
+  leftMembers?: Record<string, string[]>;
+  /** Glyphs in each group when it is the right side of a pair (their left group). */
+  rightMembers?: Record<string, string[]>;
   status: DocStatus;
 }
 
@@ -918,6 +959,10 @@ export interface Backend {
   setUseTypoMetrics(on: boolean): Promise<FontInfo>;
   setCustomParameters(parameters: CustomParameter[]): Promise<FontInfo>;
   setVirtualMasters(virtualMasters: VirtualMaster[]): Promise<FontInfo>;
+  /** Replaces the number values for feature tokens. */
+  setNumbers(numbers: Record<string, Record<string, number>>): Promise<FontInfo>;
+  /** What a feature token ($padding, ${expr}, $[predicate]) stands for. */
+  describeFeatureToken(token: string): Promise<string>;
   /** Replaces a layer's local guides. */
   setGuides(glyph: string, masterId: string, guides: Guide[]): Promise<LayerView>;
   /** Moves guide `index` between the layer's local list and the master's global list. */
@@ -970,6 +1015,16 @@ export interface Backend {
   exportFont(variable: boolean, statics: boolean, outDir: string, options?: ExportFormats, instances?: string[]): Promise<ExportReport>;
   /** Writes editable UFO sources and a designspace into `outDir`. */
   exportUfo(outDir: string, options?: UfoExportOptions): Promise<UfoExportReport>;
+  /** Builds static TTFs and loads them for this Windows session only. */
+  testInstall(instances?: string[]): Promise<InstallReport>;
+  /** Unloads the Test Install fonts; returns how many were loaded. */
+  testUninstall(): Promise<number>;
+  /** Installs static TTFs into the per-user Fonts folder (no admin rights). */
+  installForUser(instances?: string[]): Promise<InstallReport>;
+  /** Quick export destinations: the per-user Fonts folder, Adobe's and the web preview's. */
+  exportDestinations(): Promise<ExportDestination[]>;
+  /** Exports WOFF2 into the web preview folder and returns the local page address. */
+  webPreview(): Promise<string>;
   /** Sets (or clears, with null) a metrics key such as "=n" and applies it. */
   setMetricsKey(glyph: string, masterId: string, metric: MetricName, key: string | null): Promise<LayerView>;
   /** Glyph › Update Metrics: applies every metrics key in the font. */
@@ -996,6 +1051,8 @@ export interface Backend {
   importMetrics(path: string, masterId: string, sourceMasterId: string, keep: KeepSide, widths: boolean, kerning: boolean): Promise<MetricsResult>;
   /** Adds glyphs typed as names/characters/code points plus whole glyph sets. */
   addGlyphs(text: string, glyphSets: string[]): Promise<AddGlyphsResult>;
+  /** Glyph › Duplicate Glyph: copies named a.001 after each glyph. */
+  duplicateGlyphs(names: string[]): Promise<{ added: string[]; status: DocStatus }>;
   /** Removes glyphs; components using them are decomposed. */
   removeGlyphs(names: string[]): Promise<DocStatus>;
   /** Marks glyphs as exported or not (unexported glyphs are left out of fonts). */
@@ -1035,6 +1092,13 @@ export interface Backend {
   setLayerImage(glyph: string, masterId: string, image: LayerImage | null): Promise<LayerView>;
   addLayerImage(glyph: string, masterId: string, file: string): Promise<LayerView>;
   layerImageData(glyph: string, masterId: string): Promise<ImageData | null>;
+  /** sbix bitmaps (smallest first) and the SVG drawing of a glyph. */
+  glyphPictures(glyph: string): Promise<GlyphPicture[]>;
+  addGlyphBitmap(glyph: string, file: string, ppem: number): Promise<GlyphPicture[]>;
+  addGlyphSvg(glyph: string, file: string): Promise<GlyphPicture[]>;
+  /** Moves the bitmap for ppem (0 = the SVG); scale resizes the SVG. */
+  placeGlyphPicture(glyph: string, ppem: number, x: number, y: number, scale?: number): Promise<GlyphPicture[]>;
+  removeGlyphPicture(glyph: string, ppem: number): Promise<GlyphPicture[]>;
   reorderShapes(glyph: string, masterId: string, order: number[], allLayers: boolean): Promise<LayerView>;
   setPathPart(glyph: string, masterId: string, index: number, part: PathPart | null): Promise<LayerView>;
   decomposeParts(glyph: string, masterId: string): Promise<LayerView>;
@@ -1074,7 +1138,14 @@ export interface Backend {
   setOnboarding(onboarding: Onboarding): Promise<Settings>;
   recordMilestone(milestone: Milestone): Promise<Settings>;
   setUpdateCheck(enabled: boolean): Promise<Settings>;
-  checkUpdates(): Promise<UpdateInfo>;
+  /** force: check now (Help › Check for Updates…), even when automatic checks are off. */
+  checkUpdates(force?: boolean): Promise<UpdateInfo>;
+  /** Downloads the setup program for `version`, checks its checksum, runs it and quits. */
+  installUpdate(version: string): Promise<void>;
+  /** Kerning › Compress (compress) or Clean Up, in one master or all, as one undo step. */
+  tidyKerning(masterId: string, allMasters: boolean, compress: boolean): Promise<{ tidy: KernTidy; status: DocStatus }>;
+  /** Kerning › Paste: adds pairs; overwrite replaces values already there. */
+  pasteKerning(masterId: string, pairs: KernPair[], overwrite: boolean): Promise<DocStatus>;
   setPluginEnabled(name: string, enabled: boolean): Promise<Settings>;
   setShortcut(action: string, shortcut: string): Promise<Settings>;
   resetShortcuts(): Promise<Settings>;
@@ -1259,6 +1330,8 @@ export interface Onboarding {
 export interface UpdateInfo {
   currentVersion: string;
   latestVersion: string | null;
+  /** What's new in the latest release, in a line or two. */
+  notes?: string | null;
   available: boolean;
   checkedAt: number | null;
   error: string | null;
@@ -1399,6 +1472,8 @@ const tauriBackend: Backend = {
   setUseTypoMetrics: (on) => invoke("set_use_typo_metrics", { on }),
   setCustomParameters: (parameters) => invoke("set_custom_parameters", { parameters }),
   setVirtualMasters: (virtualMasters) => invoke("set_virtual_masters", { virtualMasters }),
+  setNumbers: (numbers) => invoke("set_numbers", { numbers }),
+  describeFeatureToken: (token) => invoke("describe_feature_token", { token }),
   setGuides: (glyph, masterId, guides) => invoke("set_guides", { glyph, masterId, guides }),
   setGuideScope: (glyph, masterId, index, toGlobal) => invoke("set_guide_scope", { glyph, masterId, index, toGlobal }),
   transform: (glyph, masterId, selection, affine, origin, allMasters, onBackground) =>
@@ -1430,6 +1505,11 @@ const tauriBackend: Backend = {
   setGlyphOrder: (order) => invoke("set_glyph_order", { order }),
   compatibility: () => invoke("compatibility"),
   exportFont: (variable, statics, outDir, options, instances) => invoke("export_font", { variable, statics, outDir, ...options, instances }),
+  testInstall: (instances) => invoke("test_install", { instances }),
+  testUninstall: () => invoke("test_uninstall"),
+  installForUser: (instances) => invoke("install_for_user", { instances }),
+  exportDestinations: () => invoke("export_destinations"),
+  webPreview: () => invoke("web_preview"),
   exportUfo: (outDir, options) => invoke("export_ufo", { outDir, ...options }),
   setMetricsKey: (glyph, masterId, metric, key) => invoke("set_metrics_key", { glyph, masterId, metric, key }),
   updateMetrics: () => invoke("update_metrics"),
@@ -1446,6 +1526,7 @@ const tauriBackend: Backend = {
   importMetrics: (path, masterId, sourceMasterId, keep, widths, kerning) => invoke("import_metrics", { path, masterId, sourceMasterId, keep, widths, kerning }),
   addGlyphs: (text, glyphSets) => invoke("add_glyphs", { text, glyphSets }),
   removeGlyphs: (names) => invoke("remove_glyphs", { names }),
+  duplicateGlyphs: (names) => invoke("duplicate_glyphs", { names }),
   setGlyphExport: (names, exportGlyph) => invoke("set_glyph_export", { names, export: exportGlyph }),
   setGlyphTags: (glyph, tags) => invoke("set_glyph_tags", { glyph, tags }),
   setGlyphUnicodes: (glyph, unicodes, take) => invoke("set_glyph_unicodes", { glyph, unicodes, take }),
@@ -1471,6 +1552,11 @@ const tauriBackend: Backend = {
   setLayerImage: (glyph, masterId, image) => invoke("set_layer_image", { glyph, masterId, image }),
   addLayerImage: (glyph, masterId, file) => invoke("add_layer_image", { glyph, masterId, file }),
   layerImageData: (glyph, masterId) => invoke("layer_image_data", { glyph, masterId }),
+  glyphPictures: (glyph) => invoke("glyph_pictures", { glyph }),
+  addGlyphBitmap: (glyph, file, ppem) => invoke("add_glyph_bitmap", { glyph, file, ppem }),
+  addGlyphSvg: (glyph, file) => invoke("add_glyph_svg", { glyph, file }),
+  placeGlyphPicture: (glyph, ppem, x, y, scale) => invoke("place_glyph_picture", { glyph, ppem, x, y, scale }),
+  removeGlyphPicture: (glyph, ppem) => invoke("remove_glyph_picture", { glyph, ppem }),
   reorderShapes: (glyph, masterId, order, allLayers) => invoke("reorder_shapes", { glyph, masterId, order, allLayers }),
   setPathPart: (glyph, masterId, index, part) => invoke("set_path_part", { glyph, masterId, index, part }),
   decomposeParts: (glyph, masterId) => invoke("decompose_parts", { glyph, masterId }),
@@ -1501,7 +1587,10 @@ const tauriBackend: Backend = {
   setOnboarding: (onboarding) => invoke("set_onboarding", { onboarding }),
   recordMilestone: (milestone) => invoke("record_milestone", { milestone }),
   setUpdateCheck: (enabled) => invoke("set_update_check", { enabled }),
-  checkUpdates: () => invoke("check_updates"),
+  checkUpdates: (force) => invoke("check_updates", { force }),
+  installUpdate: (version) => invoke("install_update", { version }),
+  tidyKerning: (masterId, allMasters, compress) => invoke("tidy_kerning", { masterId, allMasters, compress }),
+  pasteKerning: (masterId, pairs, overwrite) => invoke("paste_kerning", { masterId, pairs, overwrite }),
   setPluginEnabled: (name, enabled) => invoke("set_plugin_enabled", { name, enabled }),
   setShortcut: (action, shortcut) => invoke("set_shortcut", { action, shortcut }),
   resetShortcuts: () => invoke("reset_shortcuts"),
@@ -1779,7 +1868,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, grid: d.grid ?? null, useTypoMetrics: false, customParameters: [], virtualMasters: [], palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, grid: d.grid ?? null, useTypoMetrics: false, customParameters: [], virtualMasters: [], numbers: {}, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -1972,6 +2061,12 @@ const mockBackend: Backend = {
   async setVirtualMasters() {
     throw "Virtual masters need the desktop app (npm run tauri dev).";
   },
+  async setNumbers() {
+    throw "Number values need the desktop app (npm run tauri dev).";
+  },
+  async describeFeatureToken() {
+    throw "Token previews need the desktop app (npm run tauri dev).";
+  },
   async setCustomParameters() {
     throw "Custom parameters need the desktop app (npm run tauri dev).";
   },
@@ -2113,6 +2208,21 @@ const mockBackend: Backend = {
   async exportFont() {
     throw "Exporting fonts needs the desktop app (npm run tauri dev).";
   },
+  async testInstall() {
+    throw "Test Install needs the desktop app (npm run tauri dev).";
+  },
+  async testUninstall() {
+    return 0;
+  },
+  async installForUser() {
+    throw "Installing fonts needs the desktop app (npm run tauri dev).";
+  },
+  async exportDestinations() {
+    return [];
+  },
+  async webPreview() {
+    throw "The web preview needs the desktop app (npm run tauri dev).";
+  },
   async exportUfo() {
     throw "Exporting UFO sources needs the desktop app (npm run tauri dev).";
   },
@@ -2154,6 +2264,9 @@ const mockBackend: Backend = {
   },
   async addGlyphs() {
     throw "Adding glyphs needs the desktop app (npm run tauri dev).";
+  },
+  async duplicateGlyphs() {
+    throw "Duplicating glyphs needs the desktop app (npm run tauri dev).";
   },
   async removeGlyphs() {
     throw "Removing glyphs needs the desktop app (npm run tauri dev).";
@@ -2224,6 +2337,21 @@ const mockBackend: Backend = {
   },
   async layerImageData() {
     return null;
+  },
+  async glyphPictures() {
+    return [];
+  },
+  async addGlyphBitmap() {
+    throw "Bitmaps need the desktop app (npm run tauri dev).";
+  },
+  async addGlyphSvg() {
+    throw "SVG drawings need the desktop app (npm run tauri dev).";
+  },
+  async placeGlyphPicture() {
+    return [];
+  },
+  async removeGlyphPicture() {
+    return [];
   },
   async hoiView() {
     return { axes: [], axis: "", curves: [] };
@@ -2470,6 +2598,15 @@ const mockBackend: Backend = {
   },
   async checkUpdates() {
     return { currentVersion: __APP_VERSION__, latestVersion: null, available: false, checkedAt: null, error: null };
+  },
+  async installUpdate() {
+    throw "Updating needs the desktop app.";
+  },
+  async tidyKerning() {
+    throw "Compress and Clean Up need the desktop app (npm run tauri dev).";
+  },
+  async pasteKerning() {
+    throw "Pasting kerning needs the desktop app (npm run tauri dev).";
   },
   async setPluginEnabled(name, enabled) {
     mockSettings.pluginEnabled[name] = enabled;

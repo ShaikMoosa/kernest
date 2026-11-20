@@ -10,6 +10,8 @@ import { SHORTCUT_ACTIONS, effectiveShortcut, matchShortcut, parseShortcut } fro
 import { loadTheme, saveTheme, type ThemePref } from "./lib/theme";
 import { applyCanvasColors } from "./lib/appearance";
 import { StartWindow } from "./components/StartWindow";
+import { MenuSearch } from "./components/MenuSearch";
+import type { Tab as SettingsTab } from "./components/SettingsDialog";
 import { NewFontDialog } from "./components/NewFontDialog";
 import { WelcomeDialog, type StartAction } from "./components/WelcomeDialog";
 import { GuidedTour } from "./components/GuidedTour";
@@ -123,6 +125,9 @@ export default function App() {
   const [settingsReady, setSettingsReady] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [dismissedUpdate, setDismissedUpdate] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
+  // Help › Check for Updates… shows its result even when automatic checks are off.
+  const [manualUpdateCheck, setManualUpdateCheck] = useState(false);
   useEffect(() => applyCanvasColors(settings.appearance, theme), [settings.appearance, theme]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [compare, setCompare] = useState<CompareView | null>(null);
@@ -398,6 +403,26 @@ export default function App() {
       setActive((a) => (a === name ? next[Math.min(i, next.length - 1)] ?? null : a));
       return next;
     });
+  }, []);
+
+  // Closed tabs, newest last, for View › Reopen Closed Tab.
+  const closedTabs = useRef<string[]>([]);
+  const closeTabRemembered = useCallback((id: string) => {
+    closedTabs.current = [...closedTabs.current.filter((x) => x !== id), id].slice(-20);
+    closeTab(id);
+  }, [closeTab]);
+  const [menuSearch, setMenuSearch] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
+  // Keys for menu commands defined later in the render (Alt+Q, F11, Ctrl+Tab).
+  const menuKeys = useRef<{ search: () => void; fullScreen: () => void; cycle: (dir: 1 | -1) => void }>({ search: () => {}, fullScreen: () => {}, cycle: () => {} });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "q") { e.preventDefault(); menuKeys.current.search(); }
+      else if (e.key === "F11") { e.preventDefault(); menuKeys.current.fullScreen(); }
+      else if (e.ctrlKey && !e.altKey && e.key === "Tab") { e.preventDefault(); menuKeys.current.cycle(e.shiftKey ? -1 : 1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   // Glyph tabs whose glyph no longer exists (removed, or an undone add) are closed.
@@ -883,7 +908,7 @@ export default function App() {
     "import": () => importSource(false),
     "save": save,
     "save-as": saveAs,
-    "close": () => { if (active !== null) closeTab(active); else closeFont(); },
+    "close": () => { if (active !== null) closeTabRemembered(active); else closeFont(); },
     "export": () => setExporting(true),
     "font-info": openInfo,
     "undo": () => undoRedo(false),
@@ -907,7 +932,7 @@ export default function App() {
     "show-bounding-box": toggleBoundingBox,
     "macro-panel": openMacro,
     "settings": () => setSettingsOpen(true),
-  }), [showNewFont, open, importSource, save, saveAs, active, closeTab, closeFont, openInfo, undoRedo, newTextTab, openKerning, showAddGlyphs, removeGlyphs, glyphTargets, setAnchors, repeatFilter, toggleMetrics, toggleAnchors, toggleGuides, toggleBackground, toggleBoundingBox, showSidebar, toggleSidebar, openMacro]);
+  }), [showNewFont, open, importSource, save, saveAs, active, closeTabRemembered, closeFont, openInfo, undoRedo, newTextTab, openKerning, showAddGlyphs, removeGlyphs, glyphTargets, setAnchors, repeatFilter, toggleMetrics, toggleAnchors, toggleGuides, toggleBackground, toggleBoundingBox, showSidebar, toggleSidebar, openMacro]);
 
   // Windows shortcuts (Ctrl, not Cmd), honouring any rebinding stored in settings.
   useEffect(() => {
@@ -951,12 +976,94 @@ export default function App() {
   const pluginFilters = plugins.filter((p) => p.type === "filter" && p.enabled);
   const reporterPlugins = plugins.filter((p) => p.type === "reporter" && p.enabled);
 
+  // ---------- Menu bar extras (S46, S47) ----------
+  const fontViewCommand = (cmd: string) => window.dispatchEvent(new CustomEvent("kernest:fontview", { detail: cmd }));
+  const selectCommand = (cmd: "select-all" | "deselect-all" | "invert-selection") =>
+    inGlyph ? () => sendEditCommand(cmd) : font && active === null ? () => fontViewCommand(cmd) : undefined;
+  const reopenClosedTab = () => {
+    const id = closedTabs.current.pop();
+    if (id) openTab(id);
+  };
+  const cycleTab = (dir: 1 | -1) => {
+    if (!font) return;
+    const order: (string | null)[] = [null, ...tabs];
+    const i = Math.max(0, order.indexOf(active));
+    setActive(order[(i + dir + order.length) % order.length]);
+  };
+  const revertToSaved = async () => {
+    if (!font?.path) return;
+    if (status.dirty && !(await confirmDiscard())) return;
+    await openPath(font.path, true);
+  };
+  const duplicateGlyphs = async (names: string[]) => {
+    try {
+      const r = await backend.duplicateGlyphs(names);
+      onStructureChanged(r.status);
+      setToast({ kind: "info", text: t("Duplicated as {names}", { names: r.added.join(", ") }) });
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const decomposeTargets = async () => {
+    if (!font || !glyphTargets.length) return;
+    try {
+      const r = await backend.batchPathOperation(glyphTargets, font.masterId, "decompose");
+      onStructureChanged(r.status);
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const exportAllPresets = async () => {
+    try {
+      const info = await backend.fontInfo();
+      if (!info.exportPresets.length) return setToast({ kind: "info", text: t("Save an export preset in the Export dialog first.") });
+      let files = 0;
+      const problems: string[] = [];
+      for (const p of info.exportPresets) {
+        const r = await backend.exportPreset(p.name);
+        files += r.files.length;
+        problems.push(...r.problems.map((x) => `${p.name}: ${translateMessage(x)}`));
+      }
+      setToast(problems.length
+        ? { kind: "danger", text: problems.slice(0, 2).join("; ") }
+        : { kind: "info", text: tn(files, "Exported {n} font with every preset", "Exported {n} fonts with every preset") });
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const toggleFullScreen = async () => {
+    if (!isTauri) return;
+    const w = getCurrentWindow();
+    await w.setFullscreen(!(await w.isFullscreen()));
+  };
+  const openSettingsAt = (tab?: SettingsTab) => { setSettingsTab(tab); setSettingsOpen(true); };
+  const checkUpdatesNow = async () => {
+    try {
+      const info = await backend.checkUpdates(true);
+      setUpdateInfo(info);
+      setManualUpdateCheck(true);
+      setDismissedUpdate(null);
+      setToast(info.error
+        ? { kind: "danger", text: translateMessage(info.error) }
+        : info.available
+          ? { kind: "info", text: t("Kernest {version} is available.", { version: info.latestVersion ?? "" }) }
+          : { kind: "info", text: t("Kernest {version} is up to date.", { version: info.currentVersion }) });
+    } catch (e) {
+      fail(e);
+    }
+  };
+  menuKeys.current = { search: () => setMenuSearch(true), fullScreen: () => { toggleFullScreen().catch(fail); }, cycle: cycleTab };
+
   const menus: Menu[] = [
     {
       label: t("File"),
       items: [
         { label: t("New…"), shortcut: shortcutText("new-font"), onSelect: showNewFont },
+        { label: t("New from Glyph Sets…"), onSelect: showNewFont },
         { label: t("Open…"), shortcut: shortcutText("open"), onSelect: open },
+        { label: t("Open Recent"), submenu: recents.length
+          ? recents.filter((r, i) => recents.findIndex((x) => x.path.replace(/\\/g, "/").toLowerCase() === r.path.replace(/\\/g, "/").toLowerCase()) === i).slice(0, 10).map((r) => ({ label: `${r.familyName} — ${r.path.split(/[\\/]/).pop()}`, onSelect: () => { openPath(r.path).catch(fail); } }))
+          : [{ label: t("No recent fonts") }] },
         { label: t("Open Sample Font"), onSelect: openSample },
         { label: t("Import…"), shortcut: shortcutText("import"), onSelect: () => importSource(false), separatorBefore: true },
         { label: t("Import Folder…"), onSelect: () => importSource(true) },
@@ -966,13 +1073,20 @@ export default function App() {
         { label: t("Save"), shortcut: shortcutText("save"), onSelect: font ? save : undefined, separatorBefore: true },
         { label: t("Save As…"), shortcut: shortcutText("save-as"), onSelect: font ? saveAs : undefined },
         { label: t("Save As .glyphs…"), onSelect: font ? saveAsGlyphs : undefined },
+        { label: t("Revert to Saved"), onSelect: font?.path ? () => { revertToSaved().catch(fail); } : undefined },
         { label: t("Close Font"), onSelect: font ? closeFont : undefined },
         { label: t("Export"), separatorBefore: true, submenu: [
           { label: t("Font…"), shortcut: shortcutText("export"), onSelect: font ? () => setExporting(true) : undefined },
           { label: t("UFO…"), onSelect: font ? () => setExportingUfo(true) : undefined },
+          { label: t("Export All Presets"), onSelect: font ? () => { exportAllPresets(); } : undefined, separatorBefore: true },
+          { label: t("Test Install"), onSelect: font ? () => backend.testInstall().then((r) => setToast({ kind: "info", text: t("Loaded for this session: {styles}", { styles: r.installed.join(", ") }) }), fail) : undefined, separatorBefore: true },
+          { label: t("Web Preview"), onSelect: font ? () => backend.webPreview().then((url) => openExternal(url), fail) : undefined },
         ] },
-        { label: t("Font Info…"), shortcut: shortcutText("font-info"), onSelect: font ? openInfo : undefined },
+        { label: t("Generate Instances"), onSelect: font ? generateInstances : undefined },
+        { label: t("Font Info…"), shortcut: shortcutText("font-info"), onSelect: font ? openInfo : undefined, separatorBefore: true },
         { label: t("Compare with Font…"), onSelect: font ? compareFont : undefined },
+        { label: t("Settings…"), shortcut: shortcutText("settings"), onSelect: () => openSettingsAt() },
+        { label: t("Exit"), shortcut: "Alt+F4", onSelect: isTauri ? () => { getCurrentWindow().close().catch(fail); } : undefined, separatorBefore: true },
       ],
     },
     {
@@ -987,6 +1101,11 @@ export default function App() {
         { label: t("Copy Glyphs"), onSelect: font && glyphTargets.length ? copyGlyphs : undefined, separatorBefore: true },
         { label: t("Copy Glyph Names"), submenu: NAME_FORMATS.map((f) => ({ label: t(f.label), onSelect: font && glyphTargets.length ? () => copyNames(f.id) : undefined })) },
         { label: t("Paste Special…"), onSelect: font ? () => setPasteOpen(true) : undefined },
+        { label: t("Select All"), onSelect: selectCommand("select-all"), separatorBefore: true },
+        { label: t("Deselect All"), onSelect: selectCommand("deselect-all") },
+        { label: t("Invert Selection"), onSelect: selectCommand("invert-selection") },
+        { label: t("Find…"), onSelect: font ? () => { setActive(null); setTimeout(() => fontViewCommand("find"), 50); } : undefined, separatorBefore: true },
+        { label: t("Find and Replace…"), onSelect: font ? () => setRenameOpen(true) : undefined },
         { label: t("Edit Background"), shortcut: shortcutText("edit-background"), onSelect: inGlyph ? () => sendEditCommand("edit-background") : undefined, separatorBefore: true },
         { label: t("Selection to Background"), shortcut: shortcutText("selection-to-background"), onSelect: inGlyph ? () => sendEditCommand("to-background") : undefined },
         { label: t("Add to Background"), shortcut: shortcutText("add-to-background"), onSelect: inGlyph ? () => sendEditCommand("add-to-background") : undefined },
@@ -998,12 +1117,15 @@ export default function App() {
       label: t("Glyph"),
       items: [
         { label: t("Add Glyphs…"), shortcut: shortcutText("add-glyphs"), onSelect: font ? showAddGlyphs : undefined },
+        { label: t("New Glyph…"), onSelect: font ? showAddGlyphs : undefined },
+        { label: t("Duplicate Glyph"), onSelect: font && glyphTargets.length ? () => { duplicateGlyphs(glyphTargets); } : undefined },
         { label: t("Add Image…"), onSelect: active?.startsWith("g:") ? () => window.dispatchEvent(new CustomEvent("kernest:add-image")) : undefined },
         { label: glyphTargets.length > 1 ? tn(glyphTargets.length, "Remove {n} Glyph", "Remove {n} Glyphs") : t("Remove Glyph"), shortcut: shortcutText("remove-glyph"), onSelect: font && glyphTargets.length ? () => removeGlyphs(glyphTargets) : undefined },
         { label: t("Rename Glyphs…"), onSelect: font ? () => setRenameOpen(true) : undefined },
         { label: t("Add Component…"), shortcut: shortcutText("add-component"), onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
         { label: t("Set Anchors"), shortcut: shortcutText("set-anchors"), onSelect: font && glyphTargets.length ? () => setAnchors(glyphTargets) : undefined, separatorBefore: true },
         { label: t("Create Composites…"), onSelect: font ? () => setComposites({ initial: glyphTargets.join(" ") }) : undefined },
+        { label: t("Decompose Components"), onSelect: font && glyphTargets.length ? () => { decomposeTargets(); } : undefined },
         { label: t("Locked"), onSelect: font && glyphTargets.length ? () => toggleGlyphLocked(glyphTargets) : undefined, checked: glyphTargets.length > 0 && glyphTargets.every((n) => font?.glyphs.find((g) => g.name === n)?.locked), separatorBefore: true },
         { label: t("Update Metrics"), onSelect: font ? updateMetrics : undefined, separatorBefore: true },
       ],
@@ -1022,6 +1144,7 @@ export default function App() {
         { label: t("Remove Overlap"), onSelect: inGlyph ? () => sendEditCommand("remove-overlap") : undefined },
         { label: t("Tidy up Paths"), shortcut: shortcutText("tidy-up"), onSelect: inGlyph ? () => sendEditCommand("tidy-up") : undefined, separatorBefore: true },
         { label: t("Round Coordinates"), onSelect: inGlyph ? () => sendEditCommand("round-coordinates") : undefined },
+        { label: t("Transformations…"), onSelect: font && filterGlyph ? () => setFilterDialog("transformations") : undefined, separatorBefore: true },
         { label: t("Focus on Selected Path"), onSelect: inGlyph ? () => sendEditCommand("focus-path") : undefined, separatorBefore: true },
         { label: t("Clear Focus"), onSelect: inGlyph ? () => sendEditCommand("clear-focus") : undefined },
       ],
@@ -1032,12 +1155,23 @@ export default function App() {
         { label: t("Round Corners…"), onSelect: font && filterGlyph ? () => setFilterDialog("round-corners") : undefined },
         { label: t("Offset Curve…"), onSelect: font && filterGlyph ? () => setFilterDialog("offset-curve") : undefined },
         { label: t("Transformations…"), onSelect: font && filterGlyph ? () => setFilterDialog("transformations") : undefined },
+        { label: t("Shape Order…"), onSelect: inGlyph ? () => sendEditCommand("shape-order") : undefined },
         ...pluginFilters.map((p, i) => ({ label: p.name, onSelect: font && filterGlyph ? () => setPluginFilter(p) : undefined, separatorBefore: i === 0 })),
         { label: t("Repeat Last Filter"), shortcut: shortcutText("repeat-filter"), onSelect: font && lastFilter.current ? repeatFilter : undefined, separatorBefore: true },
       ],
     },
     { label: t("View"), items: [
-      { label: t("Show Nodes"), onSelect: toggleNodes, checked: showNodes },
+      { label: t("New Tab"), shortcut: shortcutText("new-text-tab"), onSelect: font ? newTextTab : undefined },
+      { label: t("Close Tab"), shortcut: shortcutText("close"), onSelect: active !== null ? () => closeTabRemembered(active) : undefined },
+      { label: t("Reopen Closed Tab"), onSelect: font ? reopenClosedTab : undefined },
+      { label: t("Next Tab"), shortcut: "Ctrl+Tab", onSelect: font ? () => cycleTab(1) : undefined },
+      { label: t("Previous Tab"), shortcut: "Ctrl+Shift+Tab", onSelect: font ? () => cycleTab(-1) : undefined },
+      { label: t("Zoom In"), onSelect: inGlyph ? () => sendEditCommand("zoom-in") : undefined, separatorBefore: true },
+      { label: t("Zoom Out"), onSelect: inGlyph ? () => sendEditCommand("zoom-out") : undefined },
+      { label: t("Zoom to Active Layer"), onSelect: inGlyph ? () => sendEditCommand("zoom-fit") : undefined },
+      { label: t("Actual Size"), onSelect: inGlyph ? () => sendEditCommand("zoom-actual") : undefined },
+      { label: t("Full Screen"), shortcut: "F11", onSelect: isTauri ? () => { toggleFullScreen().catch(fail); } : undefined },
+      { label: t("Show Nodes"), onSelect: toggleNodes, checked: showNodes, separatorBefore: true },
       { label: t("Show Metrics"), shortcut: shortcutText("show-metrics"), onSelect: toggleMetrics, checked: showMetrics },
       { label: t("Show Anchors"), shortcut: shortcutText("show-anchors"), onSelect: toggleAnchors, checked: showAnchors },
       { label: t("Show Guides"), shortcut: shortcutText("show-guides"), onSelect: toggleGuides, checked: showGuides },
@@ -1054,9 +1188,12 @@ export default function App() {
     {
       label: t("Window"),
       items: [
+        { label: t("Font View"), onSelect: font ? () => setActive(null) : undefined },
         { label: t("New Text Tab"), shortcut: shortcutText("new-text-tab"), onSelect: font ? newTextTab : undefined },
         { label: t("Kerning"), shortcut: shortcutText("kerning"), onSelect: font ? openKerning : undefined },
-        { label: t("Settings…"), shortcut: shortcutText("settings"), onSelect: () => setSettingsOpen(true), separatorBefore: true },
+        { label: t("Macro Panel"), shortcut: shortcutText("macro-panel"), onSelect: openMacro },
+        { label: t("Plugin Manager"), onSelect: () => openSettingsAt("plugins"), separatorBefore: true },
+        { label: t("Settings…"), shortcut: shortcutText("settings"), onSelect: () => openSettingsAt() },
       ],
     },
     {
@@ -1078,10 +1215,15 @@ export default function App() {
     {
       label: t("Help"),
       items: [
-        { label: t("Kernest Handbook"), shortcut: "F1", onSelect: openHandbook },
+        { label: t("Search Menus…"), shortcut: "Alt+Q", onSelect: () => setMenuSearch(true) },
+        { label: t("Kernest Handbook"), shortcut: "F1", onSelect: openHandbook, separatorBefore: true },
+        { label: t("Keyboard Shortcuts"), onSelect: () => openSettingsAt("shortcuts") },
         { label: t("Welcome to Kernest"), onSelect: () => changeOnboarding({ ...settings.onboarding, welcomeDone: false }).catch(fail) },
         { label: t("Restart guided tour"), onSelect: font ? () => changeOnboarding({ ...settings.onboarding, tourEnabled: true, tourStep: 0 }).then(() => navigateTour(0)).catch(fail) : undefined },
         { label: t("Reset getting-started checklist"), onSelect: () => changeOnboarding({ ...settings.onboarding, completed: [], tourEnabled: true, tourStep: 0 }).then(() => navigateTour(0)).catch(fail) },
+        { label: t("What's New"), onSelect: () => { openExternal(`${REPO_URL}/releases/latest`).catch(fail); }, separatorBefore: true },
+        { label: t("Check for Updates…"), onSelect: () => { checkUpdatesNow(); } },
+        { label: t("Report a Problem on GitHub…"), onSelect: () => { openExternal(`${REPO_URL}/issues/new`).catch(fail); } },
         { label: t("About Kernest"), onSelect: () => setAbout(true), separatorBefore: true },
       ],
     },
@@ -1092,7 +1234,31 @@ export default function App() {
   return (
     <div className="app">
       <TitleBar title={title} menus={menus} />
-      {settings.updates.enabled && updateInfo?.available && updateInfo.latestVersion !== dismissedUpdate && <div className="update-notice" role="status"><span>{t("Kernest {version} is available.", { version: updateInfo.latestVersion ?? "" })}</span><button type="button" className="btn btn-secondary btn-sm" onClick={() => openExternal(`${REPO_URL}/releases/latest`).catch(fail)}>{t("View release")}</button><button type="button" className="icon-btn" aria-label={t("Dismiss")} onClick={() => setDismissedUpdate(updateInfo.latestVersion)}><CloseIcon size={14} /></button></div>}
+      {updateInfo?.available && updateInfo.latestVersion !== dismissedUpdate && (settings.updates.enabled || manualUpdateCheck) && (
+        <div className="update-notice" role="status">
+          <svg className="update-icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 9h-5v9H9v-9H4z" fill="currentColor" /></svg>
+          <span className="update-text">
+            <strong className="k-label">{t("Kernest {version} is available", { version: updateInfo.latestVersion ?? "" })}</strong>
+            <span className="k-caption muted">
+              {updateInfo.notes ? `${t("New:")} ${updateInfo.notes} · ` : ""}
+              <button type="button" className="link-btn" onClick={() => openExternal(`${REPO_URL}/releases/latest`).catch(fail)}>{t("View release notes on GitHub")}</button>
+            </span>
+          </span>
+          <button type="button" className="btn btn-secondary btn-sm" disabled={updating} onClick={() => setDismissedUpdate(updateInfo.latestVersion)}>{t("Later")}</button>
+          <button type="button" className="btn btn-primary btn-sm" disabled={updating || !updateInfo.latestVersion}
+            title={t("Downloads the setup program, checks it against the release's checksums, installs it and restarts Kernest")}
+            onClick={async () => {
+              if (!updateInfo.latestVersion || !(await confirmDiscard())) return;
+              setUpdating(true);
+              try {
+                await backend.installUpdate(updateInfo.latestVersion);
+              } catch (e) {
+                fail(e);
+                setUpdating(false);
+              }
+            }}>{updating ? t("Downloading…") : t("Download & install")}</button>
+        </div>
+      )}
       {font ? (
         <>
           <div className="commandbar">
@@ -1103,7 +1269,7 @@ export default function App() {
               {tabs.map((id) => (
                 <div key={id} role="tab" aria-selected={active === id} className={`doc-tab${active === id ? " is-selected" : ""}${id.startsWith("g:") ? "" : " is-tool"}`} onClick={() => setActive(id)}>
                   <span className="k-label">{tabLabel(id)}</span>
-                  <button className="tab-close" aria-label={t("Close {name}", { name: tabLabel(id) })} onClick={(e) => { e.stopPropagation(); closeTab(id); }}>
+                  <button className="tab-close" aria-label={t("Close {name}", { name: tabLabel(id) })} onClick={(e) => { e.stopPropagation(); closeTabRemembered(id); }}>
                     <CloseIcon size={12} />
                   </button>
                 </div>
@@ -1261,8 +1427,10 @@ export default function App() {
           onApply={applyPluginFilter}
         />
       )}
+      {menuSearch && <MenuSearch menus={menus} onClose={() => setMenuSearch(false)} />}
       {settingsOpen && (
         <SettingsDialog
+          initialTab={settingsTab}
           settings={settings}
           theme={theme}
           language={lang}
@@ -1271,7 +1439,7 @@ export default function App() {
           onToggleUpdates={toggleUpdates}
           onCheckUpdates={checkForUpdates}
           plugins={plugins}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); }}
           onSetPluginEnabled={setPluginEnabled}
           onSetShortcut={setShortcut}
           onResetShortcuts={resetShortcuts}

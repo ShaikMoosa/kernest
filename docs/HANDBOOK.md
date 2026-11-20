@@ -52,6 +52,8 @@ A Kernest font is a **`.kernest` folder**. Inside it, `font.json` holds the font
   - double-click a `.glyphs` or `.designspace` file, or use **Open with › Kernest**. Kernest only becomes their default app if no other app has claimed them.
   - Compiled `.otf`, `.ttf` and `.woff2` fonts dropped on the window are imported too.
 - **One window at a time:** if Kernest is already running, the font opens in that window, which asks first if there are unsaved changes.
+- **Export fonts here** and **Check font** on the same right-click menus build the font with the [command line](#command-line) into a `build` folder next to it (Check font then checks the result). A window shows what happened; press a key to close it.
+- **Icon and tooltip:** when Kernest saves a `.kernest` folder it draws "Aa" in the font as the folder's icon and sets its tooltip to a summary such as *Kernest Sans · 3 masters · 412 glyphs · 7 instances*. (Explorer has no preview pane for folders, so this is what shows there.) The icon and a `desktop.ini` file live inside the folder and are hidden.
 
 ## Font View
 
@@ -358,6 +360,16 @@ An anchor is a named point that tells other glyphs where to sit: a mark above a 
 - **Kerning window** (Window › Kerning, Ctrl+Shift+K): every kerning pair for the current master, with a filter box and a row for adding pairs.
 - **Kerning groups:** a glyph has a **left group** (used when it's on the right side of a pair) and a **right group** (used when it's on the left side). Group pairs are written as `@group`. A pair between two specific glyphs is an **exception**, and it overrides the group pair.
 
+### Kerning tools
+
+The Kerning window's toolbar tidies the pairs of the current master, or of every master with **All masters** ticked. Each is one undo step.
+
+- **Compress** moves glyph pairs one step up to their groups, the left side first: `T–m` becomes `@T–m`, and the next Compress makes it `@T–@n`. A pair whose value the group kerning already gives is removed. One that differs from it, such as `T–ö` at −40 where `@T–@o` is −70, stays: it's a real exception.
+- **Clean Up** removes pairs that do nothing: zero values, pairs naming a glyph or group that doesn't exist, and exceptions equal to the group pair they fall under.
+- **Copy** takes every pair of the master; **Paste (Overwrite)** puts them into another master (or another font), replacing values already there, and **Paste (Keep)** only adds the pairs that are missing.
+- **Show All Glyphs** lists the glyphs of each group under its name.
+- In hand-written feature code, `@MMK_L_T` stands for the glyphs whose right group is T (used on the left of a pair) and `@MMK_R_o` for those whose left group is o (used on the right), as in Glyphs: `pos @MMK_L_T' -50 @MMK_R_o;`.
+
 ## Masters, axes and instances
 
 Open **Font Info** (Ctrl+I) to set:
@@ -386,11 +398,13 @@ Open **Font Info** (Ctrl+I) to set:
 
 A font with masks, annotations, images, interpolation curves, virtual masters or glyph swaps saves at format version 14.
 
+**Number values** (Font Info › Masters) are named numbers with a value per master, such as a `padding` of 24 in Regular and 48 in Bold. Feature code uses them as `$padding` or `${padding*2}` (see [Features](#features)). **Add number** adds one; rename it or remove it in its row. They come from and go back to Glyphs files.
+
 **File › Compare with Font…** opens a report comparing the open font with another font: family info, metrics, axes, masters, glyphs and kerning, side by side, with the differences listed. Use it to check what changed between two versions or against a reference font.
 
 Switch the master you're editing with the buttons at the top right. Previews interpolate live. Kernest checks that every glyph can be interpolated, meaning the same number of paths, nodes and components in each master, and lists the glyphs that can't be in the **Incompatible** category of Font View.
 
-**Custom parameters** (Font Info) lists the settings from a Glyphs source that Kernest doesn't use itself, with their values exactly as Glyphs writes them (`1`, `"text"`, `(a, b)`, `{key = value;}`). They're kept with the font and written back by Save As .glyphs, but not applied when Kernest exports. Edit a value, switch one off with **On**, add one with **Add parameter**, or remove it; a value Glyphs couldn't read is refused. A font with custom parameters, backup layers, strokes or corner, cap and segment components saves at format version 13.
+**Custom parameters** (Font Info) lists the settings from a Glyphs source that Kernest doesn't use itself, with their values exactly as Glyphs writes them (`1`, `"text"`, `(a, b)`, `{key = value;}`). They're kept with the font and written back by Save As .glyphs. Kernest applies three of them when it exports (Export sbix Table, SBIX to SVG and Color Layers to SVG; see [Bitmaps and SVG](#bitmaps-and-svg)) and keeps the others without using them. Edit a value, switch one off with **On**, add one with **Add parameter**, or remove it; a value Glyphs couldn't read is refused. A font with custom parameters, backup layers, strokes or corner, cap and segment components saves at format version 13.
 
 **Line spacing** (Font Info › Masters, on each master) sets how far apart lines of text sit and where the underline goes: typo, hhea and win ascender, descender and line gap, plus underline thickness and position. Leave a field empty and it's worked out from the ascender and descender on export. Win ascent, win descent, line gaps and underline thickness can't be negative. **Use Typo Metrics** applies to the whole font: apps then space lines by the typo values. A font that sets any of these saves at format version 12.
 
@@ -429,6 +443,13 @@ OpenType features are the substitutions and positioning rules that run when text
 - **Automatic features:** Kernest reads your glyph names and offers a switch for each feature it can build: `liga` from ligature names like `f_i`, `ss01`…`ss20` from suffixes like `a.ss01`, and `aalt` gathering the alternates. Turn a switch on and the feature is generated for you; the **Generated code** disclosure shows exactly what will be compiled.
 - **Your own code:** the editor below the switches is for hand-written feature code, with line numbers. **Apply features** compiles it; errors are listed with their line and column, and clicking an error jumps to that line. When it compiles cleanly you'll see "Compiled with no errors." A hand-written feature replaces the generated one with the same tag; your code is used as-is. **File › Import Features…** merges a `.fea` file in, showing what's new and what it replaces first (see [Import](#features-1)).
 - **In exported fonts:** generated and hand-written features are compiled together into GSUB/GPOS, alongside the mark and kerning features Kernest builds from anchors and kerning.
+- **Tokens and conditions** (as in Glyphs). The **Tokens and conditions** disclosure under the editor lists them, and **Alt+click** on a token shows what it stands for:
+  - `$padding` and `${padding*2}` use the **number values** in Font Info › Masters (+, −, ×, ÷ and brackets work). A static font gets its master's value, interpolated for instances between masters; a variable font gets a value that varies, so `pos @Uppercase <$padding 0 ${padding*2} 0>;` spaces capitals more in bold.
+  - `$[case == smallCaps]` is the list of glyphs that match, for example `@SmallCaps = [$[case == smallCaps]];`. Compare `name`, `category`, `subCategory`, `case` (upper, lower, smallCaps, minor, noCase), `script`, `direction` (LTR, RTL), `unicode`, `countOfUnicodes`, `tags`, `export`, `hasComponents`, `leftKerningGroup`, `rightKerningGroup`, `layer.width` and `layer.anchors.top.y` with `==`, `!=`, `<`, `>`, `<=`, `>=`, `BEGINSWITH`, `ENDSWITH`, `CONTAINS`, `LIKE` (with `*` and `?`) and `IN`, and combine with `AND`, `OR`, `NOT` and brackets.
+  - `#ifdef VARIABLE` … `#endif` keeps code for variable fonts only; `#ifndef VARIABLE` for static fonts; `#else` for the other kind.
+  - `condition 600 < wght < 900;` inside a feature: the rules after it (up to the next `condition` or the end of the feature) apply only in that part of the design space. Variable fonts get a feature variation; static fonts keep or drop the rules at their location. Values are axis values as in Font Info › Axes.
+  - `pos @Uppercase 10 (wdth:80) 20;` gives a value that changes across the design space: 10 at the default and 20 at a width of 80 (master locations).
+  - `lookupflag;` resets the lookup flags, and `delete x;` is written as `sub x by NULL;`.
 - **Preview in text tabs:** the **Features** button in a text tab lists every available feature with a checkbox, plus **Shape preview**. With Shape preview on, the sample text is shaped with the ticked features (using the same engine as browsers), so you can see `fi` become a ligature or `a` become its `ss01` alternate. Spacing edits are paused while Shape preview is on; turn it off to edit kerning again.
 
 ## Export
@@ -454,6 +475,16 @@ And what happens before building:
 Kerning and kerning groups are compiled into GPOS, and your feature code — generated and hand-written (see [Features](#features)) — is included. Glyphs that aren't set to export are left out. Line spacing values brought in from a Glyphs or UFO source are written to the OS/2, hhea and post tables; named instances in a variable font get PostScript names; hinted fonts are marked to round sizes to whole pixels.
 
 When the export finishes, the window lists anything that went wrong (a format that couldn't be built, or a font exported without hinting or colour) and, separately, things worth a look in fonts that were built: metrics keys that couldn't be applied, and glyphs that may not interpolate cleanly.
+
+### Trying fonts in other apps
+
+The Export window can also put the font where other apps see it. Each builds its own fonts, without changing the export settings:
+
+- **Test Install** builds static TTFs and loads them for this Windows session only. Other apps see them once they refresh their font list, and they go away when Kernest quits, so an app never keeps an old copy. Test Install again replaces them.
+- **Install for Me** builds static TTFs and installs them for your Windows account (no admin rights), where they stay. Restart apps that were already open.
+- **Web Preview** builds WOFF2 fonts and opens a page on `http://localhost:4123` with sample text, a waterfall and the CSS to use them. Use Web Preview again after changes; an open page reloads the fonts by itself. Nothing leaves your computer.
+- **Quick destinations** fill in the destination folder: your own fonts folder, the Adobe Fonts folder that Adobe apps read (writing there needs admin rights) and the web preview folder.
+- File › Export also has **Test Install**, **Web Preview** and **Export All Presets** (every saved preset, each to its own folder).
 
 ### Presets
 
@@ -485,6 +516,23 @@ By default a colour layer's paint is the same in every master. In the **Paint…
 For colour that changes between masters, Font Info › **Per-master colours** gives a master its own palette: tick the master, then edit its colours. On export Kernest stacks the masters' colours as cross-fading layers, so a variable font shows each master's palette exactly at its location and blends between them.
 
 On export, every colour layer becomes a glyph of its own (`O.color0`, `O.color1`, …), and Kernest writes the `COLR` and `CPAL` tables into TTF, OTF and WOFF2 files, static and variable. Glyphs whose layers are all solid, opaque colours also get a COLRv0 record, so Windows 10 and older apps can show them in colour too. In variable fonts, gradient points, stop positions and opacities that differ between masters are written as COLRv1 variation deltas, so they interpolate along with the outlines.
+
+### Bitmaps and SVG
+
+Some apps show colour glyphs from pictures instead of COLR layers. The **Bitmaps and SVG** panel in the glyph editor's sidebar adds them:
+
+- **Add Bitmap…** adds a PNG for one pixel size (an `sbix` strike, used by Apple apps and some emoji fonts). Set the **Pixel size** first; each image pixel covers units-per-em ÷ pixel-size font units. Add one picture per size you want.
+- **Add SVG…** adds an SVG drawing (the `SVG ` table, used by Adobe apps and Firefox). It's scaled to the height of the em; X, Y and H place and size it.
+- Click a picture in the list to show it on the canvas, and set its position there. Like placed images, pictures and SVG files are referenced by path, relative to the font file, so keep them in a folder next to the font.
+- The outline stays the fallback wherever pictures aren't supported.
+
+On export the switches are custom parameters (Font Info › Custom parameters › **Add export switch…**), as in Glyphs:
+
+- **Export sbix Table** — `0` leaves the bitmaps out.
+- **SBIX to SVG** — a pixel size: glyphs without an SVG drawing get one made from their bitmap at that size (or the next larger one).
+- **Color Layers to SVG** — `1` also writes SVG documents drawn from the colour layers, for apps that read SVG but not COLR.
+
+Glyphs files keep bitmaps as `iColor` layers and SVG drawings as `svg` layers, in both directions. A font with bitmaps, SVG drawings or number values saves at format version 15.
 
 ## Import
 
@@ -599,7 +647,19 @@ code — is in [docs/PYTHON_API.md](PYTHON_API.md).
 
 ### Updates
 
-**Window › Settings… › Updates** controls update checking. It is **off by default**: Kernest sends no update requests. When you turn it on, Kernest reads the latest stable release from GitHub at most once a day and only shows a notice (with a link to the release); it never downloads or installs anything automatically. **Check now** runs a check immediately.
+**Window › Settings… › Updates** controls update checking. It is **off by default**: Kernest sends no update requests. When you turn it on, Kernest reads the latest stable release from GitHub at most once a day and shows a notice with what's new. **Help › Check for Updates…** checks once, right now, even with automatic checks off. **Check now** in Settings does the same.
+
+The notice offers **Later** and **Download & install**. Download & install fetches the setup program for your PC from the GitHub release, checks it against the release's `SHA256SUMS.txt` (it refuses a file that doesn't match), asks about unsaved changes, then runs it and closes Kernest. Nothing is downloaded until you click it.
+
+## Menus
+
+Every command is in the menu bar: File, Edit, Glyph, Path, Filter, View, Script, Window and Help. **Help › Search Menus…** (Alt+Q) finds any command by name: type a few letters and press Enter. A few worth knowing:
+
+- **File:** Open Recent, Revert to Saved, Generate Instances, Exit.
+- **Edit:** Select All, Deselect All and Invert Selection (nodes in the glyph editor, glyphs in Font View); Find… jumps to the Font View search; Find and Replace… renames glyphs.
+- **Glyph:** New Glyph…, Duplicate Glyph (a copy named `a.001` right after the glyph), Decompose Components.
+- **View:** tabs (Next and Previous Tab with Ctrl+Tab and Ctrl+Shift+Tab, Reopen Closed Tab), Zoom In, Zoom Out, Zoom to Active Layer, Actual Size and Full Screen (F11).
+- **Window:** Font View, Plugin Manager. **Help:** Keyboard Shortcuts, What's New, Check for Updates…, Report a Problem on GitHub….
 
 ## Keyboard shortcuts
 

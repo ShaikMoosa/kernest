@@ -110,6 +110,8 @@ pub struct FontInfoView {
     use_typo_metrics: bool,
     custom_parameters: Vec<kernest_core::CustomParameter>,
     virtual_masters: Vec<kernest_core::VirtualMaster>,
+    /// Number values for feature tokens: by name, then by master id.
+    numbers: std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>>,
     /// Colour palettes (CSS colours `#rrggbbaa`), all the same length.
     palettes: Vec<Vec<kernest_core::color::Color>>,
     /// Per-master palette overrides, keyed by master id; empty means none.
@@ -157,6 +159,7 @@ fn info_view(doc: &Document) -> FontInfoView {
         use_typo_metrics: f.info.use_typo_metrics,
         custom_parameters: f.info.custom_parameters.clone(),
         virtual_masters: f.info.virtual_masters.clone(),
+        numbers: f.info.numbers.clone(),
         palettes: f.palettes.clone(),
         master_palettes: f.master_palettes.clone(),
         default_master_id: default_master(f).id.clone(),
@@ -313,6 +316,23 @@ pub fn set_virtual_masters(
     edit(&state, |f| {
         structure::set_virtual_masters(f, virtual_masters)
     })
+}
+
+/// Replaces the number values used by feature tokens such as `$padding`.
+#[tauri::command]
+pub fn set_numbers(
+    state: State<AppState>,
+    numbers: std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| structure::set_numbers(f, numbers))
+}
+
+/// What a feature token stands for (Alt+click in the feature editor).
+#[tauri::command]
+pub fn describe_feature_token(state: State<AppState>, token: String) -> CmdResult<String> {
+    let mut guard = crate::commands::lock(&state)?;
+    let doc = crate::commands::doc_mut(&mut guard)?;
+    kernest_core::featuretokens::describe(&doc.font, &token)
 }
 
 /// Turns "Use Typo Metrics" on or off.

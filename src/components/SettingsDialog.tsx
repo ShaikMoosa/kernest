@@ -8,6 +8,8 @@ import { CloseIcon } from "./Icons";
 import { t, type Lang } from "../lib/i18n";
 
 interface Props {
+  /** The tab to open on (Help › Keyboard Shortcuts, Window › Plugin Manager). */
+  initialTab?: Tab;
   settings: Settings;
   theme: ThemePref;
   language: Lang;
@@ -25,13 +27,13 @@ interface Props {
   onReloadPlugins: () => void;
 }
 
-type Tab = "appearance" | "updates" | "plugins" | "shortcuts" | "python";
+export type Tab = "appearance" | "updates" | "plugins" | "shortcuts" | "python";
 
 const TYPE_LABEL: Record<string, string> = { filter: "Filter", reporter: "Reporter", general: "General" };
 
 /** S44 · Settings: plug-ins, keyboard shortcuts and the Python runtime. */
-export function SettingsDialog({ settings, theme, language, updateInfo, onAppearance, onToggleUpdates, onCheckUpdates, plugins, onClose, onSetPluginEnabled, onSetShortcut, onResetShortcuts, onSetPythonPath, onOpenPluginsFolder, onReloadPlugins }: Props) {
-  const [tab, setTab] = useState<Tab>("appearance");
+export function SettingsDialog({ settings, theme, language, updateInfo, onAppearance, onToggleUpdates, onCheckUpdates, plugins, onClose, onSetPluginEnabled, onSetShortcut, onResetShortcuts, onSetPythonPath, onOpenPluginsFolder, onReloadPlugins, initialTab }: Props) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? "appearance");
   const [recording, setRecording] = useState<string | null>(null);
   const [python, setPython] = useState<PythonInfo | null>(null);
   const [pythonPath, setPythonPath] = useState(settings.pythonPath ?? "");

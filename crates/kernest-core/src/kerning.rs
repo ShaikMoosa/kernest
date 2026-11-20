@@ -138,9 +138,257 @@ pub fn validate_side(font: &Font, side: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// What Compress or Clean Up changed in one master.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KernTidy {
+    /// Pairs moved one step up to a group (Compress).
+    pub moved: usize,
+    /// Pairs removed: redundant, zero, or naming nothing.
+    pub removed: usize,
+    /// Glyph-level pairs kept as real exceptions (their value differs from the group's).
+    pub kept: usize,
+}
+
+impl std::ops::AddAssign for KernTidy {
+    fn add_assign(&mut self, o: Self) {
+        self.moved += o.moved;
+        self.removed += o.removed;
+        self.kept += o.kept;
+    }
+}
+
+fn close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 0.5
+}
+
+/// Compress (S56), one step: each pair with a glyph side moves up to the glyph's
+/// group, left side first (T–m → @T–m, then @T–@n). A pair the group kerning already
+/// gives is removed; one that differs from it stays as a real exception.
+pub fn compress_pairs(font: &Font, pairs: &[KernPair]) -> (Vec<KernPair>, KernTidy) {
+    let mut out: Vec<KernPair> = pairs.to_vec();
+    let mut tidy = KernTidy::default();
+    let lookup = |list: &[KernPair], l: &str, r: &str| find(list, l, r);
+    let mut i = 0;
+    while i < out.len() {
+        let p = out[i].clone();
+        let (l_glyph, r_glyph) = (!p.left.starts_with('@'), !p.right.starts_with('@'));
+        if !l_glyph && !r_glyph {
+            i += 1;
+            continue;
+        }
+        let lg = if l_glyph {
+            left_key(font, &p.left, true)
+        } else {
+            p.left.clone()
+        };
+        let rg = if r_glyph {
+            right_key(font, &p.right, true)
+        } else {
+            p.right.clone()
+        };
+        if lg == p.left && rg == p.right {
+            // No groups to move to.
+            i += 1;
+            continue;
+        }
+        // The group pair the glyphs fall under decides whether this is an exception.
+        if let Some(v) = lookup(&out, &lg, &rg)
+            .filter(|_| (lg.clone(), rg.clone()) != (p.left.clone(), p.right.clone()))
+        {
+            if close(v, p.value) {
+                out.remove(i);
+                tidy.removed += 1;
+            } else {
+                tidy.kept += 1;
+                i += 1;
+            }
+            continue;
+        }
+        // One step up: the left side if it can move, else the right.
+        let (tl, tr) = if lg != p.left {
+            (lg, p.right.clone())
+        } else {
+            (p.left.clone(), rg)
+        };
+        match lookup(&out, &tl, &tr) {
+            Some(v) if close(v, p.value) => {
+                out.remove(i);
+                tidy.removed += 1;
+            }
+            Some(_) => {
+                tidy.kept += 1;
+                i += 1;
+            }
+            None => {
+                out[i].left = tl;
+                out[i].right = tr;
+                tidy.moved += 1;
+                i += 1;
+            }
+        }
+    }
+    (out, tidy)
+}
+
+/// Clean Up (S56): removes pairs that do nothing: zero values, sides naming a glyph or
+/// group that doesn't exist, and glyph-level pairs equal to the group kerning they
+/// fall under.
+pub fn clean_up_pairs(font: &Font, pairs: &[KernPair]) -> (Vec<KernPair>, KernTidy) {
+    let left_groups: std::collections::HashSet<&str> = font
+        .glyphs
+        .iter()
+        .filter_map(|g| g.right_group.as_deref())
+        .collect();
+    let right_groups: std::collections::HashSet<&str> = font
+        .glyphs
+        .iter()
+        .filter_map(|g| g.left_group.as_deref())
+        .collect();
+    let exists = |side: &str, groups: &std::collections::HashSet<&str>| match side.strip_prefix('@')
+    {
+        Some(g) => groups.contains(g),
+        None => font.glyph(side).is_some(),
+    };
+    let mut tidy = KernTidy::default();
+    let mut out: Vec<KernPair> = Vec::with_capacity(pairs.len());
+    for p in pairs {
+        if close(p.value, 0.0) || !exists(&p.left, &left_groups) || !exists(&p.right, &right_groups)
+        {
+            tidy.removed += 1;
+            continue;
+        }
+        out.push(p.clone());
+    }
+    let snapshot = out.clone();
+    out.retain(|p| {
+        if p.left.starts_with('@') && p.right.starts_with('@') {
+            return true;
+        }
+        let lg = if p.left.starts_with('@') {
+            p.left.clone()
+        } else {
+            left_key(font, &p.left, true)
+        };
+        let rg = if p.right.starts_with('@') {
+            p.right.clone()
+        } else {
+            right_key(font, &p.right, true)
+        };
+        // The most general pair that applies, other than this one.
+        let general = [
+            (lg.clone(), rg.clone()),
+            (lg.clone(), p.right.clone()),
+            (p.left.clone(), rg.clone()),
+        ]
+        .into_iter()
+        .filter(|(l, r)| (l, r) != (&p.left, &p.right))
+        .find_map(|(l, r)| find(&snapshot, &l, &r));
+        match general {
+            Some(v) if close(v, p.value) => {
+                tidy.removed += 1;
+                false
+            }
+            _ => true,
+        }
+    });
+    (out, tidy)
+}
+
+/// Kerning pasted into a master: `overwrite` replaces pairs already there, otherwise
+/// they keep their values and only new pairs are added.
+pub fn paste_pairs(existing: &[KernPair], pasted: &[KernPair], overwrite: bool) -> Vec<KernPair> {
+    let mut out = existing.to_vec();
+    for p in pasted {
+        match out
+            .iter()
+            .position(|q| q.left == p.left && q.right == p.right)
+        {
+            Some(i) if overwrite => out[i].value = p.value,
+            Some(_) => {}
+            None => out.push(p.clone()),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn kp(l: &str, r: &str, v: f64) -> KernPair {
+        KernPair {
+            left: l.into(),
+            right: r.into(),
+            value: v,
+        }
+    }
+
+    fn grouped() -> Font {
+        let mut f = crate::sample::sample_font();
+        for (name, left, right) in [
+            ("T", "T", "T"),
+            ("m", "n", "n"),
+            ("n", "n", "n"),
+            ("o", "o", "o"),
+        ] {
+            let g = f.glyph_mut(name).unwrap();
+            g.left_group = Some(left.into());
+            g.right_group = Some(right.into());
+        }
+        f
+    }
+
+    #[test]
+    fn compress_moves_one_step_and_keeps_real_exceptions() {
+        let f = grouped();
+        let pairs = vec![
+            kp("T", "m", -60.0),
+            kp("@T", "@o", -70.0),
+            kp("T", "o", -40.0),
+            kp("T", "n", -60.0),
+        ];
+        let (once, t1) = compress_pairs(&f, &pairs);
+        // T–m moves to @T–m; T–o differs from @T–@o (kept); T–n moves to @T–n.
+        assert!(once.contains(&kp("@T", "m", -60.0)), "{once:?}");
+        assert!(once.contains(&kp("T", "o", -40.0)));
+        assert_eq!(t1.kept, 1);
+        let (twice, _) = compress_pairs(&f, &once);
+        // @T–m becomes @T–@n; @T–n then equals it and is removed.
+        assert!(twice.contains(&kp("@T", "@n", -60.0)), "{twice:?}");
+        assert!(!twice.iter().any(|p| p.left == "@T" && p.right == "n"));
+        assert!(twice.contains(&kp("T", "o", -40.0)));
+    }
+
+    #[test]
+    fn clean_up_removes_pairs_that_do_nothing() {
+        let f = grouped();
+        let pairs = vec![
+            kp("@T", "@o", -70.0),
+            kp("T", "o", -70.0),
+            kp("T", "o.missing", -10.0),
+            kp("@nobody", "o", -10.0),
+            kp("T", "m", 0.0),
+            kp("T", "n", -30.0),
+        ];
+        let (out, tidy) = clean_up_pairs(&f, &pairs);
+        assert_eq!(out, vec![kp("@T", "@o", -70.0), kp("T", "n", -30.0)]);
+        assert_eq!(tidy.removed, 4);
+    }
+
+    #[test]
+    fn paste_overwrites_or_keeps() {
+        let a = vec![kp("A", "V", -50.0)];
+        let b = vec![kp("A", "V", -80.0), kp("T", "o", -40.0)];
+        assert_eq!(
+            paste_pairs(&a, &b, true),
+            vec![kp("A", "V", -80.0), kp("T", "o", -40.0)]
+        );
+        assert_eq!(
+            paste_pairs(&a, &b, false),
+            vec![kp("A", "V", -50.0), kp("T", "o", -40.0)]
+        );
+    }
     use crate::sample::sample_font;
 
     fn font() -> Font {

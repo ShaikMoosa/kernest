@@ -115,6 +115,28 @@ export async function pickImage(): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
+/** A PNG for a glyph's sbix bitmap. */
+export async function pickPng(): Promise<string | null> {
+  if (!isTauri) return null;
+  const picked = await open({
+    multiple: false,
+    title: t("Add Bitmap"),
+    filters: [{ name: t("PNG pictures"), extensions: ["png"] }],
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
+/** An SVG file for a glyph's SVG drawing. */
+export async function pickSvgDrawing(): Promise<string | null> {
+  if (!isTauri) return null;
+  const picked = await open({
+    multiple: false,
+    title: t("Add SVG Drawing"),
+    filters: [{ name: t("SVG files"), extensions: ["svg"] }],
+  });
+  return typeof picked === "string" ? picked : null;
+}
+
 export async function pickMasterSource(): Promise<string | null> {
   if (!isTauri) return null;
   const picked = await open({

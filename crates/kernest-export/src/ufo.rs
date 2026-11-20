@@ -138,6 +138,8 @@ pub struct UfoSource<'a> {
     /// The instance this source exports, when it is one; its class and style-link
     /// overrides win over the values derived from the design-space location.
     pub instance: Option<&'a Instance>,
+    /// A source of the variable font (feature tokens and conditions expand for it).
+    pub variable: bool,
 }
 
 /// OS/2 weight class (1–1000) for a style: the `wght` location if the font has that
@@ -537,7 +539,13 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     ufo.groups = groups;
     // Generated code plus the designer's own; a hand-written feature tag is never
     // generated, so the designer's version of a feature is the one compiled.
-    ufo.features = kernest_core::features::combined(font);
+    ufo.features = kernest_core::features::combined_for(
+        font,
+        &kernest_core::featuretokens::Context {
+            variable: src.variable,
+            location: Some(&src.location),
+        },
+    )?;
     Ok(ufo)
 }
 

@@ -339,6 +339,10 @@ pub fn set_glyph_kerning(
 pub struct KerningList {
     pairs: Vec<KernPair>,
     groups: Vec<String>,
+    /// Glyphs in each group: as the left side of a pair (their right group) and as the
+    /// right side (their left group).
+    left_members: std::collections::BTreeMap<String, Vec<String>>,
+    right_members: std::collections::BTreeMap<String, Vec<String>>,
     status: DocStatus,
 }
 
@@ -358,7 +362,25 @@ pub fn kerning_list(state: State<AppState>, master_id: String) -> CmdResult<Kern
         .collect();
     groups.sort();
     groups.dedup();
+    let mut left_members: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let mut right_members: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for g in &doc.font.glyphs {
+        if let Some(r) = &g.right_group {
+            left_members
+                .entry(r.clone())
+                .or_default()
+                .push(g.name.clone());
+        }
+        if let Some(l) = &g.left_group {
+            right_members
+                .entry(l.clone())
+                .or_default()
+                .push(g.name.clone());
+        }
+    }
     Ok(KerningList {
+        left_members,
+        right_members,
         pairs: doc
             .font
             .kerning
@@ -368,6 +390,95 @@ pub fn kerning_list(state: State<AppState>, master_id: String) -> CmdResult<Kern
         groups,
         status: status(doc),
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KernTidyResult {
+    tidy: kernest_core::kerning::KernTidy,
+    status: DocStatus,
+}
+
+/// Kerning › Compress or Clean Up (S56), in one master or all of them, as one undo step.
+#[tauri::command]
+pub fn tidy_kerning(
+    state: State<AppState>,
+    master_id: String,
+    all_masters: bool,
+    compress: bool,
+) -> CmdResult<KernTidyResult> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    if doc.font.master(&master_id).is_none() {
+        return Err(format!("No master with id \"{master_id}\""));
+    }
+    let ids: Vec<String> = if all_masters {
+        doc.font.masters.iter().map(|m| m.id.clone()).collect()
+    } else {
+        vec![master_id]
+    };
+    let mut next = doc.font.clone();
+    let mut tidy = kernest_core::kerning::KernTidy::default();
+    for id in ids {
+        let pairs = next.kerning.get(&id).cloned().unwrap_or_default();
+        let (out, t) = if compress {
+            kernest_core::kerning::compress_pairs(&next, &pairs)
+        } else {
+            kernest_core::kerning::clean_up_pairs(&next, &pairs)
+        };
+        tidy += t;
+        if out.is_empty() {
+            next.kerning.remove(&id);
+        } else {
+            next.kerning.insert(id, out);
+        }
+    }
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(KernTidyResult {
+        tidy,
+        status: status(doc),
+    })
+}
+
+/// Kerning › Paste: pairs copied from another master (or font). `overwrite` replaces
+/// values already there; otherwise only missing pairs are added.
+#[tauri::command]
+pub fn paste_kerning(
+    state: State<AppState>,
+    master_id: String,
+    pairs: Vec<KernPair>,
+    overwrite: bool,
+) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    for p in &pairs {
+        validate_side(&doc.font, &p.left)?;
+        validate_side(&doc.font, &p.right)?;
+        if !p.value.is_finite() {
+            return Err("A pasted kerning value isn't a number.".into());
+        }
+    }
+    let existing = doc
+        .font
+        .kerning
+        .get(&master_id)
+        .cloned()
+        .unwrap_or_default();
+    let next = kernest_core::kerning::paste_pairs(&existing, &pairs, overwrite);
+    if doc
+        .history
+        .apply_kerning(&mut doc.font, &master_id, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
 }
 
 /// Sets a pair by its sides as written in the kerning window (glyph names or @groups).

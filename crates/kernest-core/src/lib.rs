@@ -19,6 +19,7 @@ pub mod edit;
 pub mod error;
 pub mod fea_import;
 pub mod features;
+pub mod featuretokens;
 pub mod filters;
 pub mod geometry;
 pub mod glyphdata;

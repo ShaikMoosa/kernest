@@ -795,6 +795,8 @@ pub fn save_font(state: State<AppState>, path: Option<String>) -> CmdResult<Stri
             .ok_or("This font has not been saved yet. Use Save As.")?,
     };
     package::save(&doc.font, &target).map_err(|e| e.to_string())?;
+    // The folder's Explorer icon and tooltip (S70).
+    crate::explorer::decorate(&target, &doc.font);
     doc.path = Some(target.clone());
     doc.saved_revision = doc.revision;
     Ok(target.display().to_string())

@@ -205,13 +205,41 @@ pub fn combined(font: &Font) -> String {
     }
 }
 
+/// The feature file for one build, with tokens and conditions expanded (S64).
+pub fn combined_for(font: &Font, ctx: &crate::featuretokens::Context) -> Result<String, String> {
+    crate::featuretokens::expand(font, &combined(font), ctx)
+        .map_err(|d| format!("feature code: {}", d.message))
+}
+
 /// Checks the hand-written feature text against the font's glyph order and returns
 /// errors with 1-based line/column positions relative to that text.
 pub fn check(font: &Font) -> Vec<Diagnostic> {
-    let text = font.features.as_str();
-    if text.trim().is_empty() {
+    if font.features.trim().is_empty() {
         return Vec::new();
     }
+    // Tokens and conditions (S64): expanded as for the default master, which keeps
+    // every line in place; a variable expansion must work too.
+    let expanded = match crate::featuretokens::expand(
+        font,
+        &font.features,
+        &crate::featuretokens::Context::DEFAULT,
+    ) {
+        Ok(t) => t,
+        Err(d) => return vec![d],
+    };
+    if font.masters.len() > 1 {
+        if let Err(d) = crate::featuretokens::expand(
+            font,
+            &font.features,
+            &crate::featuretokens::Context {
+                variable: true,
+                location: None,
+            },
+        ) {
+            return vec![d];
+        }
+    }
+    let text = expanded.as_str();
     // parse_string panics on include statements; report them instead of crashing.
     if let Some(pos) = text.find("include(") {
         let (line, column) = line_col(text, pos);

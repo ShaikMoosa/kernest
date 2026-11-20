@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kernest Web Preview</title>
+<style id="faces"></style>
+<style>
+  :root { --bg: #f7f8fa; --surface: #fff; --text: #0b0d17; --muted: #5b6275; --border: #e3e6ee; --accent: #5b4cf0; --code: #050714; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111318; --surface: #1a1d24; --text: #eef0f6; --muted: #9aa1b4; --border: #2c303a; --accent: #8f84ff; --code: #050714; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  header h1 { font-size: 15px; margin: 0; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  .styles { display: flex; flex-wrap: wrap; gap: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+  .styles button { border: 0; background: none; color: var(--muted); padding: 5px 12px; border-radius: 6px; font: inherit; cursor: pointer; }
+  .styles button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  main { padding: 24px 20px 48px; max-width: 1200px; margin: 0 auto; }
+  .sample { font-family: "KernestPreview", sans-serif; outline: none; margin: 0 0 8px; overflow-wrap: anywhere; }
+  .big { font-size: 64px; line-height: 1.15; }
+  .mid { font-size: 32px; color: var(--muted); }
+  .waterfall { margin: 28px 0; display: flex; flex-direction: column; gap: 6px; }
+  .waterfall div { display: flex; align-items: baseline; gap: 12px; white-space: nowrap; overflow: hidden; }
+  .waterfall span.size { color: var(--muted); font-size: 11px; width: 36px; flex: none; text-align: right; font-family: ui-monospace, Consolas, monospace; }
+  .waterfall span.text { font-family: "KernestPreview", sans-serif; }
+  .para { font-family: "KernestPreview", sans-serif; font-size: 18px; line-height: 1.6; max-width: 70ch; }
+  pre { background: var(--code); color: #e8e8f0; border-radius: 10px; padding: 14px 16px; overflow-x: auto; font: 13px/1.6 ui-monospace, Consolas, monospace; }
+  .note { color: var(--muted); font-size: 12px; }
+  .flash { animation: flash .6s ease-out; }
+  @keyframes flash { from { background: rgba(91,76,240,.18); } to { background: transparent; } }
+  @media (max-width: 600px) { .big { font-size: 40px; } .mid { font-size: 22px; } header { flex-wrap: wrap; } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="family">Kernest Web Preview</h1>
+  <span class="meta" id="meta">Waiting for fonts…</span>
+  <span class="spacer"></span>
+  <div class="styles" id="styles" role="group" aria-label="Style"></div>
+</header>
+<main>
+  <p class="sample big" id="sample" contenteditable="true" spellcheck="false"></p>
+  <p class="sample mid" contenteditable="true" spellcheck="false">Hamburgefontsiv 0123456789 — fi fl ffi</p>
+  <div class="waterfall" id="waterfall"></div>
+  <p class="para" contenteditable="true" spellcheck="false">Typography is what language looks like. The quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. How razorback-jumping frogs can level six piqued gymnasts!</p>
+  <pre id="css"></pre>
+  <p class="note">Re-export from Kernest (File › Export › Web Preview) and this page picks up the new fonts by itself. The text above is editable.</p>
+</main>
+<script>
+(() => {
+  let version = 0, data = null, current = 0;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  function choices() {
+    if (!data) return [];
+    const out = [];
+    for (const f of data.fonts) {
+      if (f.variable && f.instances.length) for (const [name, css] of f.instances) out.push({ name, file: f.file, css });
+      else out.push({ name: f.style, file: f.file, css: "normal" });
+    }
+    return out;
+  }
+  function apply() {
+    const list = choices();
+    if (!list.length) return;
+    current = Math.min(current, list.length - 1);
+    const c = list[current];
+    $("faces").textContent = `@font-face { font-family: "KernestPreview"; src: url("fonts/${c.file}?v=${version}") format("woff2"); }\n` +
+      `.sample, .waterfall .text, .para { font-variation-settings: ${c.css}; }`;
+    $("styles").innerHTML = list.map((x, i) => `<button type="button" aria-pressed="${i === current}" data-i="${i}">${esc(x.name)}</button>`).join("");
+    const fam = data.family.replace(/"/g, "");
+    $("css").textContent = `@font-face { font-family: "${fam}";\n  src: url("fonts/${c.file}") format("woff2"); }\nbody { font-family: "${fam}";${c.css !== "normal" ? ` font-variation-settings: ${c.css};` : ""} }  /* Shift+reload bypasses the cache */`;
+  }
+  async function poll() {
+    try {
+      const r = await fetch("state.json", { cache: "no-store" });
+      const s = await r.json();
+      if (s.version !== version) {
+        const first = version === 0;
+        version = s.version;
+        data = s;
+        $("family").textContent = s.family;
+        $("meta").textContent = `${s.fonts.some((f) => f.variable) ? "Variable" : "Static"} · WOFF2 · ${s.fonts.length} file${s.fonts.length === 1 ? "" : "s"} · reloads on export`;
+        if (first) $("sample").textContent = s.sample;
+        apply();
+        if (!first) document.querySelector("main").classList.add("flash");
+        setTimeout(() => document.querySelector("main").classList.remove("flash"), 700);
+      }
+    } catch (e) {
+      $("meta").textContent = "Kernest isn't running the preview right now.";
+    }
+    setTimeout(poll, 1000);
+  }
+  $("styles").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (b) { current = Number(b.dataset.i); apply(); }
+  });
+  $("waterfall").innerHTML = [12, 14, 16, 18, 24, 32, 48].map((s) => `<div><span class="size">${s}</span><span class="text" style="font-size:${s}px">The quick brown fox jumps over the lazy dog 0123456789</span></div>`).join("");
+  poll();
+})();
+</script>
+</body>
+</html>

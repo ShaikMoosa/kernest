@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { backend, errorMessage, isTauri, type DocStatus, type ExportFormats, type ExportPreset, type ExportReport, type FontInfo } from "../lib/backend";
+import { backend, errorMessage, isTauri, type DocStatus, type ExportDestination, type ExportFormats, type ExportPreset, type ExportReport, type FontInfo } from "../lib/backend";
+import { openExternal } from "../lib/desktop";
 import { CloseIcon, FolderIcon } from "./Icons";
 import { QualityDialog } from "./QualityDialog";
 import { t, tn, translateMessage } from "../lib/i18n";
@@ -62,6 +63,9 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
   const [selectedInstances, setSelectedInstances] = useState<string[]>([]);
   const [dirEdited, setDirEdited] = useState(true);
   const [checking, setChecking] = useState(false);
+  const [destinations, setDestinations] = useState<ExportDestination[]>([]);
+  const [installNote, setInstallNote] = useState<string | null>(null);
+  useEffect(() => { backend.exportDestinations().then(setDestinations, () => setDestinations([])); }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +151,34 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
     }
   }
 
+  /** Test Install, Install for Me or the web preview: their own builds, not the Export settings. */
+  async function trial(kind: "test" | "user" | "web") {
+    setBusy(true);
+    setError(null);
+    setReport(null);
+    setInstallNote(null);
+    try {
+      const instances = allInstances ? [] : selectedInstances;
+      if (kind === "web") {
+        const url = await backend.webPreview();
+        await openExternal(url);
+        setInstallNote(t("The web preview is open at {url}. Use Web Preview again after changes; the page reloads the fonts by itself.", { url }));
+      } else {
+        const r = kind === "test" ? await backend.testInstall(instances) : await backend.installForUser(instances);
+        setReport(r.report);
+        setInstallNote(kind === "test"
+          ? t("Loaded for this session: {styles}. Other apps see them after they refresh their font list; they go away when Kernest quits.", { styles: r.installed.join(", ") })
+          : t("Installed for you: {styles}. Restart apps that were already open to see them.", { styles: r.installed.join(", ") }));
+      }
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const destLabel = (d: ExportDestination) => d.id === "user-fonts" ? t("Your fonts folder (Install for Me also registers them with Windows)") : d.id === "adobe" ? t("Adobe apps (needs admin rights)") : t("Web preview folder");
+
   if (checking && report && info) return <QualityDialog files={report.files} familyName={info.familyName} glyphNames={info.glyphOrder} onClose={() => setChecking(false)} onFontInfo={onFontInfo} onGlyph={onGlyph} />;
 
   return (
@@ -210,6 +242,30 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
               <button type="button" className="btn btn-secondary" onClick={browse} disabled={busy || !isTauri}><FolderIcon size={14} /> {t("Browse…")}</button>
             </span>
           </label>
+          {destinations.length > 0 && (
+            <div className="field">
+              <span className="k-overline muted">{t("Quick destinations")}</span>
+              <div className="dest-list">
+                {destinations.map((d) => (
+                  <button key={d.id} type="button" className={`dest-item${dir.trim() === d.path ? " is-selected" : ""}`} disabled={busy}
+                    onClick={() => { setDir(d.path); setDirEdited(true); }}>
+                    <span className="k-code">{d.path}</span>
+                    <small className="k-caption muted">{destLabel(d)}{d.exists ? "" : ` · ${t("created on export")}`}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <details className="field cache-tips">
+            <summary className="k-caption">{t("Trying fonts in other apps")}</summary>
+            <ol className="k-caption">
+              <li>{t("Test Install loads the fonts for this session only, so apps never keep an old copy.")}</li>
+              <li>{t("Install for Me puts them in your own fonts folder; restart the app you test in.")}</li>
+              <li>{t("Adobe apps also read fonts from the Adobe Fonts folder (needs admin rights).")}</li>
+              <li>{t("Browsers: press Ctrl+F5 to reload without the cache.")}</li>
+            </ol>
+          </details>
+          {installNote && <p className="notice k-label" role="status">{installNote}</p>}
           {busy && <p className="notice export-busy k-label" role="status"><span className="spinner" aria-hidden="true" /> {t("Compiling fonts… this can take a little while for large fonts.")}</p>}
           {error && <p className="notice notice-danger k-label">{error}</p>}
           {report && (
@@ -239,6 +295,9 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
         <footer className="dialog-footer">
           <span className="k-caption muted">{t("Compiled with fontc · CFF and WOFF2 written by Kernest")}</span>
           <span className="spacer" />
+          <button type="button" className="btn btn-secondary" disabled={busy || !info || !isTauri} title={t("Builds static TTFs and loads them until Kernest quits")} onClick={() => trial("test")}>{t("Test Install")}</button>
+          <button type="button" className="btn btn-secondary" disabled={busy || !info || !isTauri} title={t("Installs static TTFs for your Windows account")} onClick={() => trial("user")}>{t("Install for Me")}</button>
+          <button type="button" className="btn btn-secondary" disabled={busy || !info || !isTauri} title={t("Opens the fonts as web fonts in your browser")} onClick={() => trial("web")}>{t("Web Preview")}</button>
           <button type="button" className="btn btn-secondary" disabled={busy || !report?.files.length} onClick={() => setChecking(true)}>{t("Check font")}</button>
           <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>{report ? t("Done") : t("Cancel")}</button>
           <button type="button" className="btn btn-primary" onClick={run} disabled={busy || nothing || !info}>{busy ? t("Exporting…") : t("Export")}</button>

@@ -5,6 +5,7 @@
 //! a designspace of all masters. Static instances that sit between masters are
 //! interpolated by Kernest first (same variation model as the editor's previews).
 
+pub mod bitmap;
 pub mod cff;
 pub mod cff2;
 mod cffhint;
@@ -49,6 +50,9 @@ pub struct ExportOptions {
     /// Name glyphs in the compiled fonts by their production names.
     pub production_names: bool,
     pub out_dir: PathBuf,
+    /// The folder of the font file: sbix pictures and SVG files are found relative
+    /// to it.
+    pub assets_dir: Option<PathBuf>,
 }
 
 impl ExportOptions {
@@ -65,6 +69,7 @@ impl ExportOptions {
             autohint: false,
             production_names: false,
             out_dir: out_dir.into(),
+            assets_dir: None,
         }
     }
 }
@@ -127,6 +132,7 @@ pub fn export_preset(
             autohint: options.autohint,
             production_names: options.production_names,
             out_dir: destination,
+            assets_dir: Some(source_dir.to_path_buf()),
         },
     )
 }
@@ -242,6 +248,7 @@ fn master_source<'a>(
         alternates: Vec::new(),
         location: master.location.clone(),
         instance: None,
+        variable: !for_static,
     }
 }
 
@@ -352,6 +359,7 @@ fn instance_source<'a>(
         alternates: Vec::new(),
         location: location.clone(),
         instance: None,
+        variable: false,
     })
 }
 
@@ -408,6 +416,28 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     variable: bool,
                     location: Option<&kernest_core::designspace::Location>|
      -> Vec<u8> {
+        // sbix bitmaps and SVG documents (S63), next to or instead of COLR.
+        let master_id = location
+            .and_then(|loc| font.masters.iter().find(|m| &m.location == loc))
+            .or(font.masters.first())
+            .map(|m| m.id.clone())
+            .unwrap_or_default();
+        let bytes = match bitmap::add_to(
+            font,
+            &colored,
+            ids_from,
+            bytes.clone(),
+            &master_id,
+            opts.assets_dir.as_deref(),
+        ) {
+            Ok(b) => b,
+            Err(e) => {
+                report
+                    .problems
+                    .push(format!("{label}: {e}; exported without bitmaps and SVG."));
+                bytes
+            }
+        };
         if colored.is_empty() {
             return bytes;
         }
@@ -1088,6 +1118,41 @@ pub(crate) mod tests {
         let h = f.glyph_mut("H").unwrap().layer_mut(&bold).unwrap();
         h.width += 100.0;
         f
+    }
+
+    #[test]
+    fn feature_tokens_and_conditions_compile_static_and_variable() {
+        let mut f = two_masters();
+        let bold = f.masters[1].id.clone();
+        f.info.numbers.insert(
+            "padding".into(),
+            BTreeMap::from([("m01".into(), 20.0), (bold, 60.0)]),
+        );
+        f.glyph_mut("T").unwrap().right_group = Some("T".into());
+        f.glyph_mut("o").unwrap().left_group = Some("o".into());
+        f.features = "languagesystem DFLT dflt;\nlanguagesystem latn dflt;\n\
+            @Caps = [$[case == upper AND name IN {\"A\", \"B\", \"H\"}]];\n\
+            feature cpsp {\n  pos @Caps <$padding 0 ${padding*2} 0>;\n} cpsp;\n\
+            feature kern {\n  pos @MMK_L_T' -20 @MMK_R_o;\n} kern;\n\
+            feature rvrn {\n#ifdef VARIABLE\n  sub a by b;\n#endif\n  condition 600 < wght < 700;\n  sub A by B;\n} rvrn;\n"
+            .into();
+        assert!(
+            kernest_core::features::check(&f).is_empty(),
+            "{:?}",
+            kernest_core::features::check(&f)
+        );
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let vf = r.files.iter().find(|x| x.kind == "variable").unwrap();
+        let bytes = std::fs::read(&vf.path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let gsub = font.gsub().unwrap();
+        assert!(
+            gsub.feature_variations_offset().is_some(),
+            "the condition becomes a feature variation"
+        );
+        assert!(font.gpos().is_ok());
     }
 
     #[test]

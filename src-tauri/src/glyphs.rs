@@ -276,6 +276,35 @@ fn with_production_name(font: &Font, name: &str, production: &str) -> Result<Fon
     Ok(next)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateResult {
+    added: Vec<String>,
+    status: DocStatus,
+}
+
+/// Glyph › Duplicate Glyph: copies named `a.001` right after each glyph.
+#[tauri::command]
+pub fn duplicate_glyphs(state: State<AppState>, names: Vec<String>) -> CmdResult<DuplicateResult> {
+    if names.is_empty() {
+        return Err("Select the glyphs to duplicate.".into());
+    }
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let (next, added) = kernest_core::clipboard::duplicate(&doc.font, &names)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(DuplicateResult {
+        added,
+        status: status(doc),
+    })
+}
+
 /// Removes glyphs; components using them are decomposed in the glyphs that remain.
 #[tauri::command]
 pub fn remove_glyphs(state: State<AppState>, names: Vec<String>) -> CmdResult<DocStatus> {

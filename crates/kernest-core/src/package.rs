@@ -43,11 +43,12 @@ use crate::model::{
 /// line spacing metrics (typo, hhea, win, underline and Use Typo Metrics); version 13
 /// adds kept custom parameters, backup layers, strokes and corner/cap/segment
 /// components; version 14 adds masks, annotations, placed images, interpolation
-/// curves, virtual masters and glyph swaps.
+/// curves, virtual masters and glyph swaps; version 15 adds sbix bitmaps, SVG
+/// drawings and number values for feature tokens.
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 14;
+pub const FORMAT_VERSION: u32 = 15;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -272,11 +273,18 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
                         .any(|s| matches!(s, crate::model::Shape::Path(p) if p.mask))
             })
         });
+    let has_v15 = !font.info.numbers.is_empty()
+        || font
+            .glyphs
+            .iter()
+            .any(|g| !g.bitmaps.is_empty() || g.svg.is_some());
     let has_vertical =
         font.info.use_typo_metrics || font.masters.iter().any(|m| !m.vertical.is_empty());
     let file = FontFile {
-        format_version: if has_v14 {
+        format_version: if has_v15 {
             FORMAT_VERSION
+        } else if has_v14 {
+            14
         } else if has_v13 {
             13
         } else if has_vertical {

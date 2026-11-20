@@ -182,6 +182,19 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
 
   const drawn = font.glyphs.filter((g) => g.svg).length;
   const selectedGlyphs = font.glyphs.filter((g) => selection.has(g.name));
+  // Edit › Select All, Deselect All, Invert Selection and Find… from the menu bar.
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const on = (e: Event) => {
+      const cmd = (e as CustomEvent<string>).detail;
+      if (cmd === "select-all") setSelection(new Set(shown.map((g) => g.name)));
+      else if (cmd === "deselect-all") setSelection(new Set());
+      else if (cmd === "invert-selection") setSelection(new Set(shown.filter((g) => !selection.has(g.name)).map((g) => g.name)));
+      else if (cmd === "find") { searchRef.current?.focus(); searchRef.current?.select(); }
+    };
+    window.addEventListener("kernest:fontview", on);
+    return () => window.removeEventListener("kernest:fontview", on);
+  }, [shown, selection]);
   const one = selectedGlyphs.length === 1 ? selectedGlyphs[0] : null;
 
   // Info-box drafts follow the selected glyph and any refresh (undo, list edits).
@@ -315,7 +328,7 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
       <aside className="sidebar">
         <label className="search">
           <SearchIcon />
-          <input placeholder={t("Search name, Unicode, character")} value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input ref={searchRef} placeholder={t("Search name, Unicode, character")} value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
         <p className="k-overline muted sidebar-heading">{t("Categories")}</p>
         <ul className="list">

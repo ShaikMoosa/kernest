@@ -1201,6 +1201,7 @@ fn export_static(src: &Font, dir: &Path, fmt: &str) -> std::path::PathBuf {
         autohint: false,
         production_names: false,
         out_dir: dir.to_path_buf(),
+        assets_dir: None,
     };
     let r = kernest_export::export(src, &opts).unwrap();
     assert!(r.problems.is_empty(), "{:?}", r.problems);
@@ -1298,6 +1299,7 @@ fn compiled_variable_avar_round_trip() {
         autohint: false,
         production_names: false,
         out_dir: dir.path().to_path_buf(),
+        assets_dir: None,
     };
     let r = kernest_export::export(&src, &opts).unwrap();
     assert!(r.problems.is_empty(), "{:?}", r.problems);
@@ -1470,6 +1472,7 @@ fn compiled_variable_stat_round_trip() {
         autohint: false,
         production_names: false,
         out_dir: dir.path().to_path_buf(),
+        assets_dir: None,
     };
     let r = kernest_export::export(&src, &opts).unwrap();
     assert!(r.problems.is_empty(), "{:?}", r.problems);
@@ -2113,4 +2116,49 @@ fn glyphs_round_trip_keeps_masks_annotations_images_virtual_masters_and_swaps() 
             &src.instances[0].remove_glyphs
         )
     );
+}
+
+#[test]
+fn glyphs_round_trip_keeps_sbix_bitmaps_and_svg() {
+    use kernest_core::{GlyphBitmap, GlyphSvg};
+    let mut src = two_masters();
+    {
+        let g = src.glyph_mut("H").unwrap();
+        g.bitmaps = vec![
+            GlyphBitmap {
+                ppem: 32,
+                path: "Images/H 32.png".into(),
+                x: 0.0,
+                y: -200.0,
+            },
+            GlyphBitmap {
+                ppem: 128,
+                path: "Images/H 128.png".into(),
+                x: 10.0,
+                y: -200.0,
+            },
+        ];
+        g.svg = Some(GlyphSvg {
+            path: "Images/H.svg".into(),
+            x: 5.0,
+            y: -200.0,
+            scale: 2.5,
+        });
+    }
+    let ids: Vec<String> = src.masters.iter().map(|m| m.id.clone()).collect();
+    src.info.numbers.insert(
+        "padding".into(),
+        BTreeMap::from([(ids[0].clone(), 24.0), (ids[1].clone(), 48.0)]),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Pictures.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let imp = import(&path).unwrap();
+    assert!(imp.warnings.is_empty(), "{:?}", imp.warnings);
+    let (a, b) = (imp.font.glyph("H").unwrap(), src.glyph("H").unwrap());
+    assert_eq!(a.bitmaps, b.bitmaps);
+    assert_eq!(a.svg, b.svg);
+    assert_eq!(imp.font.info.numbers, src.info.numbers);
+    // The picture layers don't come back as backups.
+    assert_eq!(a.layers.len(), b.layers.len());
 }

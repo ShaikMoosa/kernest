@@ -651,6 +651,37 @@ name = {};
             out.push(text);
         }
     }
+    // sbix ("iColor") and SVG layers: the first master's, each holding its picture.
+    if let Some(m) = font.masters.first() {
+        let gid = q(master_gid(m));
+        let width = g.layer(&m.id).map_or(0.0, |l| l.width);
+        let picture = |name: &str, attr: &str, path: &str, x: f64, y: f64, scale: f64| {
+            format!(
+                "{{\nassociatedMasterId = {gid};\n{attr}backgroundImage = {{\nimagePath = {};\ntransform = \"{{{}, 0, 0, {}, {}, {}}}\";\n}};\nlayerId = {};\nname = {};\nwidth = {};\n}}",
+                q(path),
+                num(scale),
+                num(scale),
+                num(x),
+                num(y),
+                q(&format!("{}-{name}", m.id)),
+                q(name),
+                num(width)
+            )
+        };
+        for b in &g.bitmaps {
+            out.push(picture(
+                &format!("iColor {}", b.ppem),
+                &format!("attr = {{\nsbixSize = {};\n}};\n", b.ppem),
+                &b.path,
+                b.x,
+                b.y,
+                font.info.units_per_em as f64 / b.ppem.max(1) as f64,
+            ));
+        }
+        if let Some(svg) = &g.svg {
+            out.push(picture("svg", "", &svg.path, svg.x, svg.y, svg.scale));
+        }
+    }
     out.join(",\n")
 }
 
@@ -1099,6 +1130,16 @@ pub fn glyphs_source(font: &Font) -> String {
                     .collect();
                 let _ = writeln!(e, "stemValues = (\n{}\n);", sv.join(",\n"));
             }
+            // Number values for feature tokens, in the font's number order.
+            if !font.info.numbers.is_empty() {
+                let nv: Vec<String> = font
+                    .info
+                    .numbers
+                    .values()
+                    .map(|by| num(by.get(&m.id).copied().unwrap_or(0.0)))
+                    .collect();
+                let _ = writeln!(e, "numberValues = (\n{}\n);", nv.join(",\n"));
+            }
             // Line spacing and underline, and this master's own palettes.
             let v = &m.vertical;
             let mut mp: Vec<String> = [
@@ -1131,6 +1172,15 @@ pub fn glyphs_source(font: &Font) -> String {
         })
         .collect();
     let _ = writeln!(s, "fontMaster = (\n{}\n);", masters.join(",\n"));
+    if !font.info.numbers.is_empty() {
+        let names: Vec<String> = font
+            .info
+            .numbers
+            .keys()
+            .map(|n| format!("{{\nname = {};\n}}", q(n)))
+            .collect();
+        let _ = writeln!(s, "numbers = (\n{}\n);", names.join(",\n"));
+    }
 
     // Instances: the static instances with their class and style-link overrides, then
     // one "Variable Font Setting" per variable font (its file name and glyph list; axis

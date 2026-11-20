@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { backend, type DocStatus, type KerningList } from "../lib/backend";
+import { backend, type DocStatus, type KernPair, type KerningList } from "../lib/backend";
 import { AddIcon, CloseIcon, SearchIcon } from "./Icons";
 import { t } from "../lib/i18n";
 
@@ -22,6 +22,9 @@ function ValueField({ value, onCommit }: { value: number; onCommit: (v: number) 
   );
 }
 
+/** Kerning › Copy keeps the pairs here, so Paste works in another master or font. */
+let copiedKerning: { from: string; pairs: KernPair[] } | null = null;
+
 interface Props {
   masterId: string;
   masterName: string;
@@ -35,6 +38,48 @@ export function KerningView({ masterId, masterName, version, onChanged, onError 
   const [data, setData] = useState<KerningList | null>(null);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState({ left: "", right: "", value: "" });
+  const [showMembers, setShowMembers] = useState(false);
+  const [allMasters, setAllMasters] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [copied, setCopied] = useState(copiedKerning);
+
+  const tidy = async (compress: boolean) => {
+    try {
+      const r = await backend.tidyKerning(masterId, allMasters, compress);
+      onChanged(r.status);
+      await reload();
+      const { moved, removed, kept } = r.tidy;
+      setNote(compress
+        ? t("Compress: {moved} moved to groups, {removed} removed as the same as their group, {kept} kept as exceptions.", { moved, removed, kept })
+        : t("Clean Up: {removed} pairs removed (zero, naming nothing, or the same as their group).", { removed }));
+    } catch (e) {
+      onError(e);
+    }
+  };
+  const copy = () => {
+    copiedKerning = { from: masterName, pairs: (data?.pairs ?? []).map((p) => ({ ...p })) };
+    setCopied(copiedKerning);
+    const text = copiedKerning.pairs.map((p) => `${p.left}\t${p.right}\t${p.value}`).join("\n");
+    navigator.clipboard?.writeText(text).catch(() => {});
+    setNote(t("Copied {n} pairs from {master}.", { n: copiedKerning.pairs.length, master: masterName }));
+  };
+  const paste = async (overwrite: boolean) => {
+    if (!copiedKerning) return;
+    try {
+      onChanged(await backend.pasteKerning(masterId, copiedKerning.pairs, overwrite));
+      await reload();
+      setNote(overwrite
+        ? t("Pasted {n} pairs from {master}, replacing values already here.", { n: copiedKerning.pairs.length, master: copiedKerning.from })
+        : t("Pasted pairs from {master}, keeping values already here.", { master: copiedKerning.from }));
+    } catch (e) {
+      onError(e);
+    }
+  };
+  const members = (side: string, left: boolean) => {
+    if (!showMembers || !side.startsWith("@")) return null;
+    const list = (left ? data?.leftMembers : data?.rightMembers)?.[side.slice(1)] ?? [];
+    return <div className="kern-members k-caption muted">{list.length ? list.join(" ") : t("no glyphs")}</div>;
+  };
 
   const reload = useCallback(() => backend.kerningList(masterId).then(setData, onError), [masterId, onError]);
   useEffect(() => { reload(); }, [reload, version]);
@@ -62,11 +107,35 @@ export function KerningView({ masterId, masterName, version, onChanged, onError 
       <div className="toolbar">
         <h2 className="k-subtitle">{t("Kerning — {master}", { master: masterName })}</h2>
         <span className="spacer" />
+        <div className="kern-tools" role="group" aria-label={t("Kerning tools")}>
+          <label className="check-row" title={t("List the glyphs in each group under its name")}>
+            <input type="checkbox" checked={showMembers} onChange={(e) => setShowMembers(e.target.checked)} />
+            <span className="k-body">{t("Show All Glyphs")}</span>
+          </label>
+          <label className="check-row" title={t("Compress and Clean Up work on every master")}>
+            <input type="checkbox" checked={allMasters} onChange={(e) => setAllMasters(e.target.checked)} />
+            <span className="k-body">{t("All masters")}</span>
+          </label>
+          <button className="btn btn-secondary btn-sm" title={t("Removes zero pairs, pairs naming missing glyphs or groups, and exceptions equal to their group")} onClick={() => tidy(false)}>{t("Clean Up")}</button>
+          <button className="btn btn-secondary btn-sm" title={t("Moves glyph pairs one step up to their groups (T–m → @T–m → @T–@n); real exceptions stay")} onClick={() => tidy(true)}>{t("Compress")}</button>
+          <button className="btn btn-secondary btn-sm" disabled={!data?.pairs.length} onClick={copy}>{t("Copy")}</button>
+          <select className="metric-input kern-paste" aria-label={t("Paste kerning")} value="" disabled={!copied}
+            onChange={(e) => { if (e.target.value) paste(e.target.value === "overwrite"); }}>
+            <option value="">{t("Paste…")}</option>
+            <option value="overwrite">{t("Paste (Overwrite)")}</option>
+            <option value="keep">{t("Paste (Keep)")}</option>
+          </select>
+        </div>
         <label className="search kern-search">
           <SearchIcon />
           <input placeholder={t("Filter glyphs or @groups")} value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
       </div>
+      {note && (
+        <p className="notice k-caption kern-note" role="status">
+          {note} <button type="button" className="link-btn" onClick={() => setNote(null)}>{t("Close")}</button>
+        </p>
+      )}
       <div className="kern-table-wrap">
         <table className="kern-table">
           <thead>
@@ -89,8 +158,8 @@ export function KerningView({ masterId, masterName, version, onChanged, onError 
               const group = p.left.startsWith("@") && p.right.startsWith("@");
               return (
                 <tr key={`${p.left}|${p.right}`}>
-                  <td className={p.left.startsWith("@") ? "side group" : "side"}>{p.left}</td>
-                  <td className={p.right.startsWith("@") ? "side group" : "side"}>{p.right}</td>
+                  <td className={p.left.startsWith("@") ? "side group" : "side"}>{p.left}{members(p.left, true)}</td>
+                  <td className={p.right.startsWith("@") ? "side group" : "side"}>{p.right}{members(p.right, false)}</td>
                   <td className="num"><ValueField value={p.value} onCommit={(v) => set(p.left, p.right, v)} /></td>
                   <td><span className={`pill ${group ? "pill-group" : "pill-exception"}`}>{group ? t("group") : t("exception")}</span></td>
                   <td><button className="icon-btn" aria-label={t("Delete {left} {right}", { left: p.left, right: p.right })} title={t("Delete pair")} onClick={() => set(p.left, p.right, 0)}><CloseIcon size={14} /></button></td>

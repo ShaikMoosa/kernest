@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, type Annotation, type HoiKind, type HoiView, type ImageData, type LayerImage, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
+import { backend, type Annotation, type HoiKind, type HoiView, type GlyphPicture, type ImageData, type LayerImage, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
 import {
@@ -7,7 +7,7 @@ import {
   type Bounds, type EditNode, type EditPath,
 } from "../lib/outline";
 import { CloseIcon, SearchIcon } from "./Icons";
-import { pickImage } from "../lib/desktop";
+import { pickImage, pickPng, pickSvgDrawing } from "../lib/desktop";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { t, tn, translateMessage } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
@@ -44,7 +44,8 @@ const SNAP = 6; // px: a dragged node this close to a guide lands on it
 export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes" | "remove-overlap"
   | "edit-background" | "to-background" | "add-to-background" | "swap-background" | "clear-background"
   | "open-corner" | "reconnect-nodes" | "connect-nodes" | "close-open-paths" | "make-node-first" | "reverse-contours" | "tidy-up" | "round-coordinates"
-  | "focus-path" | "clear-focus";
+  | "focus-path" | "clear-focus"
+  | "select-all" | "deselect-all" | "invert-selection" | "zoom-in" | "zoom-out" | "zoom-fit" | "zoom-actual" | "shape-order";
 export const sendEditCommand = (name: EditCommand) => window.dispatchEvent(new CustomEvent("kernest:edit", { detail: name }));
 
 // Clipboard shared by all Edit View tabs; also mirrored to the system clipboard as JSON.
@@ -385,6 +386,11 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [imageData, setImageData] = useState<ImageData | null>(null);
   const [imgDrag, setImgDrag] = useState<{ dx: number; dy: number } | null>(null);
   const [imageOpen, setImageOpen] = useState(false);
+  // sbix bitmaps and the SVG drawing (S63): which one is shown on the canvas.
+  const [pictures, setPictures] = useState<GlyphPicture[]>([]);
+  const [picturesOpen, setPicturesOpen] = useState(false);
+  const [shownPicture, setShownPicture] = useState<number | null>(null);
+  const [newPpem, setNewPpem] = useState(128);
   // Annotation tool: the palette's sub-tool, the selected note, a live drag offset.
   const [annSub, setAnnSub] = useState<AnnotSub>("select");
   const [annSel, setAnnSel] = useState<number | null>(null);
@@ -651,6 +657,34 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     backend.layerImageData(glyph, masterId).then((d) => { if (live) setImageData(d); }, () => { if (live) setImageData(null); });
     return () => { live = false; };
   }, [glyph, masterId, imagePath]);
+  // The glyph's bitmaps and SVG: fetched per glyph and after each edit.
+  useEffect(() => {
+    let live = true;
+    backend.glyphPictures(glyph).then((p) => { if (live) setPictures(p); }, () => { if (live) setPictures([]); });
+    return () => { live = false; };
+    // The layer object changes after every edit and undo, which refreshes the list.
+  }, [glyph, layer]);
+  const pictureCall = useCallback((run: () => Promise<GlyphPicture[]>) => {
+    chain.current = chain.current.then(async () => {
+      try {
+        setPictures(await run());
+      } catch (e) {
+        onError(e);
+      }
+    });
+  }, [onError]);
+  const addBitmap = useCallback(async () => {
+    const file = await pickPng();
+    if (!file) return;
+    pictureCall(() => backend.addGlyphBitmap(glyph, file, newPpem));
+    setShownPicture(newPpem);
+  }, [glyph, newPpem, pictureCall]);
+  const addSvgDrawing = useCallback(async () => {
+    const file = await pickSvgDrawing();
+    if (!file) return;
+    pictureCall(() => backend.addGlyphSvg(glyph, file));
+    setShownPicture(0);
+  }, [glyph, pictureCall]);
   useEffect(() => {
     if (tool !== "hoi") { setHoi(null); setHoiSel(null); return; }
     let live = true;
@@ -1551,6 +1585,38 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
 
   const runCommand = useCallback(async (name: EditCommand) => {
     if (name === "add-component") return setPicking(true);
+    if (name === "select-all" || name === "invert-selection") {
+      const { paths, comps, selection, compSel } = latest.current;
+      const all = new Set(paths.flatMap((p, pi) => p.nodes.map((_, ni) => nodeKey(pi, ni))));
+      const allComps = new Set(comps.map((_, i) => i));
+      if (name === "select-all") {
+        setSelection(all);
+        setCompSel(allComps);
+      } else {
+        setSelection(new Set([...all].filter((k) => !selection.has(k))));
+        setCompSel(new Set([...allComps].filter((i) => !compSel.has(i))));
+      }
+      return;
+    }
+    if (name === "deselect-all") {
+      setSelection(new Set());
+      setCompSel(new Set());
+      setAnchorSel(new Set());
+      return;
+    }
+    if (name === "zoom-in" || name === "zoom-out") {
+      const m = measured.current;
+      if (m) zoomAt(name === "zoom-in" ? 1.25 : 0.8, m.w / 2, m.h / 2);
+      return;
+    }
+    if (name === "zoom-fit") return fit();
+    if (name === "zoom-actual") {
+      const l = latest.current.layer;
+      const m = measured.current;
+      if (l && m) setView({ s: 1, ox: m.w / 2 - l.width / 2, oy: m.h / 2 + (l.metrics.ascender + l.metrics.descender) / 2 });
+      return;
+    }
+    if (name === "shape-order") return setShapesOpen(true);
     if (name === "focus-path") {
       const sel = [...latest.current.selection].map(parseKey);
       if (sel.length) setFocusPath(sel[0][0]);
@@ -1626,7 +1692,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       setCompSel(new Set(clip.components.map((_, i) => comps.length + i)));
       commit(nextPaths, nextComps);
     }
-  }, [commit, selectedContent, accept, glyph, masterId, onError, toggleBackground, currentSelection, runPathEdit]);
+  }, [commit, selectedContent, accept, glyph, masterId, onError, toggleBackground, currentSelection, runPathEdit, zoomAt, fit]);
 
   useEffect(() => {
     if (!active) return;
@@ -1952,6 +2018,19 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                   <clipPath id={clipId}><rect x={crop[0]} y={-(crop[1] + crop[3])} width={crop[2]} height={crop[3]} /></clipPath>
                   <image href={imageData!.dataUrl!} x={0} y={-h} width={w} height={h} clipPath={`url(#${clipId})`} preserveAspectRatio="none" className={`layer-image${im.locked ? " is-locked" : ""}`} />
                   <rect x={crop[0]} y={-(crop[1] + crop[3])} width={crop[2]} height={crop[3]} className="layer-image-frame" vectorEffect="non-scaling-stroke" />
+                </g>
+              </g>
+            );
+          })()}
+          {/* sbix bitmap or SVG drawing (S63), when one is chosen in its panel. */}
+          {shownPicture !== null && (() => {
+            const p = pictures.find((q) => (shownPicture === 0 ? q.kind === "svg" : q.ppem === shownPicture));
+            if (!p?.dataUrl || p.width <= 0) return null;
+            return (
+              <g transform={world} pointerEvents="none">
+                <g transform={`translate(${p.x} ${p.y}) scale(1 -1)`}>
+                  <image href={p.dataUrl} x={0} y={-p.height} width={p.width} height={p.height} preserveAspectRatio="none" className={`glyph-picture${p.kind === "bitmap" ? " is-bitmap" : ""}`} />
+                  <rect x={0} y={-p.height} width={p.width} height={p.height} className="glyph-picture-frame" vectorEffect="non-scaling-stroke" />
                 </g>
               </g>
             );
@@ -2622,6 +2701,63 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                   <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={addImage}>{t("Replace…")}</button>
                   <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => strokeCall(() => backend.setLayerImage(glyph, masterId, null))}>{t("Remove")}</button>
                 </div>
+              </div>
+            );
+          })()}
+        </div>
+        <div className="transform-panel pictures-panel">
+          <button type="button" className="transform-head" aria-expanded={picturesOpen} onClick={() => setPicturesOpen((o) => !o)}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+            {t("Bitmaps and SVG")}
+            {pictures.length > 0 && <span className="k-caption muted">{pictures.length}</span>}
+          </button>
+          {picturesOpen && (() => {
+            const disabled = layer.glyphLocked;
+            const sel = pictures.find((q) => (shownPicture === 0 ? q.kind === "svg" : q.ppem === shownPicture)) ?? null;
+            const key = (q: GlyphPicture) => (q.kind === "svg" ? 0 : q.ppem);
+            return (
+              <div className="transform-body stroke-body">
+                <p className="k-caption muted stroke-note">{t("Colour pictures for apps that show sbix bitmaps or SVG glyphs. The outline stays the fallback everywhere else.")}</p>
+                {pictures.length > 0 && (
+                  <ul className="picture-list" role="listbox" aria-label={t("Bitmaps and SVG")}>
+                    {pictures.map((q) => (
+                      <li key={q.kind + q.ppem} role="option" aria-selected={sel === q}
+                        className={`picture-row${sel === q ? " is-selected" : ""}`}
+                        onClick={() => setShownPicture(sel === q ? null : key(q))}>
+                        <span className="k-body">{q.kind === "svg" ? t("SVG drawing") : t("Bitmap {n} px", { n: q.ppem })}</span>
+                        <span className="k-caption muted" title={q.file}>{q.dataUrl ? q.path.split(/[\/]/).pop() : t("Not found")}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {sel && (
+                  <>
+                    {!sel.dataUrl && <p className="notice notice-warning k-caption">{t("Image not found: {file}", { file: sel.file })}</p>}
+                    <div className="part-scale">
+                      <MetricField onInvalid={onError} label="X" value={sel.x} disabled={disabled} onCommit={(v) => pictureCall(() => backend.placeGlyphPicture(glyph, key(sel), v, sel.y))} />
+                      <MetricField onInvalid={onError} label="Y" value={sel.y} disabled={disabled} onCommit={(v) => pictureCall(() => backend.placeGlyphPicture(glyph, key(sel), sel.x, v))} />
+                      {sel.kind === "svg" && (
+                        <MetricField onInvalid={onError} label={t("H")} value={sel.height} disabled={disabled || sel.height <= 0}
+                          onCommit={(v) => { if (v > 0 && sel.height > 0) pictureCall(() => backend.placeGlyphPicture(glyph, 0, sel.x, sel.y, (sel.scale * v) / sel.height)); }} />
+                      )}
+                    </div>
+                    <div className="hints-add">
+                      <button type="button" className="btn btn-secondary btn-sm" disabled={!sel.dataUrl} onClick={() => revealItemInDir(sel.file).catch(onError)}>{t("Reveal")}</button>
+                      <button type="button" className="btn btn-secondary btn-sm" disabled={disabled}
+                        onClick={() => { pictureCall(() => backend.removeGlyphPicture(glyph, key(sel))); setShownPicture(null); }}>{t("Remove")}</button>
+                    </div>
+                  </>
+                )}
+                <div className="hints-add picture-add">
+                  <label className="k-caption muted" htmlFor="picture-ppem">{t("Pixel size")}</label>
+                  <input id="picture-ppem" className="metric-input" type="number" min={1} max={2048} value={newPpem}
+                    onChange={(e) => setNewPpem(Math.max(1, Math.min(2048, Math.round(Number(e.target.value) || 0))))} />
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => { addBitmap().catch(onError); }}>{t("Add Bitmap…")}</button>
+                </div>
+                <div className="hints-add">
+                  <button type="button" className="btn btn-secondary btn-sm" disabled={disabled} onClick={() => { addSvgDrawing().catch(onError); }}>{pictures.some((q) => q.kind === "svg") ? t("Replace SVG…") : t("Add SVG…")}</button>
+                </div>
+                <p className="k-caption muted">{t("Export switches live in Font Info › Custom Parameters: Export sbix Table, SBIX to SVG and Color Layers to SVG.")}</p>
               </div>
             );
           })()}

@@ -3,12 +3,14 @@
 
 mod anchors;
 mod commands;
+mod explorer;
 mod export;
 mod features;
 mod fontinfo;
 mod glyphs;
 mod images;
 mod import;
+mod install;
 mod launch;
 mod layers;
 mod preferences;
@@ -55,6 +57,8 @@ fn main() {
             spacing::set_glyph_kerning,
             spacing::kerning_list,
             spacing::set_kerning_pair,
+            spacing::tidy_kerning,
+            spacing::paste_kerning,
             spacing::set_glyph_groups,
             fontinfo::font_info,
             fontinfo::set_font_info,
@@ -69,6 +73,8 @@ fn main() {
             fontinfo::set_use_typo_metrics,
             fontinfo::set_custom_parameters,
             fontinfo::set_virtual_masters,
+            fontinfo::set_numbers,
+            fontinfo::describe_feature_token,
             fontinfo::set_palettes,
             fontinfo::set_master_palettes,
             fontinfo::set_axes,
@@ -126,6 +132,17 @@ fn main() {
             images::set_layer_image,
             images::add_layer_image,
             images::layer_image_data,
+            glyphs::duplicate_glyphs,
+            install::test_install,
+            install::test_uninstall,
+            install::install_for_user,
+            install::export_destinations,
+            install::web_preview,
+            images::glyph_pictures,
+            images::add_glyph_bitmap,
+            images::add_glyph_svg,
+            images::place_glyph_picture,
+            images::remove_glyph_picture,
             commands::reorder_shapes,
             commands::add_path_part,
             commands::set_path_part,
@@ -177,6 +194,7 @@ fn main() {
             settings::record_milestone,
             settings::set_update_check,
             updates::check_updates,
+            updates::install_update,
             settings::set_plugin_enabled,
             settings::set_shortcut,
             settings::reset_shortcuts,
@@ -191,6 +209,12 @@ fn main() {
             script::open_plugins_folder,
             script::python_info,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Kernest");
+        .build(tauri::generate_context!())
+        .expect("error while running Kernest")
+        .run(|_, event| {
+            // Test Install fonts last only as long as Kernest runs.
+            if let tauri::RunEvent::Exit = event {
+                install::remove_test_fonts();
+            }
+        });
 }

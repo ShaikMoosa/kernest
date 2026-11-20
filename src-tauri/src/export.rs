@@ -39,9 +39,15 @@ pub async fn export_font(
             out_dir.display()
         ));
     }
-    let font = {
+    let (font, assets_dir) = {
         let mut guard = lock(&state)?;
-        doc_mut(&mut guard)?.font.clone()
+        let doc = doc_mut(&mut guard)?;
+        let dir = doc
+            .path
+            .as_deref()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf());
+        (doc.font.clone(), dir)
     };
     let font = kernest_core::presets::select_instances(&font, &instances.unwrap_or_default())?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -58,6 +64,7 @@ pub async fn export_font(
                 autohint: autohint.unwrap_or(false),
                 production_names: production_names.unwrap_or(false),
                 out_dir,
+                assets_dir,
             },
         )
     })

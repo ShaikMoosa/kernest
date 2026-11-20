@@ -2637,11 +2637,13 @@ dependencies = [
  "kernest-export",
  "kernest-import",
  "kernest-script",
+ "png",
  "reqwest 0.12.28",
  "rustybuzz",
  "semver",
  "serde",
  "serde_json",
+ "sha2",
  "skrifa 0.47.0",
  "tauri",
  "tauri-build",
@@ -2649,6 +2651,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

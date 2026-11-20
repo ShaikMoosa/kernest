@@ -199,6 +199,7 @@ fn run(args: &Args) -> Result<u8, String> {
                         autohint: true,
                         production_names: *production_names,
                         out_dir: out.unwrap_or(full_path(Path::new("build"))?),
+                        assets_dir: source.parent().map(Path::to_path_buf),
                     },
                 )?
             };

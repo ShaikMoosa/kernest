@@ -128,6 +128,10 @@ pub struct FontInfo {
     /// intermediate layers there use; every other glyph stays as it is along them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub virtual_masters: Vec<VirtualMaster>,
+    /// Number values (S64) for feature code tokens such as `$padding`: by name, then
+    /// by master id. A master without a value uses 0.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub numbers: BTreeMap<String, BTreeMap<String, f64>>,
 }
 
 /// A virtual master: a name and a location on the font's axes (design units).
@@ -449,6 +453,42 @@ pub struct Glyph {
     /// One layer per master, plus any brace (intermediate), bracket (alternate) and
     /// smart pole layers.
     pub layers: Vec<Layer>,
+    /// Bitmap pictures for the sbix table (S63), one per pixel size.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bitmaps: Vec<GlyphBitmap>,
+    /// A drawing for the SVG table (S63).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub svg: Option<GlyphSvg>,
+}
+
+/// A PNG picture of a glyph at one pixel size (an sbix strike). Like a layer image,
+/// the file is referenced by path, relative to the font file where possible.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlyphBitmap {
+    /// The pixel size (pixels per em) this picture is drawn for.
+    pub ppem: u16,
+    pub path: String,
+    /// Position of the picture's bottom-left corner, in font units. Each image pixel
+    /// covers units-per-em / ppem font units.
+    #[serde(default)]
+    pub x: f64,
+    #[serde(default)]
+    pub y: f64,
+}
+
+/// An SVG drawing of a glyph, placed like a layer image: its bottom-left corner at
+/// (x, y) in font units, one SVG unit per font unit times `scale`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlyphSvg {
+    pub path: String,
+    #[serde(default)]
+    pub x: f64,
+    #[serde(default)]
+    pub y: f64,
+    #[serde(default = "one")]
+    pub scale: f64,
 }
 
 fn yes() -> bool {
@@ -472,6 +512,8 @@ impl Glyph {
             locked: false,
             smart_axes: Vec::new(),
             layers: Vec::new(),
+            bitmaps: Vec::new(),
+            svg: None,
         }
     }
 
@@ -1102,6 +1144,7 @@ impl Font {
                 use_typo_metrics: false,
                 custom_parameters: Vec::new(),
                 virtual_masters: Vec::new(),
+                numbers: BTreeMap::new(),
             },
             axes: Vec::new(),
             masters: vec![master],

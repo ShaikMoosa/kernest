@@ -166,6 +166,40 @@ pub fn set_custom_parameters(font: &Font, list: Vec<crate::CustomParameter>) -> 
 
 /// Replaces the virtual masters. Each needs a name (unique) and a location on the
 /// font's axes, inside each axis' range (extend the axis first if needed).
+/// Replaces the number values for feature tokens (S64): by name, then by master id.
+/// Names are like `padding` (letters, digits and _, not starting with a digit).
+pub fn set_numbers(
+    font: &Font,
+    numbers: std::collections::BTreeMap<String, std::collections::BTreeMap<String, f64>>,
+) -> R<Font> {
+    let mut out = std::collections::BTreeMap::new();
+    for (name, by_master) in numbers {
+        let n = name.trim().to_string();
+        let ok = n
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !ok {
+            return Err(format!(
+                "\"{n}\" can't be a number name: use letters, digits and _, starting with a letter."
+            ));
+        }
+        let mut values = std::collections::BTreeMap::new();
+        for m in &font.masters {
+            let v = by_master.get(&m.id).copied().unwrap_or(0.0);
+            if !v.is_finite() {
+                return Err(format!("{n}: enter a number for {}.", m.name));
+            }
+            values.insert(m.id.clone(), v);
+        }
+        out.insert(n, values);
+    }
+    let mut f = font.clone();
+    f.info.numbers = out;
+    Ok(f)
+}
+
 pub fn set_virtual_masters(font: &Font, list: Vec<crate::VirtualMaster>) -> R<Font> {
     let mut names = std::collections::HashSet::new();
     for vm in &list {

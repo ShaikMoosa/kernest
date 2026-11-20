@@ -129,6 +129,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         use_typo_metrics: g.custom_parameters.use_typo_metrics.unwrap_or(false),
         custom_parameters: Vec::new(),
         virtual_masters: Vec::new(),
+        numbers: BTreeMap::new(),
     };
 
     // Glyphs in the file's order, then any the order doesn't mention.
@@ -554,6 +555,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             font.info.custom_parameters = custom_parameters(&root);
             font.variable_fonts = variable_settings_from(&root, &font, &mut warnings);
             read_virtual_masters(&root, &mut font);
+            read_numbers(&root, &mut font, &master_ids);
             read_instance_swaps(&root, &mut font);
         }
         Err(e) => warnings.push(format!("Master guides couldn't be read: {e}")),
@@ -728,6 +730,20 @@ fn read_extras(
         }
         for ld in d.get("layers").and_then(|l| l.as_array()).unwrap_or(&[]) {
             let lid = ld.get("layerId").and_then(|i| i.as_str()).unwrap_or("");
+            // sbix ("iColor 128") and SVG layers carry a picture, not an outline.
+            if let Some(p) = picture_layer(ld) {
+                match p {
+                    Picture::Bitmap(b) => {
+                        if !g.bitmaps.iter().any(|x| x.ppem == b.ppem) {
+                            g.bitmaps.push(b);
+                        }
+                    }
+                    Picture::Svg(svg) => {
+                        g.svg.get_or_insert(svg);
+                    }
+                }
+                continue;
+            }
             let Some(key) = layer_keys.get(&(g.name.clone(), lid.to_string())) else {
                 if let Some(b) = backup_layer(ld, master_ids) {
                     let mut b = b;
@@ -1000,6 +1016,49 @@ fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font) {
 
 /// The "Virtual Master" parameter: locations by axis name. The axes widen to take
 /// them in, since Glyphs takes axis ranges from the masters.
+/// Number values (S64): the font's `numbers` names and each master's `numberValues`.
+fn read_numbers(
+    root: &glyphs_reader::Plist,
+    font: &mut Font,
+    master_ids: &HashMap<String, String>,
+) {
+    let names: Vec<String> = root
+        .get("numbers")
+        .and_then(|n| n.as_array())
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|n| n.get("name").and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+    if names.is_empty() {
+        return;
+    }
+    for m in root
+        .get("fontMaster")
+        .and_then(|m| m.as_array())
+        .unwrap_or(&[])
+    {
+        let Some(id) = m
+            .get("id")
+            .and_then(|i| i.as_str())
+            .and_then(|g| master_ids.get(g))
+        else {
+            continue;
+        };
+        let values: Vec<f64> = m
+            .get("numberValues")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().map(|v| num(v).unwrap_or(0.0)).collect())
+            .unwrap_or_default();
+        for (i, name) in names.iter().enumerate() {
+            font.info
+                .numbers
+                .entry(name.clone())
+                .or_default()
+                .insert(id.clone(), values.get(i).copied().unwrap_or(0.0));
+        }
+    }
+}
+
 fn read_virtual_masters(root: &glyphs_reader::Plist, font: &mut Font) {
     let params = root
         .get("customParameters")
@@ -1120,6 +1179,45 @@ fn annotations_in(ld: &glyphs_reader::Plist) -> Vec<kernest_core::Annotation> {
             })
         })
         .collect()
+}
+
+enum Picture {
+    Bitmap(kernest_core::GlyphBitmap),
+    Svg(kernest_core::GlyphSvg),
+}
+
+/// An sbix layer (`attr.sbixSize`, or a Glyphs 2 name like "iColor 128") or an SVG
+/// layer (named "svg"), with its picture.
+fn picture_layer(ld: &glyphs_reader::Plist) -> Option<Picture> {
+    let name = ld.get("name").and_then(|n| n.as_str()).unwrap_or("").trim();
+    let size = ld
+        .get("attr")
+        .and_then(|a| a.get("sbixSize"))
+        .and_then(num)
+        .or_else(|| {
+            name.strip_prefix("iColor")
+                .and_then(|r| r.trim().parse::<f64>().ok())
+        });
+    let svg = name.eq_ignore_ascii_case("svg");
+    if size.is_none() && !svg {
+        return None;
+    }
+    let img = image_in(ld)?;
+    if svg || img.path.to_ascii_lowercase().ends_with(".svg") {
+        return Some(Picture::Svg(kernest_core::GlyphSvg {
+            path: img.path,
+            x: img.x,
+            y: img.y,
+            scale: img.scale_x,
+        }));
+    }
+    let ppem = size?.round().clamp(1.0, 2048.0) as u16;
+    Some(Picture::Bitmap(kernest_core::GlyphBitmap {
+        ppem,
+        path: img.path,
+        x: img.x,
+        y: img.y,
+    }))
 }
 
 /// A layer's `backgroundImage`: path, transform (or pos/scale/angle) and crop.

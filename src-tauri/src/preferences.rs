@@ -114,5 +114,7 @@ pub struct UpdateSettings {
     pub enabled: bool,
     pub last_checked: Option<u64>,
     pub latest_version: Option<String>,
+    /// The first lines of the latest release's notes.
+    pub latest_notes: Option<String>,
     pub error: Option<String>,
 }

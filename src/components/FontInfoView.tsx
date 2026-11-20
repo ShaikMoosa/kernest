@@ -566,6 +566,47 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
             </div>
           ))}
           <div className="fi-head fi-subhead">
+            <h3 className="k-label">{t("Number values")}</h3>
+            <span className="k-caption muted">{t("Numbers for feature code: write $name or ${name*2}. Static fonts get each master's value (interpolated for instances); variable fonts get a value that varies.")}</span>
+            <span className="spacer" />
+            <button className="btn btn-secondary btn-sm"
+              onClick={() => {
+                let n = 1;
+                while (info.numbers[`number${n}`]) n++;
+                apply(() => backend.setNumbers({ ...info.numbers, [`number${n}`]: Object.fromEntries(info.masters.map((m) => [m.id, 0])) }));
+              }}>
+              <AddIcon size={14} /> {t("Add number")}
+            </button>
+          </div>
+          {Object.keys(info.numbers).length > 0 && (
+            <div className="fi-numbers" role="table" aria-label={t("Number values")}>
+              <div className="fi-numbers-row fi-params-head" role="row" style={{ gridTemplateColumns: `160px repeat(${info.masters.length}, 90px) 32px` }}>
+                <span className="k-caption muted" role="columnheader">{t("Name")}</span>
+                {info.masters.map((m) => <span key={m.id} className="k-caption muted" role="columnheader">{m.name}</span>)}
+                <span />
+              </div>
+              {Object.entries(info.numbers).map(([name, values]) => {
+                const rename = (to: string) => {
+                  if (to === name) return;
+                  const next: Record<string, Record<string, number>> = {};
+                  for (const [k, v] of Object.entries(info.numbers)) next[k === name ? to : k] = v;
+                  apply(() => backend.setNumbers(next));
+                };
+                return (
+                  <div key={name} className="fi-numbers-row" role="row" style={{ gridTemplateColumns: `160px repeat(${info.masters.length}, 90px) 32px` }}>
+                    <Field label={t("Number name")} value={name} width={150} mono numeric={false} onCommit={rename} />
+                    {info.masters.map((m) => (
+                      <Field key={m.id} label={t("{name} in {master}", { name, master: m.name })} value={values[m.id] ?? 0} width={80}
+                        onCommit={(v) => apply(() => backend.setNumbers({ ...info.numbers, [name]: { ...values, [m.id]: Number(v) } }))} />
+                    ))}
+                    <button className="icon-btn" aria-label={t("Remove {name}", { name })} title={t("Remove number")}
+                      onClick={() => { const next = { ...info.numbers }; delete next[name]; apply(() => backend.setNumbers(next)); }}><CloseIcon size={14} /></button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="fi-head fi-subhead">
             <h3 className="k-label">{t("Virtual masters")}</h3>
             <span className="k-caption muted">{t("A location only glyphs with intermediate layers there use, such as a Crossbar axis that changes A, E, F and H. Other glyphs stay as they are.")}</span>
             <span className="spacer" />
@@ -809,8 +850,18 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
         <section className="fi-section" aria-labelledby="fi-params">
           <div className="fi-head">
             <h2 id="fi-params" className="k-subtitle">{t("Custom parameters")}</h2>
-            <span className="k-caption muted">{t("Settings from a Glyphs source that Kernest doesn't use itself. They're kept with the font and written back by Save As .glyphs, but not applied when Kernest exports.")}</span>
+            <span className="k-caption muted">{t("Settings from a Glyphs source. They're kept with the font and written back by Save As .glyphs. Kernest applies Export sbix Table, SBIX to SVG and Color Layers to SVG when it exports; it keeps the others without using them.")}</span>
             <span className="spacer" />
+            <select className="metric-input fi-param-add" aria-label={t("Add an export switch")} value=""
+              onChange={(e) => {
+                const [name, value] = e.target.value.split("|");
+                if (name) apply(() => backend.setCustomParameters([...info.customParameters, { name, value }]));
+              }}>
+              <option value="">{t("Add export switch…")}</option>
+              <option value="Export sbix Table|0">{t("Export sbix Table (off: leave sbix out)")}</option>
+              <option value="SBIX to SVG|128">{t("SBIX to SVG (pixel size)")}</option>
+              <option value="Color Layers to SVG|1">{t("Color Layers to SVG")}</option>
+            </select>
             <button className="btn btn-secondary btn-sm" onClick={() => apply(() => backend.setCustomParameters([...info.customParameters, { name: t("New parameter"), value: "1" }]))}>
               <AddIcon size={14} /> {t("Add parameter")}
             </button>

@@ -458,6 +458,7 @@ fn build(
             .is_some_and(|s| s.contains(&7)),
         custom_parameters: Vec::new(),
         virtual_masters: Vec::new(),
+        numbers: BTreeMap::new(),
     };
 
     // Masters, with the default one first so it is the reference for empty layers.

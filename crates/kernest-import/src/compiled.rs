@@ -465,6 +465,7 @@ fn font_info(font: &FontRef, upem: u16) -> FontInfo {
         ps_hinting: None,
         control_instructions: String::new(),
         virtual_masters: Vec::new(),
+        numbers: BTreeMap::new(),
     }
 }
 

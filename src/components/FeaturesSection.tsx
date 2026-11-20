@@ -11,6 +11,33 @@ interface Props {
   onError: (e: unknown) => void;
 }
 
+/** The token around `at` in `text`: $name, ${expr} or $[predicate]; null if none. */
+export function tokenAt(text: string, at: number): string | null {
+  const lineStart = text.lastIndexOf("\n", at - 1) + 1;
+  const nextBreak = text.indexOf("\n", at);
+  const lineEnd = nextBreak === -1 ? text.length : nextBreak;
+  const line = text.slice(lineStart, lineEnd);
+  const pos = at - lineStart;
+  for (let i = line.lastIndexOf("$", pos); i >= 0; i = line.lastIndexOf("$", i - 1)) {
+    let end = -1;
+    const next = line[i + 1];
+    if (next === "[" || next === "{") {
+      const close = next === "[" ? "]" : "}";
+      let depth = 0;
+      for (let j = i + 1; j < line.length; j++) {
+        if (line[j] === next) depth++;
+        else if (line[j] === close && --depth === 0) { end = j + 1; break; }
+      }
+    } else {
+      const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(line.slice(i + 1));
+      if (m) end = i + 1 + m[0].length;
+    }
+    if (end > 0 && pos >= i && pos <= end) return line.slice(i, end);
+    if (i === 0) break;
+  }
+  return null;
+}
+
 /** Font Info · Features: automatic switches, generated code, and the hand-written editor. */
 export function FeaturesSection({ version, onChanged, onError }: Props) {
   const [view, setView] = useState<FeaturesView | null>(null);
@@ -20,6 +47,8 @@ export function FeaturesSection({ version, onChanged, onError }: Props) {
   const draftRef = useRef<string | null>(null);
   const setDraft = (v: string | null) => { draftRef.current = v; setDraftState(v); };
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  // Alt+click on a token ($padding, ${padding*2}, $[case == upper]) explains it.
+  const [tokenInfo, setTokenInfo] = useState<{ token: string; text: string; error: boolean } | null>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
 
   const reload = useCallback(() => backend.features().then(
@@ -108,9 +137,36 @@ export function FeaturesSection({ version, onChanged, onError }: Props) {
           value={text}
           placeholder={"feature ss01 {\n  sub a by a.ss01;\n} ss01;"}
           onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => {
+            if (!e.altKey) return;
+            const token = tokenAt(e.currentTarget.value, e.currentTarget.selectionStart);
+            if (!token) { setTokenInfo(null); return; }
+            backend.describeFeatureToken(token).then(
+              (text) => setTokenInfo({ token, text, error: false }),
+              (err) => setTokenInfo({ token, text: translateMessage(err instanceof Error ? err.message : String(err)), error: true }),
+            );
+          }}
           onScroll={(e) => { if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop; }}
         />
       </div>
+      {tokenInfo && (
+        <div className={`fea-token${tokenInfo.error ? " is-error" : ""}`} role="status">
+          {!tokenInfo.text.startsWith(tokenInfo.token) && <code>{tokenInfo.token}</code>}
+          <span>{tokenInfo.text}</span>
+          <button type="button" className="link-btn" onClick={() => setTokenInfo(null)}>{t("Close")}</button>
+        </div>
+      )}
+      <details className="fea-cheats">
+        <summary className="k-caption">{t("Tokens and conditions (Alt+click a token to see what it stands for)")}</summary>
+        <dl className="fea-cheat-list">
+          <dt><code>{"$padding"}</code> <code>{"${padding*2}"}</code></dt><dd>{t("A number value from Font Info › Masters; it varies in variable fonts.")}</dd>
+          <dt><code>{"[$[case == smallCaps]]"}</code></dt><dd>{t("The glyphs that match: name, category, subCategory, case, script, direction, unicode, tags, export, leftKerningGroup, rightKerningGroup, layer.width, layer.anchors.top.y. Compare with == != < > <= >= BEGINSWITH ENDSWITH CONTAINS LIKE IN, and combine with AND, OR, NOT and brackets.")}</dd>
+          <dt><code>{"#ifdef VARIABLE"}</code> … <code>{"#endif"}</code></dt><dd>{t("Code only for variable fonts (#ifndef for static ones; #else for the other kind).")}</dd>
+          <dt><code>{"condition 600 < wght < 900;"}</code></dt><dd>{t("Inside a feature: the rules after it apply only there (a feature variation in variable fonts). Values are axis values as in Font Info › Axes.")}</dd>
+          <dt><code>{"pos @A 10 (wdth:80) 20;"}</code></dt><dd>{t("A value that changes across the design space, at master locations.")}</dd>
+          <dt><code>{"lookupflag;"}</code> <code>{"delete x;"}</code></dt><dd>{t("Reset the lookup flags; remove a glyph (written as sub x by NULL).")}</dd>
+        </dl>
+      </details>
       {view.diagnostics.length > 0 ? (
         <ul className="fea-diags">
           {view.diagnostics.map((d, i) => (

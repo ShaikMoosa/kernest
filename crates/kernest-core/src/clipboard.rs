@@ -64,6 +64,29 @@ fn remap_masters(g: &mut Glyph, font: &Font) {
     g.layers = kept;
 }
 
+/// Glyph › Duplicate Glyph: a copy of each glyph right after it, named `a.001`
+/// (then `.002`, …), without its Unicode values so the original keeps them.
+/// Returns the font and the new names.
+pub fn duplicate(font: &Font, names: &[String]) -> Result<(Font, Vec<String>), String> {
+    let mut f = font.clone();
+    let mut added = Vec::new();
+    for name in names {
+        let i = f
+            .glyphs
+            .iter()
+            .position(|g| &g.name == name)
+            .ok_or_else(|| format!("There is no glyph named \"{name}\"."))?;
+        let mut copy = f.glyphs[i].clone();
+        copy.name = unique_name(&f, name);
+        copy.unicodes.clear();
+        copy.production_name = None;
+        copy.locked = false;
+        added.push(copy.name.clone());
+        f.glyphs.insert(i + 1, copy);
+    }
+    Ok((f, added))
+}
+
 /// A free name for a copied glyph: `base`, then `base.001`, `base.002`, …
 fn unique_name(font: &Font, base: &str) -> String {
     if font.glyph(base).is_none() {
