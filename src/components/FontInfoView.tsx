@@ -718,6 +718,13 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
               <label className="info-field"><span className="k-caption muted">{t("Name")}</span>
                 <Field label={t("Instance name")} value={it.name} width={160} mono={false} numeric={false} onCommit={(v) => patch({ name: v })} />
               </label>
+              <label className="info-field" title={t("Export this instance as part of another family, such as Lexend Deca. Empty uses the font's family name.")}><span className="k-caption muted">{t("Family name")}</span>
+                <Field label={t("Instance family name")} value={it.familyName ?? ""} width={160} mono={false} numeric={false} placeholder={info.familyName} onCommit={(v) => {
+                  const f = v.trim();
+                  if ([...f].length > 63) { onError(t("Family name \"{name}\" is too long; use at most 63 characters.", { name: f })); return false; }
+                  patch({ familyName: f === "" ? undefined : f });
+                }} />
+              </label>
               {hasLabels(axesDraft) && (
                 <span className="k-caption muted axis-user" title={t("The style name apps show for this instance, from the axis value names.")}>
                   {t("STAT name: {name}", { name: statStyleName(axesDraft, it) })}

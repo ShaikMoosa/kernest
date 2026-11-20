@@ -44,11 +44,12 @@ use crate::model::{
 /// adds kept custom parameters, backup layers, strokes and corner/cap/segment
 /// components; version 14 adds masks, annotations, placed images, interpolation
 /// curves, virtual masters and glyph swaps; version 15 adds sbix bitmaps, SVG
-/// drawings and number values for feature tokens.
+/// drawings and number values for feature tokens; version 16 adds per-instance
+/// family names.
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 15;
+pub const FORMAT_VERSION: u32 = 16;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -278,11 +279,17 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
             .glyphs
             .iter()
             .any(|g| !g.bitmaps.is_empty() || g.svg.is_some());
+    let has_v16 = font
+        .instances
+        .iter()
+        .any(|i| i.family_name.is_some() || !i.localized_family_names.is_empty());
     let has_vertical =
         font.info.use_typo_metrics || font.masters.iter().any(|m| !m.vertical.is_empty());
     let file = FontFile {
-        format_version: if has_v15 {
+        format_version: if has_v16 {
             FORMAT_VERSION
+        } else if has_v15 {
+            15
         } else if has_v14 {
             14
         } else if has_v13 {
@@ -581,6 +588,37 @@ mod tests {
     }
 
     #[test]
+    fn instance_family_names_round_trip_as_version_16() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        font.instances.push(crate::model::Instance {
+            name: "Bold".into(),
+            location: Default::default(),
+            export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
+        });
+        // An instance without a family of its own doesn't need version 16.
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(!fj.contains("\"formatVersion\": 16"), "{fj}");
+        font.instances[0].family_name = Some("Sample Deca".into());
+        font.instances[0]
+            .localized_family_names
+            .insert("DEU".into(), "Probe Zehn".into());
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 16"), "{fj}");
+        assert_eq!(open(&path).unwrap().instances, font.instances);
+    }
+
+    #[test]
     fn phase3_fields_round_trip_and_gate_version() {
         use crate::model::StyleLink;
         let dir = tempfile::tempdir().unwrap();
@@ -609,6 +647,8 @@ mod tests {
             }),
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
         });
         save(&font, &path).unwrap();
         let fj = fs::read_to_string(path.join("font.json")).unwrap();

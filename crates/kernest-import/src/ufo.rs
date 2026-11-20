@@ -151,6 +151,13 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            family_name: inst
+                .familyname
+                .as_deref()
+                .map(str::trim)
+                .filter(|f| !f.is_empty())
+                .map(String::from),
+            localized_family_names: Default::default(),
         })
         .collect();
 
@@ -159,6 +166,13 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
         .map(|(n, l, f)| (n.clone(), l.clone(), &ufos[f]))
         .collect();
     let mut font = build(&refs, default_idx, axes, instances, &mut warnings);
+    // An instance family that matches the font's family is the font's own.
+    let family = font.info.family_name.clone();
+    for i in &mut font.instances {
+        if i.family_name.as_deref() == Some(family.as_str()) {
+            i.family_name = None;
+        }
+    }
     add_sparse_sources(&mut font, &ufos, &sparse, &mut warnings);
     add_rules(&mut font, &ds, &mut warnings);
     font.variable_fonts = ds

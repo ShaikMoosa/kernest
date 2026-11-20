@@ -1326,6 +1326,28 @@ pub struct Instance {
     /// Glyphs left out of this export ("Remove Glyphs").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remove_glyphs: Vec<String>,
+    /// This instance's own family name, so one source can export several families
+    /// (Glyphs "familyNames" / "familyName"). `None` uses the font's family name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family_name: Option<String>,
+    /// Family names in other languages, keyed by Glyphs language tag ("DEU", "JAN"…).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub localized_family_names: BTreeMap<String, String>,
+}
+
+impl Instance {
+    /// The family this instance exports under: its own family name, or `font_family`.
+    pub fn family<'a>(&'a self, font_family: &'a str) -> &'a str {
+        match self.family_name.as_deref().map(str::trim) {
+            Some(f) if !f.is_empty() => f,
+            _ => font_family,
+        }
+    }
+
+    /// Whether this instance names a family other than `font_family`.
+    pub fn has_own_family(&self, font_family: &str) -> bool {
+        self.family(font_family) != font_family
+    }
 }
 
 /// How an instance participates in the four-style (RIBBI) style map. `base` is
