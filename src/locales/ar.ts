@@ -2531,4 +2531,13 @@ export const ar: Dict = {
   "Distribute horizontally (equal gaps)": "توزيع أفقي (فراغات متساوية)",
   "Distribute vertically (equal gaps)": "توزيع عمودي (فراغات متساوية)",
   "The alignment target has an invalid number.": "هدف المحاذاة يحتوي على رقم غير صالح.",
+  "Union": "دمج",
+  "Subtract": "طرح",
+  "Intersect": "تقاطع",
+  "Union: merge the selected paths (all paths when none is selected)": "دمج: يدمج المسارات المحددة (كل المسارات إن لم يُحدد شيء)",
+  "Subtract: take the selected paths away from the others (the frontmost when none is selected)": "طرح: يزيل المسارات المحددة من البقية (الأمامي إن لم يُحدد شيء)",
+  "Intersect: keep where the selected paths overlap the others": "تقاطع: يُبقي مواضع تداخل المسارات المحددة مع البقية",
+  "Select closed paths to combine.": "حدد مسارات مغلقة لدمجها.",
+  "Subtract and Intersect need another closed path to work on.": "يحتاج الطرح والتقاطع إلى مسار مغلق آخر للعمل عليه.",
+  "Open paths were left out.": "تُركت المسارات المفتوحة دون تغيير.",
 };

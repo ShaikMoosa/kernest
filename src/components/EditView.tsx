@@ -57,6 +57,13 @@ const ALIGN_BUTTONS: [AlignOp, string, React.ReactNode][] = [
   ["distribute-v", "Distribute vertically (equal gaps)", <><path d="M4 3h16M4 21h16" /><rect x="8" y="6" width="8" height="3" rx="1" /><rect x="8" y="10.5" width="8" height="3" rx="1" /><rect x="8" y="15" width="8" height="3" rx="1" /></>],
 ];
 
+/** The Transform panel's boolean buttons: operation, label, icon (two overlapping squares). */
+const BOOLEAN_BUTTONS: ["union" | "subtract" | "intersect", string, React.ReactNode][] = [
+  ["union", "Union: merge the selected paths (all paths when none is selected)", <path d="M4 4h10v6h6v10H10v-6H4z" fill="currentColor" fillOpacity="0.35" />],
+  ["subtract", "Subtract: take the selected paths away from the others (the frontmost when none is selected)", <><path d="M4 4h10v6h-4v4H4z" fill="currentColor" fillOpacity="0.35" /><rect x="10" y="10" width="10" height="10" strokeDasharray="2 2" /></>],
+  ["intersect", "Intersect: keep where the selected paths overlap the others", <><rect x="4" y="4" width="10" height="10" strokeDasharray="2 2" /><rect x="10" y="10" width="10" height="10" strokeDasharray="2 2" /><rect x="10" y="10" width="4" height="4" fill="currentColor" fillOpacity="0.6" /></>],
+];
+
 const HIT = 7; // px
 const EDGE = 10; // px strip at the canvas border: dragging from it pulls out a new guide
 const SNAP = 6; // px: a dragged node this close to a guide lands on it
@@ -65,7 +72,7 @@ const SNAP = 6; // px: a dragged node this close to a guide lands on it
 export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes" | "remove-overlap"
   | "edit-background" | "to-background" | "add-to-background" | "swap-background" | "clear-background"
   | "open-corner" | "reconnect-nodes" | "connect-nodes" | "close-open-paths" | "make-node-first" | "reverse-contours" | "tidy-up" | "round-coordinates"
-  | "harmonize" | "super-smooth" | "align-selection" | "focus-path" | "clear-focus"
+  | "harmonize" | "super-smooth" | "align-selection" | "union" | "subtract" | "intersect" | "focus-path" | "clear-focus"
   | "select-all" | "deselect-all" | "invert-selection" | "zoom-in" | "zoom-out" | "zoom-fit" | "zoom-actual" | "shape-order";
 export const sendEditCommand = (name: EditCommand) => window.dispatchEvent(new CustomEvent("kernest:edit", { detail: name }));
 
@@ -1707,6 +1714,13 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       return;
     }
     if (name === "edit-background") return toggleBackground();
+    if (name === "union" || name === "subtract" || name === "intersect") {
+      // The paths with a selected node; none selected means all (Union) or the
+      // frontmost path against the rest (Subtract, Intersect).
+      const pathIdx = [...new Set([...latest.current.selection].map((k) => parseKey(k)[0]))];
+      runPathEdit(name, { paths: pathIdx.length ? pathIdx : undefined });
+      return;
+    }
     if (name === "align-selection") {
       runAlignRef.current("points");
       return;
@@ -2761,6 +2775,13 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                     </button>
                   );
                 })}
+                {BOOLEAN_BUTTONS.map(([op, label, icon]) => (
+                  <button key={op} type="button" className="icon-btn align-btn" title={t(label)} aria-label={t(label)}
+                    disabled={editingBackground || layer.glyphLocked || paths.filter((p) => p.closed && !p.locked).length < (op === "union" ? 1 : 2)}
+                    onClick={() => runCommand(op)}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">{icon}</svg>
+                  </button>
+                ))}
                 <label className="align-to" title={t("Align to the selection's box, the glyph's width (left, centre, right) or a metric line (top, middle, bottom)")}>
                   <span className="k-caption muted">{t("to")}</span>
                   <select className="select" value={alignTo} aria-label={t("Align to")} onChange={(e) => setAlignTo(e.target.value as typeof alignTo)}>

@@ -9,6 +9,9 @@
  * the dictionaries (npm run check:i18n lists what's missing).
  */
 export const ENGINE_MESSAGES = [
+  "Select closed paths to combine.",
+  "Subtract and Intersect need another closed path to work on.",
+  "Open paths were left out.",
   "The alignment target has an invalid number.",
   "Super-smooth nodes need a curve on both sides.",
   "\"{text}\" needs a semicolon between the name ID and the text, like \"0; © 2026 Me\".",

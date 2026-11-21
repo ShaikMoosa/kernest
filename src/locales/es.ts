@@ -2320,4 +2320,13 @@ export const es: Dict = {
   "Distribute horizontally (equal gaps)": "Distribuir horizontalmente (espacios iguales)",
   "Distribute vertically (equal gaps)": "Distribuir verticalmente (espacios iguales)",
   "The alignment target has an invalid number.": "El destino de la alineación tiene un número no válido.",
+  "Union": "Unión",
+  "Subtract": "Restar",
+  "Intersect": "Intersecar",
+  "Union: merge the selected paths (all paths when none is selected)": "Unión: fusiona los trazados seleccionados (todos si no hay ninguno seleccionado)",
+  "Subtract: take the selected paths away from the others (the frontmost when none is selected)": "Restar: quita los trazados seleccionados de los demás (el de más arriba si no hay ninguno seleccionado)",
+  "Intersect: keep where the selected paths overlap the others": "Intersecar: conserva donde los trazados seleccionados se superponen a los demás",
+  "Select closed paths to combine.": "Selecciona trazados cerrados para combinar.",
+  "Subtract and Intersect need another closed path to work on.": "Restar e Intersecar necesitan otro trazado cerrado con el que trabajar.",
+  "Open paths were left out.": "Los trazados abiertos se han dejado fuera.",
 };

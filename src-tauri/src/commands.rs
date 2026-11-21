@@ -1140,6 +1140,14 @@ fn apply_path_edit(
         "round-coordinates" => Ok(pathops::round_coordinates(layer, only)),
         // Picked nodes, or every smooth node when none are picked.
         "harmonize" => Ok(kernest_core::harmonize::harmonize(layer, nodes) > 0),
+        // Boolean operations on the picked paths (SMO-41).
+        "union" => kernest_core::booleans::apply(layer, kernest_core::booleans::Op::Union, only),
+        "subtract" => {
+            kernest_core::booleans::apply(layer, kernest_core::booleans::Op::Subtract, only)
+        }
+        "intersect" => {
+            kernest_core::booleans::apply(layer, kernest_core::booleans::Op::Intersect, only)
+        }
         "super-smooth" => {
             if nodes.is_empty() {
                 return Err("Pick a node.".into());
@@ -1212,6 +1220,10 @@ fn path_edit_in(
             .all(|s| s == edit_structure(&after[0].1));
     let warning = if targets.len() > 1 && !compatible {
         Some("Applied to this master only to keep the others compatible.".to_string())
+    } else if matches!(operation, "union" | "subtract" | "intersect")
+        && kernest_core::booleans::open_picks(current, paths) > 0
+    {
+        Some("Open paths were left out.".to_string())
     } else {
         None
     };
