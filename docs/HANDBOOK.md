@@ -368,7 +368,12 @@ With the **Measure** tool (L), drag a line across the outline. Kernest marks whe
 ### Grid and view toggles
 
 - **Grid:** Font Info › General › Grid has **Spacing** and **Subdivision**. Points snap to a grid of Spacing ÷ Subdivision units while drawing and dragging. Spacing 0 turns the grid off.
-- **View menu:** Show Nodes, Show Anchors, Show Guides, Show Background and Show Bounding Box (the rectangle around the outline) each switch their drawing on or off. **Nodes, Metrics, Anchors, Guides** and **Background** are also toggles at the right of the editor toolbar. Kernest remembers these choices between sessions.
+- **View menu:** Show Nodes, Show Anchors, Show Guides, Show Background and Show Bounding Box (the rectangle around the outline) each switch their drawing on or off. **Nodes, Metrics, Anchors, Guides, Zones** and **Background** are also toggles at the right of the editor toolbar. Kernest remembers these choices between sessions.
+- **Alignment zones** (View › Show Alignment Zones, or **Zones** in the toolbar) shade the master's zones (Font Info › Masters) and mark nodes by height, so overshoots are easy to check:
+  - **Gold diamond:** the node sits exactly on a metric line (baseline, x-height, cap height, ascender or descender).
+  - **Ring:** the node is inside an alignment zone, as an overshoot should be.
+  - **Small warning triangle:** the node is up to 3 units outside a zone or off a metric line, which is usually a slip.
+  - Hovering a mark says which it is. Brace layers use their master's zones.
 
 ## Anchors and composites
 

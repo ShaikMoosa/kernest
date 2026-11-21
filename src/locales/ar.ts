@@ -2540,4 +2540,8 @@ export const ar: Dict = {
   "Select closed paths to combine.": "حدد مسارات مغلقة لدمجها.",
   "Subtract and Intersect need another closed path to work on.": "يحتاج الطرح والتقاطع إلى مسار مغلق آخر للعمل عليه.",
   "Open paths were left out.": "تُركت المسارات المفتوحة دون تغيير.",
+  "Show Alignment Zones": "إظهار مناطق المحاذاة",
+  "On a metric line": "على خط قياسي",
+  "In an alignment zone": "داخل منطقة محاذاة",
+  "Just outside an alignment zone or metric line": "خارج منطقة محاذاة أو خط قياسي بقليل",
 };

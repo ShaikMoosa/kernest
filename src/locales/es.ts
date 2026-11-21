@@ -2329,4 +2329,8 @@ export const es: Dict = {
   "Select closed paths to combine.": "Selecciona trazados cerrados para combinar.",
   "Subtract and Intersect need another closed path to work on.": "Restar e Intersecar necesitan otro trazado cerrado con el que trabajar.",
   "Open paths were left out.": "Los trazados abiertos se han dejado fuera.",
+  "Show Alignment Zones": "Mostrar zonas de alineación",
+  "On a metric line": "En una línea métrica",
+  "In an alignment zone": "En una zona de alineación",
+  "Just outside an alignment zone or metric line": "Justo fuera de una zona de alineación o línea métrica",
 };

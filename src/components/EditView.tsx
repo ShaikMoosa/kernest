@@ -11,6 +11,7 @@ import { CloseIcon, SearchIcon } from "./Icons";
 import { pickImage, pickPng, pickSvgDrawing } from "../lib/desktop";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { t, tn, translateMessage } from "../lib/i18n";
+import { classifyHeight, zoneRange, type ZoneMark } from "../lib/zones";
 import { combineSelection, extendLasso, insidePolygon, isLassoClick, selectModeFor, type LassoPt, type SelectMode } from "../lib/lasso";
 import { ColorGlyph } from "./ColorGlyph";
 import { PaintDialog } from "./PaintDialog";
@@ -221,6 +222,8 @@ interface Props {
   showNodes?: boolean;
   /** View › Show Guides: local and global guides. */
   showGuides?: boolean;
+  /** Alignment zone bands and the node highlights for metric lines and zones. */
+  showZones?: boolean;
   /** View › Show Background: the background drawing behind the outline. */
   showBackground?: boolean;
   /** View › Show Image: the layer's placed image (always shown for empty glyphs). */
@@ -233,7 +236,7 @@ interface Props {
   showSidebar?: boolean;
   onToggleSidebar?: () => void;
   /** Toolbar view toggles (Nodes, Metrics, Anchors, Guides, Background), shared with the View menu. */
-  onToggleView?: (view: "nodes" | "metrics" | "anchors" | "guides" | "background") => void;
+  onToggleView?: (view: "nodes" | "metrics" | "anchors" | "guides" | "background" | "zones") => void;
   /** The current master's id; `masterId` differs when a brace or bracket layer is open. */
   masterKey?: string;
   /** Switches this tab to another layer (a layer key). */
@@ -243,7 +246,7 @@ interface Props {
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showBackground = true, showImage = true, showAnnotations = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, onToggleView, masterKey, onPickLayer, reporters = [] }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showZones = true, showBackground = true, showImage = true, showAnnotations = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, onToggleView, masterKey, onPickLayer, reporters = [] }: Props) {
   const master = masterKey ?? masterId;
   const nodeScale = handleSize === "small" ? 0.75 : handleSize === "large" ? 1.5 : 1;
   // ---------- Reporter plug-ins ----------
@@ -1930,6 +1933,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   if (!layer) return <div className="editor"><div className="editor-loading k-caption muted">Loading {glyph}…</div></div>;
 
   const { ascender, capHeight, xHeight, descender } = layer.metrics;
+  const zoneLines = [0, xHeight, capHeight, ascender, descender];
   const lines: [string, number][] = [[t("Ascender"), ascender], [t("Cap height"), capHeight], [t("x-height"), xHeight], [t("Baseline"), 0], [t("Descender"), descender]];
   const x0 = toScreen(0, 0).x, x1 = toScreen(layer.width, 0).x;
   // Stroked paths are drawn as their stroke outlines (from the engine) plus a thin
@@ -2029,7 +2033,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         <span className="spacer" />
         {onToggleView && (
           <div className="segmented view-toggles" role="group" aria-label={t("Show")}>
-            {([["nodes", "Nodes", showNodes], ["metrics", "Metrics", showMetrics], ["anchors", "Anchors", showAnchors], ["guides", "Guides", showGuides], ["background", "Background", showBackground]] as const).map(([key, label, on]) => (
+            {([["nodes", "Nodes", showNodes], ["metrics", "Metrics", showMetrics], ["anchors", "Anchors", showAnchors], ["guides", "Guides", showGuides], ["zones", "Zones", showZones], ["background", "Background", showBackground]] as const).map(([key, label, on]) => (
               <button key={key} type="button" className={`segment${on ? " is-selected" : ""}`} aria-pressed={on} onClick={() => onToggleView(key)}
                 title={t("Show or hide {what}", { what: t(label) })}>{t(label)}</button>
             ))}
@@ -2092,6 +2096,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             );
           })}
           {showMetrics && <rect x={x0} y={toScreen(0, ascender).y} width={Math.max(0, x1 - x0)} height={(ascender - descender) * view.s} className="advance-box" />}
+          {/* Alignment zones: faint bands across the canvas. */}
+          {showZones && !editingBackground && (layer.zones ?? []).filter((z) => z.size !== 0).map((z, i) => {
+            const [lo, hi] = zoneRange(z);
+            const top = toScreen(0, hi).y, bottom = toScreen(0, lo).y;
+            return <rect key={`z${i}`} x={0} y={top} width={size.w} height={Math.max(1, bottom - top)} className="zone-band" pointerEvents="none" />;
+          })}
           {/* Hint bands: manual hints, or the automatic ones from the master's stems. */}
           {!editingBackground && (layer.hints.length ? layer.hints : layer.autoHints).map((h, i) => {
             const auto = layer.hints.length === 0;
@@ -2232,6 +2242,11 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               const a = toScreen(lastPen.x, lastPen.y), b = toScreen(pendingOut.x, pendingOut.y);
               return <g><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="handle-line" /><circle cx={b.x} cy={b.y} r={3 * nodeScale} className="node-off" /></g>;
             })()}
+            {showZones && !editingBackground && paths.map((p, pi) => p.nodes.map((n, ni) => {
+              if (!isOn(n)) return null;
+              const mark = classifyHeight(n.y, zoneLines, layer.zones ?? []);
+              return mark ? <ZoneHighlight key={`zh${pi}:${ni}`} mark={mark} at={toScreen(n.x, n.y)} scale={nodeScale} /> : null;
+            }))}
             {paths.map((p, pi) => p.nodes.map((n, ni) => {
               const at = toScreen(n.x, n.y);
               // The start node gets an arrow toward the next node: the path's direction.
@@ -3313,6 +3328,24 @@ function hint(tool: Tool, lasso = false): string {
     case "measure": return t("Drag a line across the outline to measure distances and angles · Esc clears");
     case "hand": return t("Drag to pan · Ctrl+wheel zooms");
   }
+}
+
+/** The mark behind a node on a metric line (diamond), in an alignment zone (ring) or
+ *  just outside one (warning triangle): shapes as well as colours tell them apart. */
+function ZoneHighlight({ mark, at, scale }: { mark: Exclude<ZoneMark, null>; at: Pt; scale: number }) {
+  const r = 8 * scale;
+  const label = mark === "line" ? t("On a metric line") : mark === "zone" ? t("In an alignment zone") : t("Just outside an alignment zone or metric line");
+  return (
+    <g className={`zone-mark zone-${mark}`} pointerEvents="none">
+      <title>{label}</title>
+      {mark === "line" && <path d={`M${at.x} ${at.y - r}L${at.x + r} ${at.y}L${at.x} ${at.y + r}L${at.x - r} ${at.y}Z`} />}
+      {mark === "zone" && <circle cx={at.x} cy={at.y} r={r} />}
+      {mark === "near" && <>
+        <path d={`M${at.x + r} ${at.y - r * 2.2}L${at.x + r * 2} ${at.y - r * 0.6}L${at.x} ${at.y - r * 0.6}Z`} />
+        <path d={`M${at.x + r} ${at.y - r * 1.75}V${at.y - r * 1.15}`} className="zone-bang" />
+      </>}
+    </g>
+  );
 }
 
 /** A five-pointed star around `at`: the super-smooth node marker. */

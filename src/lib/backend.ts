@@ -271,6 +271,8 @@ export interface LayerView {
   hints: Hint[];
   /** The automatic stem hints the master's stems produce for this layer. */
   autoHints: Hint[];
+  /** The master's alignment zones (bottom zones have a negative size). */
+  zones?: Zone[];
   /** Metrics keys such as "=n" (left/right sidebearing, width). */
   metricsKeys: { left?: string; right?: string; width?: string };
   /** This glyph's smart axes, if it is a smart glyph. */
