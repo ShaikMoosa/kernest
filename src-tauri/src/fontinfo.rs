@@ -495,6 +495,18 @@ pub fn remove_master(state: State<AppState>, id: String) -> CmdResult<FontInfoVi
     edit(&state, |f| structure::remove_master(f, &id))
 }
 
+/// Reads name table entries written one per line in Glyphs' syntax
+/// (`nameID; text`, `nameID platformID; text` or `nameID platformID encID langID; text`).
+/// Blank lines are skipped; the first bad line is the error.
+#[tauri::command]
+pub fn parse_name_records(text: String) -> CmdResult<Vec<kernest_core::NameRecord>> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(kernest_core::NameRecord::parse)
+        .collect()
+}
+
 #[tauri::command]
 pub fn set_instances(state: State<AppState>, instances: Vec<Instance>) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_instances(f, instances))

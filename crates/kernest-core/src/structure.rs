@@ -695,11 +695,55 @@ pub fn set_instances(font: &Font, instances: Vec<Instance>) -> R<Font> {
             });
         }
         i.location = check_location(font, &i.location)?;
+        check_names(&mut i.names, &i.name)?;
         out.push(i);
     }
     let mut f = font.clone();
     f.instances = out;
     Ok(f)
+}
+
+/// Trims an instance's naming overrides (empty means unset) and checks them: the
+/// PostScript name is printable ASCII without spaces, at most 63 characters, and the
+/// file name has none of the characters Windows forbids.
+fn check_names(n: &mut crate::NameOverrides, instance: &str) -> R<()> {
+    for v in [
+        &mut n.postscript_font_name,
+        &mut n.full_name,
+        &mut n.compatible_full_name,
+        &mut n.style_map_family_name,
+        &mut n.file_name,
+    ] {
+        *v = v
+            .take()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+    }
+    if let Some(ps) = &n.postscript_font_name {
+        if ps.len() > 63 || !ps.chars().all(|c| c.is_ascii_graphic()) {
+            return Err(format!(
+                "{instance}: PostScript name \"{ps}\" must be at most 63 ASCII letters, digits or punctuation, with no spaces."
+            ));
+        }
+    }
+    if let Some(f) = &n.file_name {
+        if f.chars()
+            .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+        {
+            return Err(format!(
+                "{instance}: file name \"{f}\" can't contain < > : \" / \\ | ? or *."
+            ));
+        }
+    }
+    for r in &n.records {
+        if matches!(r.name_id, 1 | 2 | 3 | 5 | 6) || r.value.trim().is_empty() {
+            return Err(format!(
+                "{instance}: name table entry \"{}\" isn't allowed.",
+                r.to_glyphs()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Replaces the family's variable fonts. Empty means one variable font at full range.
@@ -727,6 +771,17 @@ pub fn set_variable_fonts(font: &Font, list: Vec<VariableFontSetting>) -> R<Font
         }
         if !files.insert(s.file_name.clone()) {
             return Err(format!("File name \"{}\" is used twice.", s.file_name));
+        }
+        s.family_name = s
+            .family_name
+            .map(|f| f.trim().to_string())
+            .filter(|f| !f.is_empty());
+        if let Some(f) = &s.family_name {
+            if f.chars().count() > 63 {
+                return Err(format!(
+                    "Family name \"{f}\" is too long; use at most 63 characters."
+                ));
+            }
         }
         let mut tags = HashSet::new();
         for sub in &s.axes {
@@ -967,6 +1022,8 @@ mod tests {
         use crate::model::{VariableAxisSubset, VariableFontSetting};
         let f = set_axes(&sample_font(), vec![wght()]).unwrap();
         let vf = |name: &str, file: &str| VariableFontSetting {
+            family_name: None,
+            name_records: Vec::new(),
             name: name.into(),
             file_name: file.into(),
             axes: vec![VariableAxisSubset {
@@ -1084,6 +1141,7 @@ mod tests {
     fn instances_and_info() {
         let f = set_axes(&sample_font(), vec![wght()]).unwrap();
         let i = |n: &str, v: f64| Instance {
+            names: Default::default(),
             name: n.into(),
             location: BTreeMap::from([("wght".into(), v)]),
             export: true,

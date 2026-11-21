@@ -1,5 +1,5 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { backend, type Axis, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type VariableFontSetting, type VerticalMetrics, type VirtualMaster } from "../lib/backend";
+import { backend, errorMessage, nameRecordText, type Axis, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type NameOverrides, type NameRecord, type VariableFontSetting, type VerticalMetrics, type VirtualMaster } from "../lib/backend";
 import { designBounds, designToUser, hasMap, userToDesign } from "../lib/axisMap";
 import { hasLabels, statStyleName } from "../lib/statName";
 import { pickMasterSource } from "../lib/desktop";
@@ -88,6 +88,58 @@ function SwapFields({ rename, remove, onChange }: { rename?: [string, string][];
           onCommit={(v) => onChange(rename ?? [], v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean))} />
       </label>
     </>
+  );
+}
+
+/** Name table entries, one per line in Glyphs' syntax ("0; © 2026 Me"); read on blur. */
+function NameRecordsField({ records, label, onChange }: { records: NameRecord[] | undefined; label: string; onChange: (records: NameRecord[]) => void }) {
+  const shown = (records ?? []).map(nameRecordText).join("\n");
+  const [text, setText] = useState(shown);
+  useEffect(() => setText(shown), [shown]);
+  const report = useContext(FieldError);
+  return (
+    <label className="info-field fi-name-records" title={t("One entry per line: name ID; text. Add the platform (1 Mac, 3 Windows), or platform, encoding and language IDs, before the semicolon. IDs 1, 2, 3, 5 and 6 come from the names above.")}>
+      <span className="k-caption muted">{t("Name table entries")}</span>
+      <textarea className="k-code" rows={2} aria-label={label} value={text} placeholder={t("0; © 2026 Me")} spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={async () => {
+          if (text === shown) return;
+          try { onChange(await backend.parseNameRecords(text)); } catch (e) { report(errorMessage(e)); setText(shown); }
+        }} />
+    </label>
+  );
+}
+
+/** An instance's naming overrides (Glyphs naming parameters), folded away by default. */
+function NamingFields({ names, instance, onChange }: { names: NameOverrides | undefined; instance: string; onChange: (names: NameOverrides | undefined) => void }) {
+  const n = names ?? {};
+  const set = (p: Partial<NameOverrides>) => {
+    const next: NameOverrides = { ...n, ...p };
+    for (const k of Object.keys(next) as (keyof NameOverrides)[]) {
+      const v = next[k];
+      if (v === undefined || v === "" || (Array.isArray(v) && v.length === 0)) delete next[k];
+    }
+    onChange(Object.keys(next).length ? next : undefined);
+  };
+  const text = (key: "postscriptFontName" | "fullName" | "compatibleFullName" | "styleMapFamilyName" | "fileName", label: string, title: string, width = 180) => (
+    <label className="info-field" title={t(title)}><span className="k-caption muted">{t(label)}</span>
+      <Field label={t("{field} for {name}", { field: t(label), name: instance })} value={n[key] ?? ""} width={width} mono={false} numeric={false} placeholder={t("Automatic")}
+        onCommit={(v) => set({ [key]: v.trim() || undefined })} />
+    </label>
+  );
+  const count = Object.keys(n).length;
+  return (
+    <details className="fi-names">
+      <summary className="k-caption">{count > 0 ? t("Naming ({n} set)", { n: count }) : t("Naming")}</summary>
+      <div className="fi-row">
+        {text("postscriptFontName", "PostScript name", "nameID 6 and the CFF font name, e.g. MyFont-BoldItalic. ASCII, no spaces, at most 63 characters.")}
+        {text("fullName", "Full name", "nameID 4, the complete name apps show, e.g. My Font Bold Italic.")}
+        {text("compatibleFullName", "Compatible full name", "nameID 18, the full name older Mac apps show.")}
+        {text("styleMapFamilyName", "Style map family", "nameID 1: the family this instance's Regular, Italic, Bold and Bold Italic share for style linking.")}
+        {text("fileName", "File name", "The exported file's name without extension, e.g. MyFont-Bold. Characters Windows forbids become _.", 160)}
+        <NameRecordsField records={n.records} label={t("Name table entries for {name}", { name: instance })} onChange={(records) => set({ records })} />
+      </div>
+    </details>
   );
 }
 
@@ -771,6 +823,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
               <span className="spacer" />
               <SwapFields rename={it.renameGlyphs} remove={it.removeGlyphs} onChange={(renameGlyphs, removeGlyphs) => patch({ renameGlyphs, removeGlyphs })} />
               <button className="icon-btn" aria-label={t("Remove {name}", { name: it.name })} title={t("Remove instance")} onClick={() => setInstances(curInst().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
+              <NamingFields names={it.names} instance={it.name} onChange={(names) => patch({ names })} />
             </div>
             );
           })}
@@ -815,6 +868,14 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                 <label className="info-field" title={t("The file name without extension, e.g. MyFont-Light.")}><span className="k-caption muted">{t("File name")}</span>
                   <Field label={t("File name")} value={vf.fileName} width={200} mono={false} numeric={false} onCommit={(v) => patch({ fileName: v })} />
                 </label>
+                <label className="info-field" title={t("A family name of its own for this variable font, so it can be installed next to the static fonts. Empty uses the font's family name.")}><span className="k-caption muted">{t("Family name")}</span>
+                  <Field label={t("Variable font family name")} value={vf.familyName ?? ""} width={180} mono={false} numeric={false} placeholder={info.familyName} onCommit={(v) => {
+                    const f = v.trim();
+                    if ([...f].length > 63) { onError(t("Family name \"{name}\" is too long; use at most 63 characters.", { name: f })); return false; }
+                    patch({ familyName: f === "" || f === info.familyName ? undefined : f });
+                  }} />
+                </label>
+                <NameRecordsField records={vf.nameRecords} label={t("Name table entries for {name}", { name: vf.name })} onChange={(nameRecords) => patch({ nameRecords: nameRecords.length ? nameRecords : undefined })} />
                 <span className="spacer" />
                 <button className="icon-btn" aria-label={t("Remove {name}", { name: vf.name })} title={t("Remove variable font")} onClick={() => setVariableFonts(curVf().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
               </div>

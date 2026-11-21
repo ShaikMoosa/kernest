@@ -478,10 +478,47 @@ fn variable_subset(
 
 /// The file stem of a static font: "<Family>-<Style>", using the instance's own family.
 fn static_stem(font: &Font, style: &str, inst: Option<&Instance>) -> String {
+    if let Some(f) = inst
+        .and_then(|i| i.names.file_name.as_deref())
+        .and_then(safe_file_name)
+    {
+        return f;
+    }
     let family = inst.map_or(font.info.family_name.as_str(), |i| {
         i.family(&font.info.family_name)
     });
     format!("{}-{}", file_stem(family), file_stem(style))
+}
+
+/// A file name (without extension) Windows accepts: characters it forbids become
+/// `_`, trailing dots and spaces go, and reserved device names get a `_` in front.
+/// `None` when nothing is left.
+pub fn safe_file_name(s: &str) -> Option<String> {
+    let cleaned: String = s
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim_end_matches(['.', ' ']).to_string();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let base = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((base.starts_with("COM") || base.starts_with("LPT"))
+            && base.len() == 4
+            && base.as_bytes()[3].is_ascii_digit());
+    Some(if reserved {
+        format!("_{cleaned}")
+    } else {
+        cleaned
+    })
 }
 
 /// Checks that no two fonts of an export would be written to the same file (names
@@ -806,10 +843,28 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                 std::fs::create_dir_all(&dir)
                     .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
                 let reduced = match variable_subset(font, vf) {
-                    Ok((r, warnings)) => {
+                    Ok((mut r, warnings)) => {
                         report
                             .warnings
                             .extend(warnings.into_iter().map(|w| format!("{}: {w}", vf.name)));
+                        // The variable font's own family name and name table entries.
+                        if let Some(f) = vf
+                            .family_name
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|f| !f.is_empty())
+                        {
+                            r.info.family_name = f.to_string();
+                        }
+                        r.info
+                            .custom_parameters
+                            .extend(vf.name_records.iter().map(|n| {
+                                kernest_core::CustomParameter {
+                                    name: "Name Table Entry".into(),
+                                    value: n.to_glyphs(),
+                                    disabled: false,
+                                }
+                            }));
                         r
                     }
                     Err(e) => {
@@ -1564,6 +1619,8 @@ pub(crate) mod tests {
 
     fn vf_setting(name: &str, disabled: &[&str]) -> kernest_core::VariableFontSetting {
         kernest_core::VariableFontSetting {
+            family_name: None,
+            name_records: Vec::new(),
             name: name.into(),
             file_name: format!("Test-{name}-VF"),
             axes: Vec::new(),
@@ -1707,6 +1764,7 @@ pub(crate) mod tests {
         f.instances = [400.0, 700.0]
             .into_iter()
             .map(|weight| Instance {
+                names: Default::default(),
                 name: if weight == 400.0 { "Regular" } else { "Bold" }.into(),
                 location: BTreeMap::from([("wght".into(), weight)]),
                 export: false,
@@ -1972,6 +2030,7 @@ pub(crate) mod tests {
     fn variable_and_interpolated_instance() {
         let mut f = two_masters();
         f.instances.push(Instance {
+            names: Default::default(),
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
             export: true,
@@ -2092,6 +2151,8 @@ pub(crate) mod tests {
             &f,
             vec![
                 VariableFontSetting {
+                    family_name: None,
+                    name_records: Vec::new(),
                     name: "Light".into(),
                     file_name: "Sample-Light".into(),
                     axes: vec![VariableAxisSubset {
@@ -2105,6 +2166,8 @@ pub(crate) mod tests {
                     disabled_masters: Vec::new(),
                 },
                 VariableFontSetting {
+                    family_name: None,
+                    name_records: Vec::new(),
                     name: "Bold".into(),
                     file_name: "Sample-Bold".into(),
                     axes: vec![VariableAxisSubset {
@@ -2194,6 +2257,7 @@ pub(crate) mod tests {
         // An instance at the brace location picks up the brace layer's extra width.
         let mut f2 = f.clone();
         f2.instances.push(Instance {
+            names: Default::default(),
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
             export: true,
@@ -2396,6 +2460,7 @@ pub(crate) mod tests {
         // With a weight axis: the location.
         let mut f = two_masters();
         f.instances.push(Instance {
+            names: Default::default(),
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
             export: true,
@@ -2409,6 +2474,7 @@ pub(crate) mod tests {
             localized_family_names: Default::default(),
         });
         f.instances.push(Instance {
+            names: Default::default(),
             name: "Bold".into(),
             location: BTreeMap::from([("wght".into(), 700.0)]),
             export: true,
@@ -2467,6 +2533,7 @@ pub(crate) mod tests {
 
     fn instance(name: &str, wght: f64, family: Option<&str>) -> Instance {
         Instance {
+            names: Default::default(),
             name: name.into(),
             location: BTreeMap::from([("wght".into(), wght)]),
             export: true,
@@ -2585,6 +2652,147 @@ pub(crate) mod tests {
         out
     }
 
+    /// A name record's text by name ID and platform (Windows: 3, Mac: 1).
+    fn name_at(bytes: &[u8], id: u16, platform: u16) -> Option<String> {
+        let f = FontRef::new(bytes).unwrap();
+        let name = f.name().unwrap();
+        name.name_record()
+            .iter()
+            .find(|r| {
+                u16::from_be_bytes(r.name_id().to_be_bytes()) == id && r.platform_id() == platform
+            })
+            .and_then(|r| r.string(name.string_data()).ok().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn instance_naming_parameters_reach_names_and_file_names() {
+        let mut f = two_masters();
+        let inst = |name: &str, wght: f64| Instance {
+            names: Default::default(),
+            name: name.into(),
+            location: BTreeMap::from([("wght".into(), wght)]),
+            export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: BTreeMap::new(),
+            disabled_masters: Vec::new(),
+        };
+        let mut bold = inst("Bold", 700.0);
+        bold.names = kernest_core::NameOverrides {
+            postscript_font_name: Some("MyPS-Bold".into()),
+            full_name: Some("My Full Bold".into()),
+            compatible_full_name: Some("Compat Bold".into()),
+            style_map_family_name: Some("Style Map".into()),
+            file_name: Some("My:File?".into()),
+            records: vec![
+                kernest_core::NameRecord::parse("0; © 2026 Me").unwrap(),
+                kernest_core::NameRecord::parse("9 1; Mac Designer").unwrap(),
+            ],
+        };
+        f.instances = vec![inst("Regular", 400.0), bold];
+        // A font-wide entry; the instance's nameID 0 wins over it.
+        f.info
+            .custom_parameters
+            .push(kernest_core::CustomParameter {
+                name: "Name Table Entry".into(),
+                value: "0; Font-wide copyright".into(),
+                disabled: false,
+            });
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(false, true, out.path());
+        opts.otf = true;
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let file = |name: &str| out.path().join(name);
+        // fileName, with the characters Windows forbids replaced.
+        for ext in ["ttf", "otf"] {
+            let bytes = std::fs::read(file(&format!("My_File_.{ext}"))).unwrap_or_else(|e| {
+                panic!(
+                    "{ext}: {e}; files: {:?}",
+                    r.files.iter().map(|f| &f.path).collect::<Vec<_>>()
+                )
+            });
+            assert_eq!(name_at(&bytes, 0, 3).as_deref(), Some("© 2026 Me"), "{ext}");
+            assert_eq!(name_at(&bytes, 1, 3).as_deref(), Some("Style Map"), "{ext}");
+            assert_eq!(
+                name_at(&bytes, 4, 3).as_deref(),
+                Some("My Full Bold"),
+                "{ext}"
+            );
+            assert_eq!(name_at(&bytes, 6, 3).as_deref(), Some("MyPS-Bold"), "{ext}");
+            assert_eq!(
+                name_at(&bytes, 18, 3).as_deref(),
+                Some("Compat Bold"),
+                "{ext}"
+            );
+            assert_eq!(
+                name_at(&bytes, 9, 1).as_deref(),
+                Some("Mac Designer"),
+                "{ext}"
+            );
+        }
+        // The OTF's CFF table carries the same PostScript name.
+        let otf = std::fs::read(file("My_File_.otf")).unwrap();
+        let cff = FontRef::new(&otf).unwrap().cff().unwrap();
+        assert_eq!(
+            cff.name(0)
+                .map(|n| String::from_utf8_lossy(n).to_string())
+                .as_deref(),
+            Some("MyPS-Bold")
+        );
+        // The other instance keeps the derived names and the font-wide entry.
+        let regular = r
+            .files
+            .iter()
+            .find(|x| x.path.ends_with("-Regular.ttf"))
+            .map(|x| std::fs::read(&x.path).unwrap())
+            .expect("a Regular TTF");
+        assert_eq!(
+            name_at(&regular, 0, 3).as_deref(),
+            Some("Font-wide copyright")
+        );
+        assert_ne!(name_at(&regular, 6, 3).as_deref(), Some("MyPS-Bold"));
+    }
+
+    #[test]
+    fn variable_font_family_name_and_entries() {
+        let mut f = two_masters();
+        f.variable_fonts = vec![kernest_core::VariableFontSetting {
+            name: "Variable".into(),
+            file_name: "MyVF".into(),
+            family_name: Some("Test Variable".into()),
+            name_records: vec![kernest_core::NameRecord::parse("0; VF copyright").unwrap()],
+            axes: Vec::new(),
+            glyphs: Vec::new(),
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
+        }];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(out.path().join("MyVF.ttf")).unwrap();
+        assert_eq!(name_at(&bytes, 1, 3).as_deref(), Some("Test Variable"));
+        assert_eq!(name_at(&bytes, 0, 3).as_deref(), Some("VF copyright"));
+        assert!(name_at(&bytes, 16, 3).is_none_or(|n| n == "Test Variable"));
+    }
+
+    #[test]
+    fn safe_file_names() {
+        assert_eq!(safe_file_name("My:Font?").as_deref(), Some("My_Font_"));
+        assert_eq!(
+            safe_file_name("  Font Bold. ").as_deref(),
+            Some("Font Bold")
+        );
+        assert_eq!(safe_file_name("con").as_deref(), Some("_con"));
+        assert_eq!(safe_file_name("COM1.x").as_deref(), Some("_COM1.x"));
+        assert_eq!(safe_file_name(" ... "), None);
+    }
+
     #[test]
     fn naming_fields_reach_the_name_table() {
         let mut f = sample_font();
@@ -2625,6 +2833,7 @@ pub(crate) mod tests {
     fn instance_class_overrides_and_style_map() {
         let mut f = two_masters();
         f.instances.push(Instance {
+            names: Default::default(),
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
             export: true,
@@ -2638,6 +2847,7 @@ pub(crate) mod tests {
             localized_family_names: Default::default(),
         });
         f.instances.push(Instance {
+            names: Default::default(),
             name: "Bold".into(),
             location: BTreeMap::from([("wght".into(), 700.0)]),
             export: true,

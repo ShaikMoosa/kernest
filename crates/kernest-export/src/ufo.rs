@@ -305,6 +305,34 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
         });
     }
 
+    // Naming overrides (Glyphs naming parameters) and name table entries.
+    if let Some(n) = inst.map(|i| &i.names) {
+        if let Some(v) = &n.postscript_font_name {
+            info.postscript_font_name = Some(v.clone());
+        }
+        if let Some(v) = &n.compatible_full_name {
+            info.open_type_name_compatible_full_name = Some(v.clone());
+        }
+        if let Some(v) = &n.style_map_family_name {
+            info.style_map_family_name = Some(v.clone());
+        }
+    }
+    let records = name_records(font, inst);
+    if !records.is_empty() {
+        info.open_type_name_records = Some(
+            records
+                .into_iter()
+                .map(|r| norad::fontinfo::NameRecord {
+                    name_id: u32::from(r.name_id),
+                    platform_id: u32::from(r.platform_id),
+                    encoding_id: u32::from(r.encoding_id),
+                    language_id: u32::from(r.language_id),
+                    string: r.value,
+                })
+                .collect(),
+        );
+    }
+
     // PostScript hinting: zones become blue values and stems become stem snaps. The
     // master at this location supplies them; an interpolated instance uses the default
     // master's (UFO sources carry one set of hinting values).
@@ -797,4 +825,42 @@ pub fn designspace(font: &Font, sources: &[DsSource], rules: &[DsRule]) -> Strin
     }
     x.push_str("</designspace>\n");
     x
+}
+
+/// The name records an export writes by hand: the font's "Name Table Entry"
+/// parameters, then the instance's (which replace a font record with the same ids),
+/// then the instance's full name as nameID 4.
+pub(crate) fn name_records(
+    font: &Font,
+    inst: Option<&kernest_core::Instance>,
+) -> Vec<kernest_core::NameRecord> {
+    let mut out: Vec<kernest_core::NameRecord> = font
+        .info
+        .custom_parameters
+        .iter()
+        .filter(|p| !p.disabled && p.name == "Name Table Entry")
+        .filter_map(|p| kernest_core::NameRecord::parse(&p.value).ok())
+        .collect();
+    let mut put = |r: kernest_core::NameRecord| {
+        out.retain(|o| {
+            (o.name_id, o.platform_id, o.encoding_id, o.language_id)
+                != (r.name_id, r.platform_id, r.encoding_id, r.language_id)
+        });
+        out.push(r);
+    };
+    if let Some(i) = inst {
+        for r in &i.names.records {
+            put(r.clone());
+        }
+        if let Some(full) = &i.names.full_name {
+            put(kernest_core::NameRecord {
+                name_id: 4,
+                platform_id: 3,
+                encoding_id: 1,
+                language_id: 0x409,
+                value: full.clone(),
+            });
+        }
+    }
+    out
 }

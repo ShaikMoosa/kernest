@@ -570,6 +570,41 @@ export interface Instance {
   localizedFamilyNames?: Record<string, string>;
   /** Masters (by name) this instance is interpolated without ("Disable Masters"). */
   disabledMasters?: string[];
+  /** Naming overrides (Glyphs naming parameters); omitted when none are set. */
+  names?: NameOverrides;
+}
+
+/** An instance's naming overrides; unset fields use the names export derives. */
+export interface NameOverrides {
+  /** nameID 6 and the CFF FontName. */
+  postscriptFontName?: string;
+  /** nameID 4, the full font name. */
+  fullName?: string;
+  /** nameID 18, the Mac compatible full name. */
+  compatibleFullName?: string;
+  /** nameID 1, the family name for style linking. */
+  styleMapFamilyName?: string;
+  /** Output file name without extension. */
+  fileName?: string;
+  /** Name records set by hand ("Name Table Entry"). */
+  records?: NameRecord[];
+}
+
+/** One name table record. */
+export interface NameRecord {
+  nameId: number;
+  platformId: number;
+  encodingId: number;
+  languageId: number;
+  value: string;
+}
+
+/** A record in Glyphs' "Name Table Entry" syntax, as short as its ids allow. */
+export function nameRecordText(r: NameRecord): string {
+  const ids = r.platformId === 3 && r.encodingId === 1 && r.languageId === 0x409 ? `${r.nameId}`
+    : r.platformId === 1 && r.encodingId === 0 && r.languageId === 0 ? `${r.nameId} 1`
+    : `${r.nameId} ${r.platformId} ${r.encodingId} ${r.languageId}`;
+  return `${ids}; ${r.value}`;
 }
 
 /** A virtual master: a named location only glyphs with intermediate layers there use. */
@@ -607,6 +642,10 @@ export interface VariableFontSetting {
   removeGlyphs?: string[];
   /** Masters (by name) left out ("Disable Masters"); the axes shrink to the rest. */
   disabledMasters?: string[];
+  /** The variable font's own family name; unset uses the font's. */
+  familyName?: string;
+  /** Name records set by hand for this variable font. */
+  nameRecords?: NameRecord[];
 }
 
 export interface VariableAxisSubset {
@@ -1038,6 +1077,8 @@ export interface Backend {
   updateMaster(id: string, name: string, location: Location, metrics: Metrics): Promise<FontInfo>;
   removeMaster(id: string): Promise<FontInfo>;
   setInstances(instances: Instance[]): Promise<FontInfo>;
+  /** Reads name table entries, one per line in Glyphs' syntax ("0; © 2026 Me"). */
+  parseNameRecords(text: string): Promise<NameRecord[]>;
   /** Replaces the list of extra variable fonts built from this family. */
   setVariableFonts(variableFonts: VariableFontSetting[]): Promise<FontInfo>;
   setExportPresets(presets: ExportPreset[]): Promise<FontInfo>;
@@ -1537,6 +1578,7 @@ const tauriBackend: Backend = {
   updateMaster: (id, name, location, metrics) => invoke("update_master", { id, name, location, metrics }),
   removeMaster: (id) => invoke("remove_master", { id }),
   setInstances: (instances) => invoke("set_instances", { instances }),
+  parseNameRecords: (text) => invoke("parse_name_records", { text }),
   setVariableFonts: (variableFonts) => invoke("set_variable_fonts", { variableFonts }),
   setExportPresets: (presets) => invoke("set_export_presets", { presets }),
   exportPreset: (name, outDir) => invoke("export_preset", { name, outDir }),
@@ -2187,6 +2229,9 @@ const mockBackend: Backend = {
     const d = need();
     if (d.masters.length === 1) throw "A font needs at least one master.";
     return editMeta(d, (m) => { m.masters = m.masters.filter((k) => k.id !== id); });
+  },
+  async parseNameRecords() {
+    throw "Name table entries need the desktop app (npm run tauri dev).";
   },
   async setInstances(instances) {
     const d = need();

@@ -50,7 +50,7 @@ use crate::model::{
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 17;
+pub const FORMAT_VERSION: u32 = 18;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -289,11 +289,18 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
         .iter()
         .any(|v| !v.disabled_masters.is_empty());
     let has_v17 = font.uses_vertical_metrics() || font.glyphs.iter().any(|g| g.direction.is_some());
+    let has_v18 = font.instances.iter().any(|i| !i.names.is_empty())
+        || font
+            .variable_fonts
+            .iter()
+            .any(|v| v.family_name.is_some() || !v.name_records.is_empty());
     let has_vertical =
         font.info.use_typo_metrics || font.masters.iter().any(|m| !m.vertical.is_empty());
     let file = FontFile {
-        format_version: if has_v17 {
+        format_version: if has_v18 {
             FORMAT_VERSION
+        } else if has_v17 {
+            17
         } else if has_v16 {
             16
         } else if has_v15 {
@@ -601,6 +608,7 @@ mod tests {
         let path = dir.path().join("x.kernest");
         let mut font = sample_font();
         font.instances.push(crate::model::Instance {
+            names: Default::default(),
             name: "Bold".into(),
             location: Default::default(),
             export: true,
@@ -644,6 +652,7 @@ mod tests {
         font.info.designer_url = Some("https://example.com".into());
         font.info.license = Some("SIL OFL 1.1".into());
         font.instances.push(Instance {
+            names: Default::default(),
             name: "Bold".into(),
             location: BTreeMap::new(),
             export: true,

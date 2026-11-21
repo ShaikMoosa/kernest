@@ -491,15 +491,23 @@ pub fn ttf_to_otf(
                 .unwrap_or(0)
         })
         .collect();
-    let full = format!("{family} {style}");
-    let cff = build_cff(
-        ufo,
-        &order,
-        &widths,
-        &ps_name(&format!("{family}-{style}")),
-        &full,
-        family,
-    )?;
+    // The instance's PostScript and full names when it sets them (they also become
+    // nameIDs 6 and 4), else family and style.
+    let info = &ufo.font_info;
+    let ps = info
+        .postscript_font_name
+        .clone()
+        .unwrap_or_else(|| ps_name(&format!("{family}-{style}")));
+    let full = info
+        .open_type_name_records
+        .as_ref()
+        .and_then(|rs| {
+            rs.iter()
+                .find(|r| r.name_id == 4 && r.platform_id == 3 && r.language_id == 0x409)
+                .map(|r| r.string.clone())
+        })
+        .unwrap_or_else(|| format!("{family} {style}"));
+    let cff = build_cff(ufo, &order, &widths, &ps, &full, family)?;
     // maxp version 0.5: just the glyph count.
     let mut maxp = vec![0x00, 0x00, 0x50, 0x00];
     maxp.extend(num_glyphs.to_be_bytes());

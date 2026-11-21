@@ -41,6 +41,7 @@ fn two_masters() -> Font {
         }],
     );
     f.instances.push(Instance {
+        names: Default::default(),
         name: "Medium".into(),
         location: BTreeMap::from([("wght".into(), 550.0)]),
         export: true,
@@ -174,6 +175,97 @@ fn glyphs_instance_family_names() {
     assert_eq!(again.instances, f.instances);
 }
 
+/// SMO-26: naming parameters on a Glyphs 3 instance (properties), a Glyphs 2-style
+/// instance (custom parameters) and a variable instance.
+#[test]
+fn glyphs_instance_naming_parameters() {
+    let inst = |name: &str, w: f64, extra: &str| {
+        format!("{{\naxesValues = (\n{w}\n);\n{extra}name = {name};\n}}")
+    };
+    let localized = |key: &str, v: &str| {
+        format!("{{\nkey = {key};\nvalues = (\n{{\nlanguage = dflt;\nvalue = \"{v}\";\n}}\n);\n}}")
+    };
+    let g3 = format!(
+        "customParameters = (\n{{\nname = fileName;\nvalue = \"Fam-Heavy\";\n}},\n{{\nname = \"Name Table Entry\";\nvalue = \"0; © 2026 Me\";\n}},\n{{\nname = \"Name Table Entry\";\nvalue = \"9 1; Mac Designer\";\n}},\n{{\nname = \"Name Table Entry\";\nvalue = \"6; not allowed\";\n}}\n);\nproperties = (\n{},\n{{\nkey = postscriptFontName;\nvalue = \"FamPS-Heavy\";\n}},\n{},\n{}\n);\n",
+        localized("compatibleFullNames", "Fam Compat Heavy"),
+        localized("postscriptFullNames", "Fam Full Heavy"),
+        localized("styleMapFamilyNames", "Fam Heavy"),
+    );
+    let g2 = "customParameters = (\n{\nname = postscriptFontName;\nvalue = \"FamPS-Light\";\n},\n{\nname = postscriptFullName;\nvalue = \"Fam Full Light\";\n},\n{\nname = compatibleFullName;\nvalue = \"Fam Compat Light\";\n},\n{\nname = styleMapFamilyName;\nvalue = \"Fam Light\";\n}\n);\n";
+    let variable = format!(
+        "{{\ncustomParameters = (\n{{\nname = fileName;\nvalue = \"FamVar\";\n}},\n{{\nname = \"Name Table Entry\";\nvalue = \"0; VF ©\";\n}}\n);\nname = Variable;\nproperties = (\n{}\n);\ntype = variable;\n}}",
+        localized("familyNames", "Fam Variable"),
+    );
+    let src = format!(
+        "{{\n.appVersion = \"3260\";\n.formatVersion = 3;\naxes = (\n{{\nname = Weight;\ntag = wght;\n}}\n);\nfamilyName = Fam;\nfontMaster = (\n{{\naxesValues = (\n400\n);\nid = m01;\nname = Regular;\n}},\n{{\naxesValues = (\n700\n);\nid = m02;\nname = Bold;\n}}\n);\nunitsPerEm = 1000;\nglyphs = (\n{{\nglyphname = A;\nlayers = (\n{{\nlayerId = m01;\nwidth = 500;\n}},\n{{\nlayerId = m02;\nwidth = 600;\n}}\n);\n}}\n);\ninstances = (\n{},\n{},\n{}\n);\n}}",
+        inst("Heavy", 700.0, &g3),
+        inst("Light", 400.0, g2),
+        variable,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Names.glyphs");
+    fs::write(&path, src).unwrap();
+    let imported = import(&path).unwrap();
+    let f = imported.font;
+    let heavy = &f.instances[0].names;
+    assert_eq!(heavy.postscript_font_name.as_deref(), Some("FamPS-Heavy"));
+    assert_eq!(heavy.full_name.as_deref(), Some("Fam Full Heavy"));
+    assert_eq!(
+        heavy.compatible_full_name.as_deref(),
+        Some("Fam Compat Heavy")
+    );
+    assert_eq!(heavy.style_map_family_name.as_deref(), Some("Fam Heavy"));
+    assert_eq!(heavy.file_name.as_deref(), Some("Fam-Heavy"));
+    let records: Vec<String> = heavy.records.iter().map(|r| r.to_glyphs()).collect();
+    assert_eq!(records, ["0; © 2026 Me", "9 1; Mac Designer"]);
+    // Name ID 6 can't be set by an entry; the import says so.
+    assert!(
+        imported
+            .warnings
+            .iter()
+            .any(|w| w.contains("Name Table Entry") && w.contains("Name ID 6")),
+        "{:?}",
+        imported.warnings
+    );
+    let light = &f.instances[1].names;
+    assert_eq!(light.postscript_font_name.as_deref(), Some("FamPS-Light"));
+    assert_eq!(light.full_name.as_deref(), Some("Fam Full Light"));
+    assert_eq!(
+        light.compatible_full_name.as_deref(),
+        Some("Fam Compat Light")
+    );
+    assert_eq!(light.style_map_family_name.as_deref(), Some("Fam Light"));
+    let vf = &f.variable_fonts[0];
+    assert_eq!(vf.file_name, "FamVar");
+    assert_eq!(vf.family_name.as_deref(), Some("Fam Variable"));
+    assert_eq!(vf.name_records[0].to_glyphs(), "0; VF ©");
+
+    // Saved as .glyphs and opened again, everything is kept.
+    let out = dir.path().join("Again.glyphs");
+    kernest_import::write_glyphs(&f, &out).unwrap();
+    let again = import(&out).unwrap().font;
+    assert_eq!(again.instances, f.instances);
+    assert_eq!(again.variable_fonts, f.variable_fonts);
+}
+
+/// Glyphs 2 names the variable font with font parameters.
+#[test]
+fn glyphs2_variable_font_parameters() {
+    let src = "{\n.appVersion = \"1342\";\nfamilyName = Fam;\ncustomParameters = (\n{\nname = \"Variable Font Family Name\";\nvalue = \"Fam VF\";\n},\n{\nname = \"Variable Font File Name\";\nvalue = \"FamVF-Roman\";\n}\n);\nfontMaster = (\n{\nid = m01;\nweightValue = 400;\n}\n);\nunitsPerEm = 1000;\nglyphs = (\n{\nglyphname = A;\nlayers = (\n{\nlayerId = m01;\nwidth = 500;\n}\n);\n}\n);\n}";
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("G2.glyphs");
+    fs::write(&path, src).unwrap();
+    let f = import(&path).unwrap().font;
+    assert_eq!(f.variable_fonts.len(), 1);
+    assert_eq!(f.variable_fonts[0].family_name.as_deref(), Some("Fam VF"));
+    assert_eq!(f.variable_fonts[0].file_name, "FamVF-Roman");
+    assert!(f
+        .info
+        .custom_parameters
+        .iter()
+        .all(|p| !p.name.starts_with("Variable Font")));
+}
+
 /// The audit's two-master test font (SMO-17): rectangles whose stems are 100 units
 /// wide in Regular and 200 in Bold.
 fn square_glyphs() -> String {
@@ -229,6 +321,8 @@ fn glyphs_disable_masters_round_trip() {
     let mut src = two_masters();
     src.instances[0].disabled_masters = vec!["Bold".into()];
     src.variable_fonts = vec![VariableFontSetting {
+        family_name: None,
+        name_records: Vec::new(),
         name: "Light only".into(),
         file_name: "Sample-Light-VF".into(),
         axes: Vec::new(),
@@ -1616,6 +1710,8 @@ fn designspace_variable_fonts_round_trip() {
     let mut src = two_masters();
     src.variable_fonts = vec![
         VariableFontSetting {
+            family_name: None,
+            name_records: Vec::new(),
             name: "Light".into(),
             file_name: "Sample-Light".into(),
             axes: vec![VariableAxisSubset {
@@ -1629,6 +1725,8 @@ fn designspace_variable_fonts_round_trip() {
             disabled_masters: Vec::new(),
         },
         VariableFontSetting {
+            family_name: None,
+            name_records: Vec::new(),
             name: "Bold".into(),
             file_name: "Sample-Bold".into(),
             axes: vec![VariableAxisSubset {
@@ -1957,6 +2055,8 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
     ];
     src.variable_fonts = vec![
         VariableFontSetting {
+            family_name: None,
+            name_records: Vec::new(),
             name: "Upright".into(),
             file_name: "Test-VF".into(),
             axes: vec![],
@@ -1966,6 +2066,8 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
             disabled_masters: Vec::new(),
         },
         VariableFontSetting {
+            family_name: None,
+            name_records: Vec::new(),
             name: "Text".into(),
             file_name: "TestText-VF".into(),
             axes: vec![],

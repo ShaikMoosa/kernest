@@ -334,6 +334,13 @@ pub struct VariableFontSetting {
     /// ranges shrink to the masters that remain.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_masters: Vec<String>,
+    /// The variable font's own family name ("Variable Font Family Name"); `None`
+    /// uses the font's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family_name: Option<String>,
+    /// Name records set by hand for this variable font ("Name Table Entry").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub name_records: Vec<NameRecord>,
 }
 
 /// The part of one axis a variable font covers, in user coordinates. A missing
@@ -1409,6 +1416,123 @@ pub struct Instance {
     /// Masters (by name) this instance is interpolated without ("Disable Masters").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_masters: Vec<String>,
+    /// Naming overrides: PostScript and full names, style-map family, file name and
+    /// name table entries (Glyphs naming parameters).
+    #[serde(default, skip_serializing_if = "NameOverrides::is_empty")]
+    pub names: NameOverrides,
+}
+
+/// An instance's naming overrides. Empty fields use the names export derives.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NameOverrides {
+    /// nameID 6 and the CFF FontName ("postscriptFontName").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub postscript_font_name: Option<String>,
+    /// nameID 4, the full font name ("postscriptFullName").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_name: Option<String>,
+    /// nameID 18, the Mac compatible full name ("compatibleFullName").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compatible_full_name: Option<String>,
+    /// nameID 1, the family name for style linking ("styleMapFamilyName").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_map_family_name: Option<String>,
+    /// Output file name without extension ("fileName").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    /// Name records set by hand ("Name Table Entry").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub records: Vec<NameRecord>,
+}
+
+impl NameOverrides {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// One name table record ("Name Table Entry"): `nameID; text`, optionally with the
+/// platform, encoding and language ids (Windows English Unicode by default).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NameRecord {
+    pub name_id: u16,
+    pub platform_id: u16,
+    pub encoding_id: u16,
+    pub language_id: u16,
+    pub value: String,
+}
+
+impl NameRecord {
+    /// Parses Glyphs' syntax: `nameID; text`, `nameID platformID; text` or
+    /// `nameID platformID encID langID; text`. Numbers may be decimal, octal (leading
+    /// 0) or hexadecimal (0x). Name IDs 1, 2, 3, 5 and 6 are set by export and can't be
+    /// overridden here.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        let (ids, value) = s.split_once(';').ok_or_else(|| {
+            format!(
+                "\"{}\" needs a semicolon between the name ID and the text, like \"0; © 2026 Me\".",
+                s.trim()
+            )
+        })?;
+        let value = value.trim().to_string();
+        if value.is_empty() {
+            return Err(format!("\"{}\" has no text after the semicolon.", s.trim()));
+        }
+        let num = |t: &str| -> Result<u16, String> {
+            let n = if let Some(h) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+                u32::from_str_radix(h, 16)
+            } else if t.len() > 1 && t.starts_with('0') {
+                u32::from_str_radix(&t[1..], 8)
+            } else {
+                t.parse::<u32>()
+            };
+            n.ok()
+                .and_then(|n| u16::try_from(n).ok())
+                .ok_or_else(|| format!("\"{t}\" isn't a number from 0 to 65535."))
+        };
+        let nums = ids
+            .split_whitespace()
+            .map(num)
+            .collect::<Result<Vec<u16>, String>>()?;
+        let (name_id, platform_id, encoding_id, language_id) = match nums[..] {
+            [id] => (id, 3, 1, 0x409),
+            [id, 1] => (id, 1, 0, 0),
+            [id, 3] => (id, 3, 1, 0x409),
+            [_, p] => return Err(format!("Platform {p} isn't supported; use 1 (Mac) or 3 (Windows).")),
+            [id, p, e, l] if p == 1 || p == 3 => (id, p, e, l),
+            [_, p, _, _] => return Err(format!("Platform {p} isn't supported; use 1 (Mac) or 3 (Windows).")),
+            _ => {
+                return Err(format!(
+                    "\"{}\" should start with a name ID, optionally followed by the platform, or the platform, encoding and language IDs.",
+                    ids.trim()
+                ))
+            }
+        };
+        if matches!(name_id, 1 | 2 | 3 | 5 | 6) {
+            return Err(format!(
+                "Name ID {name_id} is set by export; use the instance's names instead."
+            ));
+        }
+        Ok(Self {
+            name_id,
+            platform_id,
+            encoding_id,
+            language_id,
+            value,
+        })
+    }
+
+    /// Back to Glyphs' syntax, as short as the ids allow.
+    pub fn to_glyphs(&self) -> String {
+        let ids = match (self.platform_id, self.encoding_id, self.language_id) {
+            (3, 1, 0x409) => self.name_id.to_string(),
+            (1, 0, 0) => format!("{} 1", self.name_id),
+            (p, e, l) => format!("{} {p} {e} {l}", self.name_id),
+        };
+        format!("{ids}; {}", self.value)
+    }
 }
 
 impl Instance {
@@ -1437,4 +1561,39 @@ pub struct StyleLink {
     pub italic: bool,
     #[serde(default)]
     pub base: String,
+}
+
+#[cfg(test)]
+mod name_record_tests {
+    use super::NameRecord;
+
+    #[test]
+    fn parses_glyphs_name_table_entries() {
+        let r = NameRecord::parse("0; © 2026 Me").unwrap();
+        assert_eq!(
+            (r.name_id, r.platform_id, r.encoding_id, r.language_id),
+            (0, 3, 1, 0x409)
+        );
+        assert_eq!(r.value, "© 2026 Me");
+        let mac = NameRecord::parse("9 1; Mac").unwrap();
+        assert_eq!(
+            (mac.platform_id, mac.encoding_id, mac.language_id),
+            (1, 0, 0)
+        );
+        // Hexadecimal and octal ids.
+        let full = NameRecord::parse("0x10 3 1 0x407; Familie").unwrap();
+        assert_eq!((full.name_id, full.language_id), (16, 0x407));
+        assert_eq!(NameRecord::parse("010; x").unwrap().name_id, 8);
+        // Round trip, as short as the ids allow.
+        assert_eq!(r.to_glyphs(), "0; © 2026 Me");
+        assert_eq!(mac.to_glyphs(), "9 1; Mac");
+        assert_eq!(full.to_glyphs(), "16 3 1 1031; Familie");
+        assert_eq!(NameRecord::parse(&full.to_glyphs()).unwrap(), full);
+        // Mistakes.
+        assert!(NameRecord::parse("0 © 2026").is_err());
+        assert!(NameRecord::parse("6; MyFont-Bold").is_err());
+        assert!(NameRecord::parse("0 2; x").is_err());
+        assert!(NameRecord::parse("0;  ").is_err());
+        assert!(NameRecord::parse("70000; x").is_err());
+    }
 }

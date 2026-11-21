@@ -9,6 +9,16 @@
  * the dictionaries (npm run check:i18n lists what's missing).
  */
 export const ENGINE_MESSAGES = [
+  "\"{text}\" needs a semicolon between the name ID and the text, like \"0; © 2026 Me\".",
+  "\"{text}\" has no text after the semicolon.",
+  "\"{value}\" isn't a number from 0 to 65535.",
+  "Platform {p} isn't supported; use 1 (Mac) or 3 (Windows).",
+  "\"{ids}\" should start with a name ID, optionally followed by the platform, or the platform, encoding and language IDs.",
+  "Name ID {id} is set by export; use the instance's names instead.",
+  "{instance}: PostScript name \"{ps}\" must be at most 63 ASCII letters, digits or punctuation, with no spaces.",
+  "{instance}: file name \"{f}\" can't contain < > : \" / \\ | ? or *.",
+  "{instance}: name table entry \"{entry}\" isn't allowed.",
+  "{name}: Name Table Entry: {e}",
   "Unknown glyph set \"{id}\".",
   "Use descender ≤ 0 < x-height ≤ cap height ≤ ascender.",
   "No axis with tag \"{tag}\".",
