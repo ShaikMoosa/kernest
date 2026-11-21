@@ -151,6 +151,9 @@ button { cursor: default; }
 .list-item.is-selected { background: var(--k-bg-selected); color: var(--k-text-accent); font-weight: 600; }
 .list-meta { margin-inline-start: auto; color: var(--k-text-muted); font-size: 11px; font-weight: 400; }
 .glyph-info { border-top: 1px solid var(--k-border-default); padding-top: var(--k-space-12); display: flex; flex-direction: column; gap: var(--k-space-8); }
+.vertical-metrics { margin: 0; padding: 0; border: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--k-space-4); }
+.vertical-metrics legend { padding: 0; margin-bottom: var(--k-space-4); }
+.vertical-metrics .link-btn { align-self: flex-start; }
 .fontview.is-list { grid-template-columns: 260px minmax(0, 1fr) 300px; }
 .glyph-props {
   grid-row: 1; display: flex; flex-direction: column; gap: var(--k-space-12); padding: var(--k-space-16); min-height: 0; overflow: auto;

@@ -731,6 +731,9 @@ fn read_extras(
         if d.get("locked").and_then(num).is_some_and(|v| v != 0.0) {
             g.locked = true;
         }
+        if let Some(dir) = d.get("direction").and_then(|v| v.as_str()) {
+            g.direction = kernest_core::WritingDirection::parse(dir);
+        }
         for ld in d.get("layers").and_then(|l| l.as_array()).unwrap_or(&[]) {
             let lid = ld.get("layerId").and_then(|i| i.as_str()).unwrap_or("");
             // sbix ("iColor 128") and SVG layers carry a picture, not an outline.
@@ -1580,6 +1583,9 @@ fn vertical_metrics(
         win_descent: i(m.win_descent, f.win_descent).map(f64::abs),
         underline_thickness: o(m.underline_thickness, f.underline_thickness),
         underline_position: o(m.underline_position, f.underline_position),
+        vhea_ascender: i(m.vhea_ascender, f.vhea_ascender),
+        vhea_descender: i(m.vhea_descender, f.vhea_descender),
+        vhea_line_gap: i(m.vhea_line_gap, f.vhea_line_gap),
     }
 }
 
@@ -2160,6 +2166,8 @@ fn apply_metrics_keys(
 
 fn layer(id: &str, l: &glyphs_reader::Layer) -> Layer {
     let mut out = Layer::new(id, l.width.0);
+    out.vert_width = l.vert_width.map(|v| v.0);
+    out.vert_origin = l.vert_origin.map(|v| v.0);
     for s in &l.shapes {
         match s {
             GShape::Path(p) => {

@@ -16,6 +16,7 @@ mod hint;
 pub mod names;
 mod stat;
 pub mod ufo;
+mod vorg;
 pub mod woff2;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -739,16 +740,18 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                 }
             }
             if opts.otf {
-                match variable_otf(stat_font, &bytes).map(|o| {
-                    let o = colorize(report, &format!("{label} (OTF)"), &bytes, o, true, None);
-                    match stat::add_stat(stat_font, &o) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            report.problems.push(format!("{label} (OTF, STAT): {e}"));
-                            o
+                match variable_otf(stat_font, &bytes)
+                    .and_then(|o| vorg::add(&o, &bytes))
+                    .map(|o| {
+                        let o = colorize(report, &format!("{label} (OTF)"), &bytes, o, true, None);
+                        match stat::add_stat(stat_font, &o) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                report.problems.push(format!("{label} (OTF, STAT): {e}"));
+                                o
+                            }
                         }
-                    }
-                }) {
+                    }) {
                     Ok(o) => emit(
                         report,
                         "variable",
@@ -911,16 +914,18 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                         )?;
                     }
                     if opts.otf {
-                        match cff::ttf_to_otf(&bytes, &ufo, inst_family, style).map(|o| {
-                            colorize(
-                                &mut report,
-                                &format!("{style} (OTF)"),
-                                &bytes,
-                                o,
-                                false,
-                                Some(location),
-                            )
-                        }) {
+                        match cff::ttf_to_otf(&bytes, &ufo, inst_family, style)
+                            .and_then(|o| vorg::add(&o, &bytes))
+                            .map(|o| {
+                                colorize(
+                                    &mut report,
+                                    &format!("{style} (OTF)"),
+                                    &bytes,
+                                    o,
+                                    false,
+                                    Some(location),
+                                )
+                            }) {
                             Ok(otf) => emit(
                                 &mut report,
                                 "static",
@@ -1616,6 +1621,60 @@ pub(crate) mod tests {
             "{:?}",
             r.problems
         );
+    }
+
+    #[test]
+    fn vertical_metrics_reach_vhea_vmtx_and_vorg() {
+        let mut f = sample_font();
+        let upm = f64::from(f.info.units_per_em);
+        // No vertical data: no vertical tables.
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let plain = std::fs::read(&r.files[0].path).unwrap();
+        assert!(FontRef::new(&plain).unwrap().vhea().is_err());
+
+        let m = f.masters[0].clone();
+        let asc = m.vertical.typo_ascender.unwrap_or(m.metrics.ascender);
+        {
+            let h = f.glyph_mut("H").unwrap();
+            h.layers[0].vert_width = Some(1000.0);
+            h.layers[0].vert_origin = Some(-40.0);
+        }
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(false, true, out.path());
+        opts.otf = true;
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let read = |fmt: &str| {
+            std::fs::read(&r.files.iter().find(|x| x.format == fmt).unwrap().path).unwrap()
+        };
+        let ttf = read("ttf");
+        let font = FontRef::new(&ttf).unwrap();
+        let vhea = font.vhea().unwrap();
+        assert_eq!(f64::from(vhea.ascender().to_i16()), (upm / 2.0).round());
+        let gid = font.cmap().unwrap().map_codepoint('H').unwrap();
+        let vmtx = font.vmtx().unwrap();
+        assert_eq!(vmtx.advance(gid), Some(1000));
+        // Glyphs without their own value get the typo ascender − descender.
+        let gid_o = font.cmap().unwrap().map_codepoint('o').unwrap();
+        let desc = m.vertical.typo_descender.unwrap_or(m.metrics.descender);
+        assert_eq!(vmtx.advance(gid_o), Some((asc - desc).round() as u16));
+        // OTF: VORG has H's origin, 40 above the typo ascender, and the rest default.
+        let otf = read("otf");
+        let o = FontRef::new(&otf).unwrap();
+        let vorg = o
+            .table_data(write_fonts::types::Tag::new(b"VORG"))
+            .expect("VORG");
+        let v = vorg.as_bytes();
+        let default = i16::from_be_bytes([v[4], v[5]]);
+        assert_eq!(f64::from(default), asc.round());
+        let n = u16::from_be_bytes([v[6], v[7]]) as usize;
+        let h_gid = gid.to_u32() as u16;
+        let h_origin = (0..n)
+            .map(|i| &v[8 + 4 * i..12 + 4 * i])
+            .find(|r| u16::from_be_bytes([r[0], r[1]]) == h_gid)
+            .map(|r| i16::from_be_bytes([r[2], r[3]]));
+        assert_eq!(h_origin.map(f64::from), Some((asc + 40.0).round()));
     }
 
     #[test]

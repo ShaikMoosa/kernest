@@ -105,7 +105,7 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen, drag, dragging, dr
 }
 
 /** S03 · Font View — grid of glyphs with category sidebar and glyph info. */
-export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetUnicodes, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing, onAddNamed }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetUnicodes?: (glyph: string, text: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void>; onAddNamed?: (name: string) => void }) {
+export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetUnicodes, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing, onAddNamed, onSetDirection, onSetVertical }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetUnicodes?: (glyph: string, text: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void>; onAddNamed?: (name: string) => void; onSetDirection?: (glyph: string, direction: string) => Promise<void>; onSetVertical?: (glyph: string, which: "advance" | "tsb" | "bsb" | "reset", value: number | null) => Promise<void> }) {
   const [category, setCategory] = useState<string>("All");
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -400,6 +400,37 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
                 />
               </label>
             </div>
+          )}
+          {onSetDirection && (
+            <label className="field info-field">
+              <span className="k-caption muted">{t("Writing direction")}</span>
+              <select className="select" value={one.direction ?? ""} aria-label={t("Writing direction")} onChange={(e) => { onSetDirection(one.name, e.target.value).catch(() => {}); }}>
+                <option value="">{t("Automatic")}</option>
+                <option value="LTR">{t("Left to right")}</option>
+                <option value="RTL">{t("Right to left")}</option>
+                <option value="BIDI">{t("Both directions")}</option>
+              </select>
+            </label>
+          )}
+          {onSetVertical && one.vertical && (
+            <fieldset className="vertical-metrics" title={t("Spacing for vertical typesetting. Editing a value turns vertical metrics on for the font.")}>
+              <legend className="k-caption muted">{t("Vertical metrics")}</legend>
+              <div className="metric-row">
+                {([["tsb", "TSB", one.vertical.tsb], ["advance", "Height", one.vertical.advance], ["bsb", "BSB", one.vertical.bsb]] as const).map(([key, label, value]) => (
+                  <label key={key}>
+                    <span className="k-caption muted">{t(label)}</span>
+                    {value !== null ? (
+                      <input key={`${one.name}:${key}:${value}`} className="metric-input" type="number" defaultValue={Math.round(value)} aria-label={t(label)}
+                        onBlur={(e) => { const v = Number(e.currentTarget.value); if (e.currentTarget.value !== "" && Number.isFinite(v) && v !== Math.round(value)) onSetVertical(one.name, key, v).catch(() => {}); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { e.currentTarget.value = String(Math.round(value)); e.currentTarget.blur(); } }} />
+                    ) : <output className="metric">{fmt(value)}</output>}
+                  </label>
+                ))}
+              </div>
+              {one.vertical.own && (
+                <button type="button" className="link-btn k-caption" onClick={() => { onSetVertical(one.name, "reset", null).catch(() => {}); }}>{t("Use the default vertical metrics")}</button>
+              )}
+            </fieldset>
           )}
           {onSetProductionName && (
             <label className="field info-field">

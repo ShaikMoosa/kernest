@@ -309,7 +309,7 @@ fn layer_body(l: &Layer) -> String {
 
 fn layer_body_with(l: &Layer, attr: Option<&str>) -> String {
     format!(
-        "{}{}{}{}{}{}{}{}width = {};",
+        "{}{}{}{}{}{}{}{}{}width = {};",
         annotations(l),
         background_image(l),
         metrics_keys(l),
@@ -318,8 +318,21 @@ fn layer_body_with(l: &Layer, attr: Option<&str>) -> String {
         guides(&l.guides),
         shapes_list(&l.shapes, attr),
         stroke_data(l),
+        vertical(l),
         num(l.width)
     )
+}
+
+/// The layer's vertical origin and width (Glyphs' `vertOrigin`, `vertWidth`).
+fn vertical(l: &Layer) -> String {
+    let mut s = String::new();
+    if let Some(v) = l.vert_origin {
+        let _ = writeln!(s, "vertOrigin = {};", num(v));
+    }
+    if let Some(v) = l.vert_width {
+        let _ = writeln!(s, "vertWidth = {};", num(v));
+    }
+    s
 }
 
 /// A layer's annotations as Glyphs writes them.
@@ -709,6 +722,9 @@ fn glyph(font: &Font, g: &Glyph) -> String {
     }
     if let Some(p) = &g.production_name {
         let _ = writeln!(s, "productionName = {};", q(p));
+    }
+    if let Some(d) = g.direction {
+        let _ = writeln!(s, "direction = {};", d.as_str());
     }
     if g.locked {
         s.push_str("locked = 1;\n");
@@ -1153,6 +1169,9 @@ pub fn glyphs_source(font: &Font) -> String {
                 ("winDescent", v.win_descent),
                 ("underlineThickness", v.underline_thickness),
                 ("underlinePosition", v.underline_position),
+                ("vheaVertAscender", v.vhea_ascender),
+                ("vheaVertDescender", v.vhea_descender),
+                ("vheaVertLineGap", v.vhea_line_gap),
             ]
             .into_iter()
             .filter_map(|(k, val)| Some(format!("{{\nname = {k};\nvalue = {};\n}}", num(val?))))

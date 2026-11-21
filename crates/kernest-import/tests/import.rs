@@ -251,6 +251,72 @@ fn glyphs_disable_masters_round_trip() {
     );
 }
 
+/// The two-master font with vertical metrics: H's own advance and origin, a writing
+/// direction and vhea values on the default master.
+fn vertical_font() -> Font {
+    let mut f = two_masters();
+    f.masters[0].vertical.vhea_ascender = Some(500.0);
+    f.masters[0].vertical.vhea_descender = Some(-500.0);
+    f.masters[0].vertical.vhea_line_gap = Some(0.0);
+    let h = f.glyph_mut("H").unwrap();
+    for l in &mut h.layers {
+        l.vert_width = Some(1000.0);
+        l.vert_origin = Some(-40.0);
+    }
+    h.direction = Some(kernest_core::WritingDirection::Rtl);
+    f
+}
+
+#[test]
+fn glyphs_vertical_metrics_round_trip() {
+    let src = vertical_font();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Vertical.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    for key in [
+        "vertWidth = 1000;",
+        "vertOrigin = -40;",
+        "direction = RTL;",
+        "name = vheaVertAscender;",
+    ] {
+        assert!(text.contains(key), "{key}");
+    }
+    let f = import(&path).unwrap().font;
+    let h = f.glyph("H").unwrap();
+    assert_eq!(h.direction, Some(kernest_core::WritingDirection::Rtl));
+    assert!(h
+        .layers
+        .iter()
+        .filter(|l| l.location.is_none() && l.bracket.is_empty())
+        .all(|l| l.vert_width == Some(1000.0) && l.vert_origin == Some(-40.0)));
+    assert_eq!(f.masters[0].vertical.vhea_ascender, Some(500.0));
+    assert_eq!(f.masters[0].vertical.vhea_descender, Some(-500.0));
+    // Glyphs without vertical values keep none.
+    assert!(f
+        .glyph("A")
+        .unwrap()
+        .layers
+        .iter()
+        .all(|l| l.vert_width.is_none()));
+}
+
+#[test]
+fn ufo_vertical_metrics_round_trip() {
+    let src = vertical_font();
+    let dir = tempfile::tempdir().unwrap();
+    let ds = kernest_export::write_sources(&src, dir.path()).unwrap();
+    let f = import(&ds).unwrap().font;
+    let h = f.glyph("H").unwrap();
+    let l = h.layer(&f.masters[0].id).unwrap();
+    assert_eq!((l.vert_width, l.vert_origin), (Some(1000.0), Some(-40.0)));
+    assert_eq!(f.masters[0].vertical.vhea_ascender, Some(500.0));
+    // A UFO without vertical metrics gives no vertical values.
+    let plain = tempfile::tempdir().unwrap();
+    let ds = kernest_export::write_sources(&two_masters(), plain.path()).unwrap();
+    assert!(!import(&ds).unwrap().font.uses_vertical_metrics());
+}
+
 #[test]
 fn designspace_instance_family_name() {
     let mut src = two_masters();

@@ -53,6 +53,10 @@ export interface GlyphSummary {
   tags: string[];
   /** The name this glyph exports under when production names are used. */
   productionName?: string;
+  /** Writing direction set on the glyph; absent means automatic (from glyph data). */
+  direction?: "LTR" | "RTL" | "BIDI";
+  /** Vertical metrics in this master: advance, origin and sidebearings. */
+  vertical?: VerticalMetricsView;
   /** SVG path data in font units, y up. Empty when the glyph has no outlines. */
   svg: string;
   /** False when this glyph's masters can't be interpolated. */
@@ -63,6 +67,16 @@ export interface GlyphSummary {
   locked?: boolean;
   /** Colour layers in this master, bottom to top (colour glyphs only). */
   color?: ColorLayerView[];
+}
+
+/** A glyph's vertical metrics in one master, for vertical typesetting. */
+export interface VerticalMetricsView {
+  advance: number;
+  origin: number;
+  tsb: number | null;
+  bsb: number | null;
+  /** True when the layer has its own vertical values (not the defaults). */
+  own: boolean;
 }
 
 /** A colour stop on a gradient: position 0–1, palette index, opacity 0–1. */
@@ -1072,6 +1086,8 @@ export interface Backend {
   setGlyphUnicodes(glyph: string, unicodes: string, take: boolean): Promise<DocStatus>;
   /** Sets a glyph's production name (empty clears it). One undoable step. */
   setProductionName(glyph: string, name: string): Promise<DocStatus>;
+  setWritingDirection(glyph: string, direction: string): Promise<DocStatus>;
+  setVerticalMetric(glyph: string, masterId: string, which: "advance" | "tsb" | "bsb" | "reset", value: number | null): Promise<DocStatus>;
   /** Replaces the saved smart and list filters. One undoable step. */
   setFilters(filters: GlyphFilter[]): Promise<DocStatus>;
   /** The glyph names a filter matches; read-only preview for the rule builder. */
@@ -1541,6 +1557,8 @@ const tauriBackend: Backend = {
   setGlyphTags: (glyph, tags) => invoke("set_glyph_tags", { glyph, tags }),
   setGlyphUnicodes: (glyph, unicodes, take) => invoke("set_glyph_unicodes", { glyph, unicodes, take }),
   setProductionName: (glyph, name) => invoke("set_production_name", { glyph, name }),
+  setWritingDirection: (glyph, direction) => invoke("set_writing_direction", { glyph, direction }),
+  setVerticalMetric: (glyph, masterId, which, value) => invoke("set_vertical_metric", { glyph, masterId, which, value }),
   setFilters: (filters) => invoke("set_filters", { filters }),
   evaluateFilter: (filter) => invoke("evaluate_filter", { filter }),
   renameGlyphs: (renames) => invoke("rename_glyphs", { renames }),
@@ -2295,6 +2313,12 @@ const mockBackend: Backend = {
   },
   async setGlyphUnicodes() {
     throw "Unicode values need the desktop app (npm run tauri dev).";
+  },
+  async setWritingDirection() {
+    throw "Writing directions need the desktop app (npm run tauri dev).";
+  },
+  async setVerticalMetric() {
+    throw "Vertical metrics need the desktop app (npm run tauri dev).";
   },
   async setProductionName() {
     throw "Production names need the desktop app (npm run tauri dev).";

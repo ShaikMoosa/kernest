@@ -125,6 +125,12 @@ pub struct GlyphSummary {
     /// The name this glyph exports under when production names are used.
     #[serde(skip_serializing_if = "Option::is_none")]
     production_name: Option<String>,
+    /// Writing direction set on the glyph (LTR, RTL, BIDI); absent means automatic.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    direction: Option<&'static str>,
+    /// Vertical metrics in this master: advance, origin and sidebearings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vertical: Option<VerticalView>,
     /// Outline as SVG path data in font units (y up), empty when not drawn yet.
     svg: String,
     /// False when this glyph's masters can't be interpolated.
@@ -138,6 +144,18 @@ pub struct GlyphSummary {
     /// Colour layers in this master, bottom to top (empty for black-and-white glyphs).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     color: Vec<ColorLayerView>,
+}
+
+/// A glyph's vertical metrics in one master (for vertical typesetting).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerticalView {
+    advance: f64,
+    origin: f64,
+    tsb: Option<f64>,
+    bsb: Option<f64>,
+    /// True when the layer has its own vertical width or origin (not the defaults).
+    own: bool,
 }
 
 /// A colour layer as the UI draws it.
@@ -424,6 +442,18 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
                 right_group: g.right_group.clone(),
                 tags: g.tags.clone(),
                 production_name: g.production_name.clone(),
+                direction: g.direction.map(|d| d.as_str()),
+                vertical: layer.map(|l| {
+                    let (origin, advance) = kernest_core::vertical::origin_and_advance(master, l);
+                    let sb = kernest_core::vertical::sidebearings(font, master, l);
+                    VerticalView {
+                        advance,
+                        origin,
+                        tsb: sb.map(|s| s.0),
+                        bsb: sb.map(|s| s.1),
+                        own: l.vert_width.is_some() || l.vert_origin.is_some(),
+                    }
+                }),
                 svg: layer.map(|l| svg_path(font, l)).unwrap_or_default(),
                 compatible: check_glyph(font, &g.name).is_empty(),
                 interpolation_warnings: font.masters.len() > 1
