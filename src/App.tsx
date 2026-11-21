@@ -1326,7 +1326,7 @@ export default function App() {
               ) : id === "kerning" ? (
                 <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={s => { onCommitted(s); recordMilestone("kerned"); }} onError={fail} fontSelection={fontSelection} onOpenText={newTextTab} />
               ) : (
-                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} textWidth={settings.appearance.textWidth} onMilestone={recordMilestone} onTitle={textTitleSetter(id)} />
+                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} textWidth={settings.appearance.textWidth} autoDirection={settings.appearance.autoDirection} onMilestone={recordMilestone} onTitle={textTitleSetter(id)} />
               )}
             </div>
           ))}

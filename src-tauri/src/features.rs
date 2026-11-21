@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use kernest_core::bidi::{self, TextDirection};
 use kernest_core::designspace::Location;
 use kernest_core::fea_import::merge_features;
 use kernest_core::features::{available, check, generate, handwritten_tags};
@@ -185,6 +186,8 @@ pub struct ShapedGlyph {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     color: Vec<ColorLayerView>,
     advance: f64,
+    /// Vertical advance (negative: down), for vertical text.
+    y_advance: f64,
     x_offset: f64,
     y_offset: f64,
     /// Byte offset in the line's text, for caret placement and selection.
@@ -199,6 +202,15 @@ pub struct ShapedView {
     palette: Vec<String>,
     status: DocStatus,
 }
+
+/// Features HarfBuzz applies where they belong without being asked (positional
+/// forms, marks, kerning, required ligatures, vertical forms).
+const SHAPER_DEFAULT: &[&str] = &[
+    "abvf", "abvm", "abvs", "akhn", "blwf", "blwm", "blws", "calt", "ccmp", "cfar", "cjct", "clig",
+    "curs", "dist", "fin2", "fin3", "fina", "half", "haln", "init", "isol", "kern", "liga", "ljmo",
+    "locl", "mark", "med2", "medi", "mkmk", "nukt", "pref", "pres", "pstf", "psts", "rclt", "rkrf",
+    "rlig", "rphf", "rvrn", "stch", "tjmo", "vatu", "vert", "vjmo", "vkrn",
+];
 
 /// The compiled preview font for this revision and location, compiling it if the
 /// cache is stale. Returns the bytes and the glyph order they were built with.
@@ -233,6 +245,7 @@ fn shape(
     master_id: &str,
     location: Option<&Location>,
     features: &[String],
+    direction: Option<TextDirection>,
 ) -> CmdResult<ShapedView> {
     let master = doc
         .font
@@ -242,7 +255,16 @@ fn shape(
     let (bytes, order) = preview_font(doc, master_id, location)?;
     let face = rustybuzz::Face::from_slice(&bytes, 0)
         .ok_or_else(|| "could not read the preview font".to_string())?;
-    let feats: Vec<rustybuzz::Feature> = features.iter().filter_map(|t| t.parse().ok()).collect();
+    // Features the shaper applies by itself are only passed to turn them off: forcing
+    // `fina=1` over the whole text would put every Arabic letter in its final form.
+    let feats: Vec<rustybuzz::Feature> = features
+        .iter()
+        .filter(|t| {
+            t.split_once('=')
+                .is_none_or(|(tag, v)| v.trim() != "1" || !SHAPER_DEFAULT.contains(&tag.trim()))
+        })
+        .filter_map(|t| t.parse().ok())
+        .collect();
 
     let interp = location
         .map(|l| Interpolator::new(&doc.font, l))
@@ -308,30 +330,32 @@ fn shape(
     let lines = text
         .split('\n')
         .map(|line| {
-            let mut buffer = rustybuzz::UnicodeBuffer::new();
-            buffer.push_str(line);
-            buffer.guess_segment_properties();
-            let out = rustybuzz::shape(&face, &feats, buffer);
-            out.glyph_infos()
-                .iter()
-                .zip(out.glyph_positions())
-                .map(|(info, pos)| {
+            let mut glyphs = Vec::new();
+            for (start, end, dir) in runs(line, direction) {
+                let mut buffer = rustybuzz::UnicodeBuffer::new();
+                buffer.push_str(&line[start..end]);
+                buffer.guess_segment_properties();
+                buffer.set_direction(dir);
+                let out = rustybuzz::shape(&face, &feats, buffer);
+                for (info, pos) in out.glyph_infos().iter().zip(out.glyph_positions()) {
                     let name = order
                         .get(info.glyph_id as usize)
                         .cloned()
                         .unwrap_or_else(|| ".notdef".to_string());
                     let (svg, color) = draw(&name);
-                    ShapedGlyph {
+                    glyphs.push(ShapedGlyph {
                         name,
                         svg,
                         color,
                         advance: f64::from(pos.x_advance),
+                        y_advance: f64::from(pos.y_advance),
                         x_offset: f64::from(pos.x_offset),
                         y_offset: f64::from(pos.y_offset),
-                        cluster: info.cluster,
-                    }
-                })
-                .collect()
+                        cluster: info.cluster + start as u32,
+                    });
+                }
+            }
+            glyphs
         })
         .collect();
 
@@ -343,6 +367,46 @@ fn shape(
     })
 }
 
+/// A line split into runs to shape, in visual order: byte range and direction. Vertical
+/// text is one top-to-bottom run; horizontal text is split where the resolved bidi
+/// direction changes.
+fn runs(line: &str, direction: Option<TextDirection>) -> Vec<(usize, usize, rustybuzz::Direction)> {
+    if line.is_empty() {
+        return Vec::new();
+    }
+    if direction == Some(TextDirection::Vertical) {
+        return vec![(0, line.len(), rustybuzz::Direction::TopToBottom)];
+    }
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    let strong: Vec<Option<bool>> = chars
+        .iter()
+        .map(|(_, c)| bidi::strong_codepoint(*c as u32))
+        .collect();
+    let para = TextDirection::paragraph_rtl(direction, &strong);
+    let resolved = bidi::resolve(&strong, para);
+    let mut out: Vec<(usize, usize, bool)> = Vec::new();
+    for (i, &rtl) in resolved.iter().enumerate() {
+        let end = chars.get(i + 1).map_or(line.len(), |c| c.0);
+        match out.last_mut() {
+            Some(last) if last.2 == rtl => last.1 = end,
+            _ => out.push((chars[i].0, end, rtl)),
+        }
+    }
+    if para {
+        out.reverse();
+    }
+    out.into_iter()
+        .map(|(a, b, rtl)| {
+            let dir = if rtl {
+                rustybuzz::Direction::RightToLeft
+            } else {
+                rustybuzz::Direction::LeftToRight
+            };
+            (a, b, dir)
+        })
+        .collect()
+}
+
 /// Shapes `text` with the given feature settings (e.g. "ss01=1", "liga=0") against a
 /// compiled preview of the current master, for the text view's feature preview.
 #[tauri::command]
@@ -352,6 +416,7 @@ pub fn shape_text(
     master_id: String,
     location: Option<Location>,
     features: Vec<String>,
+    direction: Option<String>,
 ) -> CmdResult<ShapedView> {
     let mut guard = lock(&state)?;
     shape(
@@ -360,6 +425,7 @@ pub fn shape_text(
         &master_id,
         location.as_ref(),
         &features,
+        direction.as_deref().and_then(TextDirection::parse),
     )
 }
 
@@ -407,7 +473,7 @@ mod tests {
         f.feature_settings.automatic = available(&f);
         let mut doc = Document::new(f, None);
         let names = |doc: &mut Document, text: &str| -> Vec<String> {
-            shape(doc, text, "m01", None, &[]).unwrap().lines[0]
+            shape(doc, text, "m01", None, &[], None).unwrap().lines[0]
                 .iter()
                 .map(|g| g.name.clone())
                 .collect()
@@ -426,6 +492,124 @@ mod tests {
             names(&mut doc, "\u{628}\u{627}"),
             ["alef-ar.fina", "beh-ar.init"]
         );
+
+        // SMO-33: in a right-to-left paragraph a Latin word keeps its order, at the left.
+        let rtl = shape(
+            &mut doc,
+            "HO \u{628}\u{628}",
+            "m01",
+            None,
+            &[],
+            Some(TextDirection::Rtl),
+        )
+        .unwrap();
+        let visual: Vec<&str> = rtl.lines[0].iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(visual.first(), Some(&"beh-ar.fina"));
+        assert_eq!(visual[1], "beh-ar.init");
+        assert_eq!(&visual[visual.len() - 2..], ["H", "O"]);
+        // The clusters still point into the whole line.
+        assert_eq!(rtl.lines[0].last().unwrap().cluster, 1);
+        // Left to right, the Arabic word still joins and reads right to left.
+        let ltr = shape(
+            &mut doc,
+            "HO \u{628}\u{628}",
+            "m01",
+            None,
+            &[],
+            Some(TextDirection::Ltr),
+        )
+        .unwrap();
+        let visual: Vec<&str> = ltr.lines[0].iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(&visual[..2], ["H", "O"]);
+        assert_eq!(&visual[visual.len() - 2..], ["beh-ar.fina", "beh-ar.init"]);
+    }
+
+    #[test]
+    fn explicit_positional_features_do_not_force_every_form() {
+        let mut f = sample_font();
+        let mid = f.masters[0].id.clone();
+        let layer = f.glyph("H").and_then(|g| g.layer(&mid)).cloned().unwrap();
+        for (n, cp) in [
+            ("beh-ar", Some(0x0628)),
+            ("beh-ar.init", None),
+            ("beh-ar.medi", None),
+            ("beh-ar.fina", None),
+        ] {
+            let mut g = Glyph::new(n, cp.map(kernest_core::Codepoint).into_iter().collect());
+            g.layers.push(layer.clone());
+            f.glyphs.push(g);
+        }
+        f.feature_settings.automatic = available(&f);
+        let mut doc = Document::new(f, None);
+        let on: Vec<String> = ["init", "medi", "fina"]
+            .iter()
+            .map(|t| format!("{t}=1"))
+            .collect();
+        let names = |doc: &mut Document, feats: &[String]| -> Vec<String> {
+            shape(
+                doc,
+                "\u{628}\u{628}\u{628}",
+                "m01",
+                None,
+                feats,
+                Some(TextDirection::Rtl),
+            )
+            .unwrap()
+            .lines[0]
+                .iter()
+                .map(|g| g.name.clone())
+                .collect()
+        };
+        assert_eq!(
+            names(&mut doc, &on),
+            ["beh-ar.fina", "beh-ar.medi", "beh-ar.init"]
+        );
+        // Unticking still turns a feature off.
+        assert_eq!(
+            names(&mut doc, &["init=0".into()]),
+            ["beh-ar.fina", "beh-ar.medi", "beh-ar"]
+        );
+    }
+
+    #[test]
+    fn preview_names_follow_the_compiled_glyph_ids() {
+        // A glyph that doesn't export shifts the compiled ids; production names differ
+        // from the source names. Shaped glyphs still come back by source name.
+        let mut f = sample_font();
+        let first = f
+            .glyphs
+            .iter()
+            .position(|g| !matches!(g.name.as_str(), ".notdef" | "H" | "o"))
+            .unwrap();
+        f.glyphs[first].export = false;
+        f.glyphs
+            .iter_mut()
+            .find(|g| g.name == "o")
+            .unwrap()
+            .production_name = Some("uni006F".into());
+        let mut doc = Document::new(f, None);
+        let out = shape(&mut doc, "Ho", "m01", None, &[], None).unwrap();
+        let names: Vec<&str> = out.lines[0].iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, ["H", "o"]);
+    }
+
+    #[test]
+    fn vertical_text_advances_down() {
+        let mut doc = doc_with_alternates();
+        let v = shape(
+            &mut doc,
+            "HO",
+            "m01",
+            None,
+            &[],
+            Some(TextDirection::Vertical),
+        )
+        .unwrap();
+        assert_eq!(v.lines[0].len(), 2);
+        for g in &v.lines[0] {
+            assert_eq!(g.advance, 0.0);
+            assert!(g.y_advance < 0.0, "{} advances {}", g.name, g.y_advance);
+        }
     }
 
     #[test]
@@ -437,6 +621,7 @@ mod tests {
             "m01",
             None,
             &["liga=1".into(), "ss01=1".into()],
+            None,
         )
         .unwrap();
         let names: Vec<&str> = on.lines[0].iter().map(|g| g.name.as_str()).collect();
@@ -447,6 +632,7 @@ mod tests {
             "m01",
             None,
             &["liga=0".into(), "ss01=0".into()],
+            None,
         )
         .unwrap();
         let names: Vec<&str> = off.lines[0].iter().map(|g| g.name.as_str()).collect();
@@ -456,13 +642,13 @@ mod tests {
     #[test]
     fn preview_cache_rebuilds_after_an_edit() {
         let mut doc = doc_with_alternates();
-        shape(&mut doc, "a", "m01", None, &["ss01=1".into()]).unwrap();
+        shape(&mut doc, "a", "m01", None, &["ss01=1".into()], None).unwrap();
         let first = doc.preview.as_ref().unwrap().0;
         // Same revision: the cached compile is reused.
-        shape(&mut doc, "a", "m01", None, &["ss01=1".into()]).unwrap();
+        shape(&mut doc, "a", "m01", None, &["ss01=1".into()], None).unwrap();
         assert_eq!(doc.preview.as_ref().unwrap().0, first);
         doc.revision += 1;
-        shape(&mut doc, "a", "m01", None, &["ss01=1".into()]).unwrap();
+        shape(&mut doc, "a", "m01", None, &["ss01=1".into()], None).unwrap();
         assert_eq!(doc.preview.as_ref().unwrap().0, first + 1);
     }
 

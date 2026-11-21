@@ -363,6 +363,11 @@ An anchor is a named point that tells other glyphs where to sit: a mark above a 
   - The **Features** button previews OpenType features on the sample text (see [Features](#features)).
   - The **Preview** strip at the bottom shows the text in every master at once; the status bar names the pair at the cursor and its kerning. The tab is named after its text.
   - The **Samples** menu lists the strings from **Settings › Sample strings**, where you can add, edit and remove them.
+  - **Writing direction:** the three buttons in the toolbar set the tab to **left to right**, **right to left** or **vertical** (Ctrl+Alt+Shift+←, → or ↓). Each tab keeps its own direction.
+    - Right to left, lines start at the right edge. The arrow keys follow the text, so ← moves to the next glyph, and Alt+→ tightens the pair at the cursor. Latin words and numbers inside right-to-left text keep their own order (a simplified bidi algorithm). Glyphs take their direction from their **Writing direction** property, else from their Unicode value or name. Kerning between glyphs of different directions isn't applied.
+    - Vertical text runs top to bottom in columns from right to left. It uses each glyph's vertical metrics (see [Glyph properties](#font-view)), and the spacing fields become **TSB**, **Height** and **BSB**. Kerning is horizontal only, so it can't be edited here.
+    - With **Shape preview** on, the text is shaped in its direction, run by run, so Arabic joins and reads right to left. Vertical text uses the font's vertical metrics and `vert` features.
+    - By default a tab switches to right to left when its text starts with Arabic or Hebrew letters, and back for other letters. Turn this off under **Settings › Appearance › Text tabs follow the writing direction of their text**.
 - **Kerning window** (Window › Kerning, Ctrl+Shift+K): every kerning pair for the current master (Left · Value · Right), with a filter box and a row for adding pairs. Click a pair to preview it on the right, where the group members are listed too. **Search options** narrow the filter: group pairs or exceptions, left or right side, or only pairs touching the glyphs selected in Font View. The **−** button deletes the selected pair.
 - **Kerning groups:** a glyph has a **left group** (used when it's on the right side of a pair) and a **right group** (used when it's on the left side). Group pairs are written as `@group`. A pair between two specific glyphs is an **exception**, and it overrides the group pair.
 
@@ -462,7 +467,7 @@ OpenType features are the substitutions and positioning rules that run when text
   - `condition 600 < wght < 900;` inside a feature: the rules after it (up to the next `condition` or the end of the feature) apply only in that part of the design space. Variable fonts get a feature variation; static fonts keep or drop the rules at their location. Values are axis values as in Font Info › Axes.
   - `pos @Uppercase 10 (wdth:80) 20;` gives a value that changes across the design space: 10 at the default and 20 at a width of 80 (master locations).
   - `lookupflag;` resets the lookup flags, and `delete x;` is written as `sub x by NULL;`.
-- **Preview in text tabs:** the **Features** button in a text tab lists every available feature with a checkbox, plus **Shape preview**. With Shape preview on, the sample text is shaped with the ticked features (using the same engine as browsers), so you can see `fi` become a ligature or `a` become its `ss01` alternate. Spacing edits are paused while Shape preview is on; turn it off to edit kerning again.
+- **Preview in text tabs:** the **Features** button in a text tab lists every available feature with a checkbox, plus **Shape preview**. With Shape preview on, the sample text is shaped with the ticked features (using the same engine as browsers), so you can see `fi` become a ligature or `a` become its `ss01` alternate. Spacing edits are paused while Shape preview is on; turn it off to edit kerning again. `aalt` starts unticked, as in other apps, because it only lists alternates.
 
 ## Export
 
@@ -656,6 +661,7 @@ code — is in [docs/PYTHON_API.md](PYTHON_API.md).
 
 - **Handle size** (Small / Medium / Large) scales the node and anchor handles on the canvas.
 - **Text View width** (in 1/1000 em) sets how wide a line of text may run before it wraps in the Text View.
+- **Text tabs follow the writing direction of their text** switches a text tab to right to left when its text starts with right-to-left letters, and back (on by default).
 - **Canvas colours** gives a Light and a Dark value for each drawing element — corner nodes, smooth nodes, hints and zones, foreground stroke, background layer, components, canvas, and negative/positive kerning. Changes apply immediately; **Restore standard appearance** resets them.
 
 ### Updates

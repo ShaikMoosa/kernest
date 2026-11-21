@@ -10,6 +10,7 @@
 pub mod anchors;
 pub mod background;
 pub mod batch;
+pub mod bidi;
 pub mod clipboard;
 pub mod color;
 pub mod compare;

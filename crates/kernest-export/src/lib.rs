@@ -19,7 +19,7 @@ pub mod ufo;
 mod vorg;
 pub mod woff2;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use kernest_core::designspace::{normalize, Location};
@@ -200,7 +200,31 @@ pub fn preview_ttf(
     let ufo = to_ufo(&src)?;
     ufo.save(&path)
         .map_err(|e| format!("could not write a UFO: {e}"))?;
-    Ok((compile(&path)?, order))
+    let bytes = compile(&path)?;
+    // Glyphs that don't export are left out, so ids shift: the post table names the
+    // glyphs as compiled (by production name, mapped back to the source names).
+    let order = compiled_order(&bytes, font).unwrap_or(order);
+    Ok((bytes, order))
+}
+
+/// The source glyph names of a compiled font, by glyph id, from its post table with
+/// production names mapped back. `None` when the font has no glyph names.
+fn compiled_order(bytes: &[u8], font: &Font) -> Option<Vec<String>> {
+    use write_fonts::read::{FontRef, TableProvider};
+    let source: HashMap<&str, &str> = font
+        .glyphs
+        .iter()
+        .filter_map(|g| Some((g.production_name.as_deref()?, g.name.as_str())))
+        .collect();
+    let f = FontRef::new(bytes).ok()?;
+    let post = f.post().ok()?;
+    let count = f.maxp().ok()?.num_glyphs();
+    (0..count)
+        .map(|gid| {
+            let name = post.glyph_name(write_fonts::types::GlyphId16::new(gid))?;
+            Some(source.get(name).copied().unwrap_or(name).to_string())
+        })
+        .collect()
 }
 
 /// The preview compile with the font's TrueType hinting applied, for the edit
