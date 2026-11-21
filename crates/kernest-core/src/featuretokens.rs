@@ -214,6 +214,59 @@ impl<'a> Numbers<'a> {
         })
     }
 
+    /// A glyph property token (`period:LSB`, `b:anchors.top.x`), per master: the
+    /// advance width, sidebearings (components included) or an anchor position.
+    fn glyph_property(&self, token: &str) -> R<Vec<f64>> {
+        let (name, path) = token.split_once(':').unwrap_or((token, ""));
+        let font = self.font;
+        let g = font
+            .glyph(name)
+            .ok_or_else(|| format!("unknown glyph \"{name}\" in token"))?;
+        let lower = path.to_ascii_lowercase();
+        font.masters
+            .iter()
+            .map(|m| {
+                let layer = g.layer(&m.id).ok_or_else(|| {
+                    format!("glyph \"{name}\" has no layer for master \"{}\"", m.name)
+                })?;
+                let sides = || {
+                    crate::geometry::sidebearings(font, layer).ok_or_else(|| {
+                        format!("glyph \"{name}\" has no outline in \"{}\", so it has no sidebearings", m.name)
+                    })
+                };
+                match lower.as_str() {
+                    "width" => Ok(layer.width),
+                    "lsb" => Ok(sides()?.0),
+                    "rsb" => Ok(sides()?.1),
+                    "tsb" | "bsb" => Err(
+                        "TSB and BSB need vertical metrics, which Kernest doesn't support yet"
+                            .into(),
+                    ),
+                    _ => {
+                        let anchor = lower
+                            .starts_with("anchors.")
+                            .then(|| path["anchors.".len()..].rsplit_once('.'))
+                            .flatten()
+                            .filter(|(_, axis)| matches!(*axis, "x" | "y" | "X" | "Y"));
+                        let Some((anchor, axis)) = anchor else {
+                            return Err(format!(
+                                "\"{path}\" isn't a glyph property; use width, LSB, RSB or anchors.<name>.x / .y"
+                            ));
+                        };
+                        let a = layer
+                            .anchors
+                            .iter()
+                            .find(|a| a.name == anchor)
+                            .ok_or_else(|| {
+                                format!("glyph \"{name}\" has no anchor \"{anchor}\" in \"{}\"", m.name)
+                            })?;
+                        Ok(if axis.eq_ignore_ascii_case("x") { a.x } else { a.y })
+                    }
+                }
+            })
+            .collect()
+    }
+
     /// The text to write for per-master values.
     fn write(&self, per_master: &[f64]) -> String {
         if self.variable {
@@ -306,6 +359,21 @@ fn lex_expr(s: &str) -> R<Vec<String>> {
             i += 1;
         } else if c.is_ascii_digit() || c == '.' || c.is_alphabetic() || c == '_' {
             let start = i;
+            // A glyph property token: a glyph name (which may hold "." and "-")
+            // straight before ":", then the property path.
+            let mut j = i;
+            while j < cs.len() && (cs[j].is_alphanumeric() || matches!(cs[j], '.' | '_' | '-')) {
+                j += 1;
+            }
+            if cs.get(j) == Some(&':') {
+                j += 1;
+                while j < cs.len() && (cs[j].is_alphanumeric() || matches!(cs[j], '.' | '_')) {
+                    j += 1;
+                }
+                out.push(cs[start..j].iter().collect());
+                i = j;
+                continue;
+            }
             while i < cs.len() && (cs[i].is_alphanumeric() || cs[i] == '.' || cs[i] == '_') {
                 i += 1;
             }
@@ -384,6 +452,9 @@ impl ExprParser<'_> {
         }
         if let Ok(v) = t.parse::<f64>() {
             return Ok(vec![v; self.n]);
+        }
+        if t.contains(':') {
+            return self.numbers.glyph_property(&t);
         }
         self.numbers.get(&t)
     }
@@ -1343,7 +1414,10 @@ pub fn describe(font: &Font, token: &str) -> R<String> {
     } else if let Some(n) = token.strip_prefix('$') {
         numbers.get(n)?
     } else {
-        return Err("Alt+click a token such as $padding, ${padding*2} or $[case == upper].".into());
+        return Err(
+            "Alt+click a token such as $padding, ${padding*2}, ${period:LSB} or $[case == upper]."
+                .into(),
+        );
     };
     let parts: Vec<String> = font
         .masters
@@ -1421,6 +1495,101 @@ mod tests {
         );
         let e = expand(&f, "\n pos A $nothing;", &Context::DEFAULT).unwrap_err();
         assert_eq!((e.line, e.column), (2, 8));
+    }
+
+    /// Two masters where H's Bold layer is 40 units wider on the right and has its
+    /// top anchor 30 units further right.
+    fn property_font() -> Font {
+        let mut f = two_masters();
+        let h = f.glyph_mut("H").unwrap();
+        h.layers[0].anchors = vec![crate::model::Anchor {
+            name: "top".into(),
+            x: 300.0,
+            y: 700.0,
+        }];
+        let mut a = h.layers[0].anchors.clone();
+        a[0].x = 330.0;
+        h.layers[1].anchors = a;
+        h.layers[1].width += 40.0;
+        f
+    }
+
+    #[test]
+    fn glyph_property_tokens_use_each_masters_values() {
+        let f = property_font();
+        let h = f.glyph("H").unwrap();
+        let (lsb, rsb) = crate::geometry::sidebearings(&f, &h.layers[0]).unwrap();
+        let w = h.layers[0].width;
+        // Static, default master: plain numbers, arithmetic included.
+        let code = "pos A <${H:LSB} 0 ${H:LSB*2} 0>; pos B ${H:RSB}; pos C ${H:width/2+10}; pos D ${H:anchors.top.x};";
+        let s = expand(&f, code, &Context::DEFAULT).unwrap();
+        assert_eq!(
+            s,
+            format!(
+                "pos A <{} 0 {} 0>; pos B {}; pos C {}; pos D 300;",
+                fmt(lsb),
+                fmt(lsb * 2.0),
+                fmt(rsb),
+                fmt(w / 2.0 + 10.0)
+            )
+        );
+        // An instance halfway: interpolated.
+        let mid = Location::from([("wght".into(), 500.0)]);
+        let s = expand(
+            &f,
+            "pos D ${H:anchors.top.x}; pos B ${H:RSB};",
+            &Context {
+                variable: false,
+                location: Some(&mid),
+            },
+        )
+        .unwrap();
+        assert_eq!(s, format!("pos D 315; pos B {};", fmt(rsb + 20.0)));
+        // Variable: a varying value where masters differ, a number where they don't.
+        let v = expand(
+            &f,
+            "pos A ${H:LSB}; pos D ${H:anchors.top.x};",
+            &Context {
+                variable: true,
+                location: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            v,
+            format!("pos A {}; pos D (wght=100d:300 wght=900d:330);", fmt(lsb))
+        );
+        // Glyph names with dots and hyphens.
+        let mut g = f.clone();
+        let mut alt = g.glyph("H").unwrap().clone();
+        alt.name = "H.ss01-x".into();
+        alt.unicodes.clear();
+        g.glyphs.push(alt);
+        let s = expand(
+            &g,
+            "pos A ${H.ss01-x:anchors.top.y - 100};",
+            &Context::DEFAULT,
+        )
+        .unwrap();
+        assert_eq!(s, "pos A 600;");
+    }
+
+    #[test]
+    fn glyph_property_errors_point_at_the_token() {
+        let f = property_font();
+        let check = |code: &str, msg: &str| {
+            let e = expand(&f, code, &Context::DEFAULT).unwrap_err();
+            assert!(e.message.contains(msg), "{} / {msg}", e.message);
+            assert_eq!(e.line, 2, "{code}");
+        };
+        check("\npos A ${nosuch:LSB};", "unknown glyph \"nosuch\"");
+        check("\npos A ${H:anchors.nope.x};", "has no anchor \"nope\"");
+        check("\npos A ${H:TSB};", "vertical metrics");
+        check("\npos A ${H:height};", "isn't a glyph property");
+        check("\npos A ${space:LSB};", "no outline");
+        // Alt+click shows the value per master.
+        let d = describe(&f, "${H:anchors.top.x}").unwrap();
+        assert_eq!(d, "${H:anchors.top.x} = 300 (Regular) · 330 (Bold)");
     }
 
     #[test]

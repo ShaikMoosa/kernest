@@ -1261,6 +1261,77 @@ pub(crate) mod tests {
         assert!(font.gpos().is_ok());
     }
 
+    /// The x advance a single-adjustment lookup gives `glyph` (SMO-19 checks).
+    fn single_pos_x_advance(bytes: &[u8], glyph: &str) -> Option<i16> {
+        use write_fonts::read::tables::gpos::{PositionSubtables, SinglePos};
+        let font = FontRef::new(bytes).unwrap();
+        let gid = font
+            .cmap()
+            .ok()?
+            .map_codepoint(glyph.chars().next()? as u32)?;
+        let gpos = font.gpos().ok()?;
+        let lookups = gpos.lookup_list().ok()?;
+        for lookup in lookups.lookups().iter().flatten() {
+            let Ok(PositionSubtables::Single(subs)) = lookup.subtables() else {
+                continue;
+            };
+            for sub in subs.iter().flatten() {
+                match sub {
+                    SinglePos::Format1(t) => {
+                        if t.coverage().ok()?.get(gid).is_some() {
+                            return t.value_record().x_advance();
+                        }
+                    }
+                    SinglePos::Format2(t) => {
+                        if let Some(i) = t.coverage().ok()?.get(gid) {
+                            return t.value_records().get(i as usize).ok()?.x_advance();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn glyph_property_tokens_compile_per_master() {
+        // H is 100 units wider in Bold, so its RSB is too (SMO-19).
+        let mut f = two_masters();
+        f.features =
+            "languagesystem DFLT dflt;\nfeature kern {\n  pos A <0 0 ${H:RSB} 0>;\n} kern;\n"
+                .into();
+        assert!(
+            kernest_core::features::check(&f).is_empty(),
+            "{:?}",
+            kernest_core::features::check(&f)
+        );
+        let rsb = |master: usize| {
+            let l = &f.glyph("H").unwrap().layers[master];
+            kernest_core::geometry::sidebearings(&f, l)
+                .unwrap()
+                .1
+                .round() as i16
+        };
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let read = |style: &str| {
+            std::fs::read(&r.files.iter().find(|x| x.style == style).unwrap().path).unwrap()
+        };
+        assert_eq!(single_pos_x_advance(&read("Regular"), "A"), Some(rsb(0)));
+        assert_eq!(single_pos_x_advance(&read("Bold"), "A"), Some(rsb(1)));
+        assert_eq!(rsb(1) - rsb(0), 100);
+        // The variable font compiles with a varying value.
+        let vf = r.files.iter().find(|x| x.kind == "variable").unwrap();
+        let bytes = std::fs::read(&vf.path).unwrap();
+        assert_eq!(single_pos_x_advance(&bytes, "A"), Some(rsb(0)));
+        assert!(FontRef::new(&bytes)
+            .unwrap()
+            .gdef()
+            .is_ok_and(|g| g.item_var_store().is_some()));
+    }
+
     #[test]
     fn preset_exports_only_selected_instances_and_honours_destination() {
         let mut f = two_masters();
