@@ -129,6 +129,13 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
   - arrow keys nudge the selection by 1 unit, Shift+arrows by 10;
   - Enter switches the selected nodes between smooth and corner;
   - Delete removes them.
+- **Magnetic snapping:** a node or anchor you drag snaps when it comes within a few pixels of:
+  - another node's x or y, including handles;
+  - a metric line (baseline, x-height, cap height, ascender, descender);
+  - the left or right edge of the advance width, or its middle;
+  - a guide.
+
+  A red line shows what it snapped to. Hold **Ctrl** while dragging to place it freely. **Settings › Appearance › Snap distance** sets how close it has to come (0 turns snapping off).
 - **Selecting:** Ctrl+A selects everything, and double-clicking a node selects its whole path.
 - **Super-smooth nodes:** press Alt+Shift+Enter, or Shift+double-click a node, to make the selected nodes super-smooth (G2) or turn them back into smooth nodes. A super-smooth node has a star marker. Kernest keeps it on the line between its handles at the point where the curvature is the same on both sides, so the curve flows through it with no jump in curvature. It moves there whenever its handles change, after the edit is made. Only nodes between two curves can be super-smooth. In a .glyphs file they are saved as smooth nodes at that position.
 - **Harmonize** (Path menu, Ctrl+Shift+H) moves the selected smooth nodes, or every smooth node when none are selected, to that same point once. Nodes next to a straight line, at an inflection (where the curve changes direction) or on a flat side are left as they are.

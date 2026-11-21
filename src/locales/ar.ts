@@ -2544,4 +2544,7 @@ export const ar: Dict = {
   "On a metric line": "على خط قياسي",
   "In an alignment zone": "داخل منطقة محاذاة",
   "Just outside an alignment zone or metric line": "خارج منطقة محاذاة أو خط قياسي بقليل",
+  "Snap distance (px)": "مسافة الالتقاط (بكسل)",
+  "Snap distance must be between 0 and 30 pixels.": "يجب أن تكون مسافة الالتقاط بين 0 و30 بكسل.",
+  "How close a dragged node has to come to another node, a metric line or a guide to snap to it. 0 turns snapping off; holding Ctrl while dragging turns it off for that drag.": "مدى اقتراب النقطة المسحوبة من نقطة أخرى أو خط قياسي أو دليل لتلتقطه. القيمة 0 توقف الالتقاط، والضغط على Ctrl أثناء السحب يوقفه لذلك السحب.",
 };
