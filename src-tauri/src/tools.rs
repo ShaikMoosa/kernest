@@ -184,6 +184,69 @@ pub fn transform(
     )
 }
 
+fn align_in(
+    doc: &mut Document,
+    glyph: &str,
+    key: &str,
+    selection: &Selection,
+    op: &str,
+    to: Option<f64>,
+    origin: usize,
+) -> CmdResult<LayerView> {
+    ensure_glyph_unlocked(&doc.font, glyph)?;
+    if to.is_some_and(|v| !v.is_finite()) {
+        return Err("The alignment target has an invalid number.".into());
+    }
+    let mut layer = doc
+        .font
+        .glyph(glyph)
+        .and_then(|g| g.layer(key))
+        .ok_or_else(|| format!("No layer for \"{glyph}\""))?
+        .clone();
+    let moved = if op == "points" {
+        kernest_core::align::align_points(&mut layer, selection, origin)
+    } else {
+        let op = kernest_core::align::Op::parse(op)?;
+        kernest_core::align::align(&doc.font, &mut layer, selection, op, to)
+    };
+    if moved > 0
+        && doc
+            .history
+            .apply(&mut doc.font, glyph, key, layer)
+            .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    layer_view_of(doc, glyph, key)
+}
+
+/// Aligns or distributes the selection (SMO-40), as one undoable step.
+/// `op`: left, h-center, right, top, v-center, bottom, distribute-h, distribute-v,
+/// or points (Path › Align Selection, using the transform `origin` 0–8). `to` is a
+/// coordinate to align to instead of the selection's box (a metric line, the width).
+#[tauri::command]
+pub fn align_selection(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    selection: Selection,
+    op: String,
+    to: Option<f64>,
+    origin: Option<usize>,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    align_in(
+        doc,
+        &glyph,
+        &master_id,
+        &selection,
+        &op,
+        to,
+        origin.unwrap_or(4),
+    )
+}
+
 fn background_edit_in(
     doc: &mut Document,
     glyph: &str,

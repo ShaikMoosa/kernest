@@ -335,6 +335,23 @@ The **Transform** panel in the editor sidebar scales, rotates, skews and mirrors
 - **All masters** applies the same transform to this layer in every master, so the glyph stays compatible.
 - **Apply** performs the transform as one step that Ctrl+Z undoes.
 
+**Aligning.** The row of align buttons lines up the selected paths, nodes, anchors and components:
+- **Align left, centre and right** line them up horizontally; **top, middle and bottom** line them up vertically.
+- **Distribute horizontally** and **Distribute vertically** leave equal gaps between three or more of them.
+- What moves together:
+  - a path with all of its nodes selected moves as one shape;
+  - otherwise each selected node moves with its handles;
+  - each component and anchor moves on its own.
+- **to** picks what they line up with:
+  - **Selection**: the box around the whole selection.
+  - **Glyph width**: for left, centre and right, the left edge, the middle of the advance width or the right edge.
+  - **A metric line**: for top, middle and bottom, the baseline, x-height, cap height, ascender or descender. For example, select nodes, choose **x-height** and click **Align top** to put them all on the x-height.
+- Each click is one step that Ctrl+Z undoes. A moved component stops following its anchors.
+
+**Align Selection** (Path menu, Ctrl+Alt+Shift+A) lines the selected nodes, handles and anchors up on one line:
+- It picks a vertical line when they're closer together horizontally, and a horizontal line otherwise.
+- The transform origin picks the line: the origin's column gives left, centre or right; its row gives top, middle or bottom.
+
 ### Measuring
 
 With the **Measure** tool (L), drag a line across the outline. Kernest marks where the line crosses the outline and shows the distance between each pair of crossings, plus the line's angle — handy for checking stem widths and diagonals. Esc clears the measurement. While editing the background, the measure tool measures the background instead.
@@ -706,6 +723,7 @@ Every command is in the menu bar: File, Edit, Glyph, Path, Filter, View, Script,
 | Knife / Ellipse tool | E / Shift+E |
 | Select / Lasso Select tool | V / Shift+V |
 | Harmonize / Super-smooth nodes | Ctrl+Shift+H / Alt+Shift+Enter |
+| Align Selection | Ctrl+Alt+Shift+A |
 | Show Metrics | Ctrl+Shift+M |
 | Show Guides / Show Background | Ctrl+Shift+L / Ctrl+Shift+B |
 | Show Bounding Box | Ctrl+Alt+Shift+B |

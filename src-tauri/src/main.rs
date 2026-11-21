@@ -188,6 +188,7 @@ fn main() {
             tools::set_guides,
             tools::set_guide_scope,
             tools::transform,
+            tools::align_selection,
             tools::background_edit,
             tools::update_background,
             tools::measure,
