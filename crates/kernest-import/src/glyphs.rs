@@ -446,6 +446,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             },
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
             family_name: None,
             localized_family_names: Default::default(),
         })
@@ -1070,6 +1071,15 @@ fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font) {
             }
             match p.get("name").and_then(|n| n.as_str()) {
                 Some("Rename Glyphs") => target.rename_glyphs = swaps_in(p),
+                Some("Disable Masters") => {
+                    target.disabled_masters = p
+                        .get("value")
+                        .and_then(|v| v.as_array())
+                        .unwrap_or(&[])
+                        .iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                }
                 Some("Remove Glyphs") => {
                     target.remove_glyphs = p
                         .get("value")
@@ -1466,6 +1476,7 @@ fn variable_settings_from(
         let mut file_name = None;
         let mut glyphs: Vec<String> = Vec::new();
         let mut rename: Vec<[String; 2]> = Vec::new();
+        let mut disabled: Vec<String> = Vec::new();
         for p in inst
             .get("customParameters")
             .and_then(|p| p.as_array())
@@ -1513,6 +1524,7 @@ fn variable_settings_from(
                 // The default master is the font's own origin in Kernest.
                 "Variable Font Origin" => {}
                 "Rename Glyphs" => rename = swaps_in(p),
+                "Disable Masters" => disabled = list(),
                 other => {
                     if !ignored.iter().any(|x| x == other) {
                         ignored.push(other.to_string());
@@ -1537,6 +1549,7 @@ fn variable_settings_from(
             glyphs,
             rename_glyphs: rename,
             remove_glyphs: Vec::new(),
+            disabled_masters: disabled,
         });
     }
     if !ignored.is_empty() {

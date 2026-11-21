@@ -195,6 +195,7 @@ mod tests {
                 remove_glyphs: Vec::new(),
                 family_name: None,
                 localized_family_names: Default::default(),
+                disabled_masters: Vec::new(),
             }],
             ..Default::default()
         };

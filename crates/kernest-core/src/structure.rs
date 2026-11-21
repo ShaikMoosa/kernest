@@ -977,6 +977,7 @@ mod tests {
             glyphs: Vec::new(),
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
         };
         let ok =
             set_variable_fonts(&f, vec![vf("Light", "F-Light"), vf("Bold", "F-Bold")]).unwrap();
@@ -1093,6 +1094,7 @@ mod tests {
             remove_glyphs: Vec::new(),
             family_name: None,
             localized_family_names: Default::default(),
+            disabled_masters: Vec::new(),
         };
         let f = set_instances(&f, vec![i("Light", 300.0), i("Bold", 700.0)]).unwrap();
         assert_eq!(f.instances.len(), 2);

@@ -49,6 +49,7 @@ fn two_masters() -> Font {
         style_link: None,
         rename_glyphs: Vec::new(),
         remove_glyphs: Vec::new(),
+        disabled_masters: Vec::new(),
         family_name: None,
         localized_family_names: Default::default(),
     });
@@ -221,6 +222,33 @@ fn hinted_variable_font_has_no_empty_cvar() {
     // Whatever cvar is left decodes in full.
     let (_, repair) = kernest_export::cvar::repair(&vf).unwrap();
     assert_eq!(repair, kernest_export::cvar::Repair::Unchanged);
+}
+
+#[test]
+fn glyphs_disable_masters_round_trip() {
+    let mut src = two_masters();
+    src.instances[0].disabled_masters = vec!["Bold".into()];
+    src.variable_fonts = vec![VariableFontSetting {
+        name: "Light only".into(),
+        file_name: "Sample-Light-VF".into(),
+        axes: Vec::new(),
+        glyphs: Vec::new(),
+        rename_glyphs: Vec::new(),
+        remove_glyphs: Vec::new(),
+        disabled_masters: vec!["Bold".into()],
+    }];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Disable.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("name = \"Disable Masters\";"), "{text}");
+    let f = import(&path).unwrap().font;
+    assert_eq!(f.instances[0].disabled_masters, vec!["Bold".to_string()]);
+    assert_eq!(f.variable_fonts.len(), 1);
+    assert_eq!(
+        f.variable_fonts[0].disabled_masters,
+        vec!["Bold".to_string()]
+    );
 }
 
 #[test]
@@ -1532,6 +1560,7 @@ fn designspace_variable_fonts_round_trip() {
             glyphs: Vec::new(),
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
         },
         VariableFontSetting {
             name: "Bold".into(),
@@ -1544,6 +1573,7 @@ fn designspace_variable_fonts_round_trip() {
             glyphs: Vec::new(),
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
         },
     ];
     let dir = tempfile::tempdir().unwrap();
@@ -1867,6 +1897,7 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
             glyphs: vec![],
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
         },
         VariableFontSetting {
             name: "Text".into(),
@@ -1875,6 +1906,7 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
             glyphs: vec!["H".into(), "T".into()],
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
         },
     ];
     let dir = tempfile::tempdir().unwrap();

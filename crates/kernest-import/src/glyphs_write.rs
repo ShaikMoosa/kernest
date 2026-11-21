@@ -1239,6 +1239,13 @@ pub fn glyphs_source(font: &Font) -> String {
                             v.join(",\n")
                         ));
                     }
+                    if !i.disabled_masters.is_empty() {
+                        let v: Vec<String> = i.disabled_masters.iter().map(|m| q(m)).collect();
+                        ip.push(format!(
+                            "{{\nname = \"Disable Masters\";\nvalue = (\n{}\n);\n}}",
+                            v.join(",\n")
+                        ));
+                    }
                     if !ip.is_empty() {
                         let _ = writeln!(e, "customParameters = (\n{}\n);", ip.join(",\n"));
                     }
@@ -1282,6 +1289,13 @@ pub fn glyphs_source(font: &Font) -> String {
                     .collect();
                 vp.push(format!(
                     "{{\nname = \"Rename Glyphs\";\nvalue = (\n{}\n);\n}}",
+                    v.join(",\n")
+                ));
+            }
+            if !vf.disabled_masters.is_empty() {
+                let v: Vec<String> = vf.disabled_masters.iter().map(|m| q(m)).collect();
+                vp.push(format!(
+                    "{{\nname = \"Disable Masters\";\nvalue = (\n{}\n);\n}}",
                     v.join(",\n")
                 ));
             }

@@ -365,6 +365,112 @@ impl VariationModel {
 /// to the requested user range. Masters outside the range are replaced by interpolated
 /// masters at the new default and axis extremes, so the reduced source spans the range
 /// with a master at its default.
+/// The font without the masters named in `names` ("Disable Masters"), and the axis
+/// ranges (user coordinates) the remaining masters span. Names that match no master
+/// are reported in the warnings; disabling every master is an error.
+pub fn without_masters(
+    font: &Font,
+    names: &[String],
+) -> Result<(Font, Vec<crate::model::VariableAxisSubset>, Vec<String>), String> {
+    let mut warnings = Vec::new();
+    let unknown: Vec<String> = names
+        .iter()
+        .filter(|n| !font.masters.iter().any(|m| &m.name == *n))
+        .map(|n| format!("\"{n}\""))
+        .collect();
+    if !unknown.is_empty() {
+        warnings.push(format!(
+            "Disable Masters: there is no master named {}; it was ignored.",
+            unknown.join(", ")
+        ));
+    }
+    let ids: Vec<String> = font
+        .masters
+        .iter()
+        .filter(|m| names.contains(&m.name))
+        .map(|m| m.id.clone())
+        .collect();
+    if ids.is_empty() {
+        return Ok((font.clone(), Vec::new(), warnings));
+    }
+    if ids.len() == font.masters.len() {
+        return Err("Disable Masters leaves no master to export.".into());
+    }
+    let default = crate::interpolate::default_master(font);
+    let mut f = font.clone();
+    f.masters.retain(|m| !ids.contains(&m.id));
+    if ids.contains(&default.id) {
+        // A variable font needs a master at its default: the nearest one left takes
+        // over (the first in master order on a tie).
+        let at = |m: &crate::model::Master, a: &Axis| {
+            m.location
+                .get(&a.tag)
+                .copied()
+                .unwrap_or_else(|| design_bounds(a).1)
+        };
+        let distance = |m: &crate::model::Master| -> f64 {
+            font.axes
+                .iter()
+                .map(|a| (at(m, a) - at(default, a)).abs())
+                .sum()
+        };
+        let next = f
+            .masters
+            .iter()
+            .min_by(|a, b| distance(a).total_cmp(&distance(b)))
+            .cloned()
+            .expect("at least one master is left");
+        for a in &mut f.axes {
+            a.default = design_to_user(a, at(&next, a));
+        }
+        warnings.push(format!(
+            "Disable Masters: the default master \"{}\" is left out, so \"{}\" is the default instead.",
+            default.name, next.name
+        ));
+    }
+    for g in &mut f.glyphs {
+        g.layers.retain(|l| !ids.contains(&l.master_id));
+    }
+    for id in &ids {
+        f.kerning.remove(id);
+    }
+    // Each axis now spans only the masters that are left.
+    let ranges = f
+        .axes
+        .iter()
+        .map(|a| {
+            let (lo, hi) = f
+                .masters
+                .iter()
+                .map(|m| {
+                    m.location
+                        .get(&a.tag)
+                        .copied()
+                        .unwrap_or_else(|| design_bounds(a).1)
+                })
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+                    (lo.min(v), hi.max(v))
+                });
+            let (lo, hi) = (design_to_user(a, lo), design_to_user(a, hi));
+            crate::model::VariableAxisSubset {
+                tag: a.tag.clone(),
+                min: Some(lo.min(hi).max(a.min)),
+                max: Some(hi.max(lo).min(a.max)),
+            }
+        })
+        .collect();
+    Ok((f, ranges, warnings))
+}
+
+/// Whether `loc` (design coordinates) lies inside every axis of `font`.
+pub fn inside_axes(font: &Font, loc: &Location) -> bool {
+    font.axes.iter().all(|a| {
+        let (mn, df, mx) = design_bounds(a);
+        let v = loc.get(&a.tag).copied().unwrap_or(df);
+        v >= mn - 1e-6 && v <= mx + 1e-6
+    })
+}
+
 pub fn reduce_for_variable(
     font: &Font,
     setting: &crate::model::VariableFontSetting,
@@ -717,6 +823,7 @@ mod tests {
                 glyphs,
                 rename_glyphs: Vec::new(),
                 remove_glyphs: Vec::new(),
+                disabled_masters: Vec::new(),
             };
         // A range that keeps the default needs no new master.
         let r = reduce_for_variable(&f, &setting(Some(400.0), Some(700.0), vec![])).unwrap();

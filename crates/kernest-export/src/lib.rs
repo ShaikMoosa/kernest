@@ -382,6 +382,75 @@ fn static_targets(font: &Font) -> Vec<(String, Location, Option<&Instance>)> {
     }
 }
 
+/// Whether `loc` lies inside the span of `font`'s masters on every axis, so it can
+/// be interpolated without extrapolating.
+fn within_masters(font: &Font, loc: &Location) -> bool {
+    font.axes.iter().all(|a| {
+        let df = kernest_core::designspace::design_bounds(a).1;
+        let at = |l: &Location| l.get(&a.tag).copied().unwrap_or(df);
+        let (lo, hi) = font
+            .masters
+            .iter()
+            .map(|m| at(&m.location))
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
+                (lo.min(v), hi.max(v))
+            });
+        let v = at(loc);
+        v >= lo - 1e-6 && v <= hi + 1e-6
+    })
+}
+
+/// The font one variable-font setting exports: its masters ("Disable Masters"), axis
+/// ranges and glyphs. Named instances outside the remaining masters are left out.
+fn variable_subset(
+    font: &Font,
+    vf: &kernest_core::VariableFontSetting,
+) -> Result<(Font, Vec<String>), String> {
+    let (base, ranges, mut warnings) =
+        kernest_core::designspace::without_masters(font, &vf.disabled_masters)?;
+    let mut setting = vf.clone();
+    for r in ranges {
+        match setting.axes.iter_mut().find(|s| s.tag == r.tag) {
+            Some(s) => {
+                let lo = s
+                    .min
+                    .unwrap_or(f64::NEG_INFINITY)
+                    .max(r.min.unwrap_or(f64::NEG_INFINITY));
+                let hi = s
+                    .max
+                    .unwrap_or(f64::INFINITY)
+                    .min(r.max.unwrap_or(f64::INFINITY));
+                if lo > hi {
+                    return Err(format!(
+                        "the axis range for \"{}\" doesn't overlap the masters left after Disable Masters",
+                        r.tag
+                    ));
+                }
+                s.min = Some(lo);
+                s.max = Some(hi);
+            }
+            None => setting.axes.push(r),
+        }
+    }
+    let mut reduced = kernest_core::designspace::reduce_for_variable(&base, &setting)?;
+    if !vf.disabled_masters.is_empty() {
+        let instances = std::mem::take(&mut reduced.instances);
+        let (keep, drop): (Vec<_>, Vec<_>) = instances
+            .into_iter()
+            .partition(|i| kernest_core::designspace::inside_axes(&reduced, &i.location));
+        if !drop.is_empty() {
+            let names: Vec<String> = drop.iter().map(|i| format!("\"{}\"", i.name)).collect();
+            warnings.push(format!(
+                "{} can't be reached without the disabled masters and {} left out of the variable font.",
+                names.join(", "),
+                if drop.len() == 1 { "was" } else { "were" }
+            ));
+        }
+        reduced.instances = keep;
+    }
+    Ok((reduced, warnings))
+}
+
 /// The file stem of a static font: "<Family>-<Style>", using the instance's own family.
 fn static_stem(font: &Font, style: &str, inst: Option<&Instance>) -> String {
     let family = inst.map_or(font.info.family_name.as_str(), |i| {
@@ -709,8 +778,13 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                 let dir = tmp.path().join(format!("vf{i}"));
                 std::fs::create_dir_all(&dir)
                     .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-                let reduced = match kernest_core::designspace::reduce_for_variable(font, vf) {
-                    Ok(r) => r,
+                let reduced = match variable_subset(font, vf) {
+                    Ok((r, warnings)) => {
+                        report
+                            .warnings
+                            .extend(warnings.into_iter().map(|w| format!("{}: {w}", vf.name)));
+                        r
+                    }
                     Err(e) => {
                         report.problems.push(format!("{}: {e}", vf.name));
                         continue;
@@ -729,6 +803,33 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     if opts.statics {
         let targets = static_targets(font);
         for (i, (style, location, inst)) in targets.iter().enumerate() {
+            // Masters this instance is interpolated without.
+            let thinned;
+            let font = match inst.filter(|i| !i.disabled_masters.is_empty()) {
+                Some(i) => {
+                    match kernest_core::designspace::without_masters(font, &i.disabled_masters) {
+                        Ok((f, _, warnings)) => {
+                            report
+                                .warnings
+                                .extend(warnings.into_iter().map(|w| format!("{style}: {w}")));
+                            if !within_masters(&f, location) {
+                                report.problems.push(format!(
+                                    "{style}: its location can't be reached without {}; skipped.",
+                                    i.disabled_masters.join(", ")
+                                ));
+                                continue;
+                            }
+                            thinned = f;
+                            &thinned
+                        }
+                        Err(e) => {
+                            report.problems.push(format!("{style}: {e}"));
+                            continue;
+                        }
+                    }
+                }
+                None => font,
+            };
             // Glyph swaps and removals for this instance.
             let swapped;
             let font =
@@ -1393,6 +1494,130 @@ pub(crate) mod tests {
         );
     }
 
+    /// Three masters on wght 100 (Thin), 400 (Regular, the default) and 700 (Bold).
+    fn three_masters() -> Font {
+        let wght = Axis {
+            name: "Weight".into(),
+            tag: "wght".into(),
+            min: 100.0,
+            default: 400.0,
+            max: 700.0,
+            hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
+        };
+        let f = structure::set_axes(&sample_font(), vec![wght]).unwrap();
+        let f = structure::add_master(&f, "m01", "Bold", &BTreeMap::from([("wght".into(), 700.0)]))
+            .unwrap()
+            .0;
+        let (mut f, thin) =
+            structure::add_master(&f, "m01", "Thin", &BTreeMap::from([("wght".into(), 100.0)]))
+                .unwrap();
+        f.glyph_mut("H").unwrap().layer_mut(&thin).unwrap().width -= 100.0;
+        f
+    }
+
+    fn fvar_axes(bytes: &[u8]) -> Vec<(f32, f32, f32)> {
+        let font = FontRef::new(bytes).unwrap();
+        let fvar = font.fvar().unwrap();
+        fvar.axes()
+            .unwrap()
+            .iter()
+            .map(|a| {
+                (
+                    a.min_value().to_f32(),
+                    a.default_value().to_f32(),
+                    a.max_value().to_f32(),
+                )
+            })
+            .collect()
+    }
+
+    fn vf_setting(name: &str, disabled: &[&str]) -> kernest_core::VariableFontSetting {
+        kernest_core::VariableFontSetting {
+            name: name.into(),
+            file_name: format!("Test-{name}-VF"),
+            axes: Vec::new(),
+            glyphs: Vec::new(),
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
+            disabled_masters: disabled.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn disable_masters_narrows_the_variable_font() {
+        let mut f = three_masters();
+        f.instances = vec![
+            instance("Thin", 100.0, None),
+            instance("Medium", 550.0, None),
+        ];
+        f.variable_fonts = vec![
+            vf_setting("All", &[]),
+            vf_setting("NoThin", &["Thin", "Hairline"]),
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let read = |label: &str| {
+            std::fs::read(&r.files.iter().find(|x| x.style == label).unwrap().path).unwrap()
+        };
+        assert_eq!(fvar_axes(&read("All")), vec![(100.0, 400.0, 700.0)]);
+        // Without Thin the weight axis starts at the next master.
+        assert_eq!(fvar_axes(&read("NoThin")), vec![(400.0, 400.0, 700.0)]);
+        let w = |needle: &str| {
+            r.warnings
+                .iter()
+                .any(|w| w.starts_with("NoThin:") && w.contains(needle))
+        };
+        assert!(w("no master named \"Hairline\""), "{:?}", r.warnings);
+        assert!(w("\"Thin\" can't be reached"), "{:?}", r.warnings);
+        // Without its default master the nearest one left (Bold, first on the tie
+        // with Thin) becomes the default.
+        f.variable_fonts = vec![vf_setting("NoRegular", &["Regular"])];
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.contains("default master \"Regular\" is left out, so \"Bold\"")),
+            "{:?}",
+            r.warnings
+        );
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        assert_eq!(fvar_axes(&bytes), vec![(100.0, 700.0, 700.0)]);
+        // Every master disabled is an error, not an empty font.
+        f.variable_fonts = vec![vf_setting("None", &["Thin", "Regular", "Bold"])];
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(
+            r.problems.iter().any(|p| p.contains("leaves no master")),
+            "{:?}",
+            r.problems
+        );
+    }
+
+    #[test]
+    fn instances_interpolate_without_their_disabled_masters() {
+        let mut f = three_masters();
+        let mut light = instance("Light", 250.0, None);
+        let mut thin = instance("Thin", 100.0, None);
+        light.disabled_masters = vec!["Bold".into()];
+        thin.disabled_masters = vec!["Thin".into()];
+        f.instances = vec![light, thin];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        // Light is still between Thin and Regular; Thin can't be reached without Thin.
+        assert!(r.files.iter().any(|x| x.style == "Light"));
+        assert!(!r.files.iter().any(|x| x.style == "Thin"));
+        assert!(
+            r.problems
+                .iter()
+                .any(|p| p.starts_with("Thin:") && p.contains("can't be reached")),
+            "{:?}",
+            r.problems
+        );
+    }
+
     #[test]
     fn preset_exports_only_selected_instances_and_honours_destination() {
         let mut f = two_masters();
@@ -1407,6 +1632,7 @@ pub(crate) mod tests {
                 style_link: None,
                 rename_glyphs: Vec::new(),
                 remove_glyphs: Vec::new(),
+                disabled_masters: Vec::new(),
                 family_name: None,
                 localized_family_names: Default::default(),
             })
@@ -1671,6 +1897,7 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
             family_name: None,
             localized_family_names: Default::default(),
         });
@@ -1792,6 +2019,7 @@ pub(crate) mod tests {
                     glyphs: Vec::new(),
                     rename_glyphs: Vec::new(),
                     remove_glyphs: Vec::new(),
+                    disabled_masters: Vec::new(),
                 },
                 VariableFontSetting {
                     name: "Bold".into(),
@@ -1804,6 +2032,7 @@ pub(crate) mod tests {
                     glyphs: Vec::new(),
                     rename_glyphs: Vec::new(),
                     remove_glyphs: Vec::new(),
+                    disabled_masters: Vec::new(),
                 },
             ],
         )
@@ -1890,6 +2119,7 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
             family_name: None,
             localized_family_names: Default::default(),
         });
@@ -2091,6 +2321,7 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
             family_name: None,
             localized_family_names: Default::default(),
         });
@@ -2103,6 +2334,7 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
             family_name: None,
             localized_family_names: Default::default(),
         });
@@ -2160,6 +2392,7 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
             family_name: family.map(String::from),
             localized_family_names: Default::default(),
         }
@@ -2317,6 +2550,7 @@ pub(crate) mod tests {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
             family_name: None,
             localized_family_names: Default::default(),
         });
@@ -2333,6 +2567,7 @@ pub(crate) mod tests {
             }),
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
             family_name: None,
             localized_family_names: Default::default(),
         });

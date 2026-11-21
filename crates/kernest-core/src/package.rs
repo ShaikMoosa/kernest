@@ -45,7 +45,7 @@ use crate::model::{
 /// components; version 14 adds masks, annotations, placed images, interpolation
 /// curves, virtual masters and glyph swaps; version 15 adds sbix bitmaps, SVG
 /// drawings and number values for feature tokens; version 16 adds per-instance
-/// family names.
+/// family names and disabled masters.
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
@@ -279,10 +279,14 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
             .glyphs
             .iter()
             .any(|g| !g.bitmaps.is_empty() || g.svg.is_some());
-    let has_v16 = font
-        .instances
+    let has_v16 = font.instances.iter().any(|i| {
+        i.family_name.is_some()
+            || !i.localized_family_names.is_empty()
+            || !i.disabled_masters.is_empty()
+    }) || font
+        .variable_fonts
         .iter()
-        .any(|i| i.family_name.is_some() || !i.localized_family_names.is_empty());
+        .any(|v| !v.disabled_masters.is_empty());
     let has_vertical =
         font.info.use_typo_metrics || font.masters.iter().any(|m| !m.vertical.is_empty());
     let file = FontFile {
@@ -603,6 +607,7 @@ mod tests {
             remove_glyphs: Vec::new(),
             family_name: None,
             localized_family_names: Default::default(),
+            disabled_masters: Vec::new(),
         });
         // An instance without a family of its own doesn't need version 16.
         save(&font, &path).unwrap();
@@ -649,6 +654,7 @@ mod tests {
             remove_glyphs: Vec::new(),
             family_name: None,
             localized_family_names: Default::default(),
+            disabled_masters: Vec::new(),
         });
         save(&font, &path).unwrap();
         let fj = fs::read_to_string(path.join("font.json")).unwrap();
