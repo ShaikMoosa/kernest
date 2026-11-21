@@ -451,6 +451,50 @@ mod tests {
     }
 
     #[test]
+    fn variable_export_keeps_cvar_valid() {
+        // The cvar check (SMO-17) leaves a valid hinted variable font alone; the
+        // malformed case is tested with the audit's font in kernest-import's tests.
+        use kernest_core::{structure, Axis};
+        let wght = Axis {
+            name: "Weight".into(),
+            tag: "wght".into(),
+            min: 400.0,
+            default: 400.0,
+            max: 700.0,
+            hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
+        };
+        let f = structure::set_axes(&sample_font(), vec![wght]).unwrap();
+        let (f, _) = structure::add_master(
+            &f,
+            "m01",
+            "Bold",
+            &std::collections::BTreeMap::from([("wght".into(), 700.0)]),
+        )
+        .unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(true, false, out.path());
+        opts.autohint = true;
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(
+            !r.warnings.iter().any(|w| w.contains("cvar")),
+            "{:?}",
+            r.warnings
+        );
+        let vf = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&vf).unwrap();
+        assert!(font.table_data(Tag::new(b"fpgm")).is_some(), "still hinted");
+        // Whatever cvar is left decodes in full.
+        if let Some(cvar) = font.table_data(Tag::new(b"cvar")) {
+            let cvt = font.table_data(Tag::new(b"cvt ")).unwrap().len() / 2;
+            let (_, repair) = crate::cvar::repair_table(cvar.as_bytes(), cvt, 1).unwrap();
+            assert_eq!(repair, crate::cvar::Repair::Unchanged);
+        }
+    }
+
+    #[test]
     fn hinting_composites_keeps_glyph_names() {
         let out = tempfile::tempdir().unwrap();
         let f = crate::tests::with_composites(sample_font());

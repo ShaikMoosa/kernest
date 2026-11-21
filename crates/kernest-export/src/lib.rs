@@ -11,6 +11,7 @@ pub mod cff2;
 mod cffhint;
 mod charstring;
 mod colr;
+pub mod cvar;
 mod hint;
 pub mod names;
 mod stat;
@@ -570,7 +571,19 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
             return bytes.to_vec();
         }
         match hint::autohint(bytes, &hinting, font, location, tmp.path(), name) {
-            Ok(h) => h,
+            // The autohinter's cvar can have empty variations (SMO-17).
+            Ok(h) => match cvar::repair(&h) {
+                Ok((fixed, repair)) => {
+                    if let Some(w) = repair.warning() {
+                        report.warnings.push(format!("{label}: {w}"));
+                    }
+                    fixed
+                }
+                Err(e) => {
+                    report.problems.push(format!("{label} (cvar): {e}"));
+                    h
+                }
+            },
             Err(e) => {
                 report
                     .problems
