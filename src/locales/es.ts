@@ -2333,4 +2333,7 @@ export const es: Dict = {
   "On a metric line": "En una línea métrica",
   "In an alignment zone": "En una zona de alineación",
   "Just outside an alignment zone or metric line": "Justo fuera de una zona de alineación o línea métrica",
+  "Snap distance (px)": "Distancia de ajuste (px)",
+  "Snap distance must be between 0 and 30 pixels.": "La distancia de ajuste debe estar entre 0 y 30 píxeles.",
+  "How close a dragged node has to come to another node, a metric line or a guide to snap to it. 0 turns snapping off; holding Ctrl while dragging turns it off for that drag.": "Lo cerca que debe llegar un nodo arrastrado a otro nodo, una línea métrica o una guía para ajustarse a ella. 0 desactiva el ajuste; mantener Ctrl al arrastrar lo desactiva durante ese arrastre.",
 };

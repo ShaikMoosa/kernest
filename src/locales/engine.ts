@@ -9,6 +9,7 @@
  * the dictionaries (npm run check:i18n lists what's missing).
  */
 export const ENGINE_MESSAGES = [
+  "Snap distance must be between 0 and 30 pixels.",
   "Select closed paths to combine.",
   "Subtract and Intersect need another closed path to work on.",
   "Open paths were left out.",

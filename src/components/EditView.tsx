@@ -11,6 +11,7 @@ import { CloseIcon, SearchIcon } from "./Icons";
 import { pickImage, pickPng, pickSvgDrawing } from "../lib/desktop";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { t, tn, translateMessage } from "../lib/i18n";
+import { magneticSnap } from "../lib/snap";
 import { classifyHeight, zoneRange, type ZoneMark } from "../lib/zones";
 import { combineSelection, extendLasso, insidePolygon, isLassoClick, selectModeFor, type LassoPt, type SelectMode } from "../lib/lasso";
 import { ColorGlyph } from "./ColorGlyph";
@@ -67,7 +68,6 @@ const BOOLEAN_BUTTONS: ["union" | "subtract" | "intersect", string, React.ReactN
 
 const HIT = 7; // px
 const EDGE = 10; // px strip at the canvas border: dragging from it pulls out a new guide
-const SNAP = 6; // px: a dragged node this close to a guide lands on it
 
 /** Commands sent from the app menus to the active Edit View. */
 export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes" | "remove-overlap"
@@ -224,6 +224,8 @@ interface Props {
   showGuides?: boolean;
   /** Alignment zone bands and the node highlights for metric lines and zones. */
   showZones?: boolean;
+  /** Screen pixels within which a dragged node snaps (0: off). */
+  snapDistance?: number;
   /** View › Show Background: the background drawing behind the outline. */
   showBackground?: boolean;
   /** View › Show Image: the layer's placed image (always shown for empty glyphs). */
@@ -246,7 +248,7 @@ interface Props {
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showZones = true, showBackground = true, showImage = true, showAnnotations = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, onToggleView, masterKey, onPickLayer, reporters = [] }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showZones = true, snapDistance = 6, showBackground = true, showImage = true, showAnnotations = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, onToggleView, masterKey, onPickLayer, reporters = [] }: Props) {
   const master = masterKey ?? masterId;
   const nodeScale = handleSize === "small" ? 0.75 : handleSize === "large" ? 1.5 : 1;
   // ---------- Reporter plug-ins ----------
@@ -453,6 +455,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [guideSel, setGuideSel] = useState<GuideRef | null>(null);
   const [guideDraft, setGuideDraft] = useState<Guide | null>(null);
   const [snapGuide, setSnapGuide] = useState<GuideRef | null>(null);
+  // The magnetic line a drag snapped to, drawn as feedback until the mouse is let go.
+  const [snapLine, setSnapLine] = useState<{ x?: number; y?: number } | null>(null);
   const [editingBackground, setEditingBackground] = useState(false);
   const [measureLine, setMeasureLine] = useState<{ p0: Pt; p1: Pt } | null>(null);
   const [measurement, setMeasurement] = useState<Measurement | null>(null);
@@ -472,7 +476,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const fitted = useRef(false);
-  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; baseAnchors: LayerView["anchors"]; moved: boolean; selMode?: SelectMode; lasso?: LassoPt[]; pi?: number; ni?: number; startView?: View; lastPaths?: EditPath[]; lastComps?: Comp[]; lastAnchors?: LayerView["anchors"]; scope?: GuideScope; gi?: number; angle?: number; baseLocal?: Guide[]; baseGlobal?: Guide[]; lastGuide?: Guide }>(null);
+  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; baseAnchors: LayerView["anchors"]; moved: boolean; anchor?: string; selMode?: SelectMode; lasso?: LassoPt[]; pi?: number; ni?: number; startView?: View; lastPaths?: EditPath[]; lastComps?: Comp[]; lastAnchors?: LayerView["anchors"]; scope?: GuideScope; gi?: number; angle?: number; baseLocal?: Guide[]; baseGlobal?: Guide[]; lastGuide?: Guide }>(null);
   const pen = useRef<{ path: number | null; pendingOut: Pt | null }>({ path: null, pendingOut: null });
   const chain = useRef(Promise.resolve());
   const measureSeq = useRef(0);
@@ -918,6 +922,40 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     });
   };
 
+  /** The points that move with a selection: the selected ones and the handles of
+   *  selected on-curve nodes (they aren't snap targets for themselves). */
+  const movingKeys = (base: EditPath[], sel: Set<string>): Set<string> => {
+    const out = new Set(sel);
+    for (const k of sel) {
+      const [pi, ni] = parseKey(k);
+      const p = base[pi];
+      if (!p || !isOn(p.nodes[ni])) continue;
+      const n = p.nodes.length;
+      for (const step of [-1, 1]) {
+        const j = p.closed ? (ni + step + n) % n : ni + step;
+        if (j >= 0 && j < n && !isOn(p.nodes[j])) out.add(nodeKey(pi, j));
+      }
+    }
+    return out;
+  };
+
+  /** What a drag can snap to: the other nodes' x and y, the metric lines, the
+   *  sidebearings and the middle of the width. */
+  const snapTargets = (exclude: Set<string>): { xs: number[]; ys: number[] } => {
+    const l = latest.current.layer;
+    const xs: number[] = l ? [0, l.width, l.width / 2] : [0];
+    const ys: number[] = l ? [0, l.metrics.xHeight, l.metrics.capHeight, l.metrics.ascender, l.metrics.descender] : [0];
+    drag.current?.base.forEach((p, pi) => {
+      if (p.locked) return;
+      p.nodes.forEach((n, ni) => {
+        if (exclude.has(nodeKey(pi, ni))) return;
+        xs.push(n.x);
+        ys.push(n.y);
+      });
+    });
+    return { xs, ys };
+  };
+
   /** Aligns or distributes the selection; `origin` is for Align Selection ("points"). */
   const runAlign = (op: AlignOp) => {
     const l = latest.current.layer;
@@ -1263,7 +1301,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         }
         setAnchorSel(sel);
         setGuideSel(null);
-        drag.current = { mode: "anchor", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
+        drag.current = { mode: "anchor", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, anchor: ah };
       } else if (hit) {
         let sel = selection;
         if (e.shiftKey) {
@@ -1276,7 +1314,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         }
         setSelection(sel);
         setGuideSel(null);
-        drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
+        const [hpi, hni] = parseKey(hit);
+        drag.current = { mode: "move", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, pi: hpi, ni: hni };
       } else if (gh) {
         setGuideSel(gh);
         setSelection(new Set());
@@ -1411,18 +1450,28 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     } else if (d.mode === "anchor") {
       let dx = snapV(wp.x - d.startWorld.x), dy = snapV(wp.y - d.startWorld.y);
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+      // The grabbed anchor snaps to nodes and metric lines (Ctrl: off).
+      const a0 = d.baseAnchors.find((a) => a.name === d.anchor);
+      if (a0 && !e.ctrlKey) {
+        const t = snapTargets(new Set());
+        const r = magneticSnap({ x: a0.x + dx, y: a0.y + dy }, e.shiftKey && dx === 0 ? [] : t.xs, e.shiftKey && dy === 0 ? [] : t.ys, snapDistance / view.s);
+        dx = r.x - a0.x;
+        dy = r.y - a0.y;
+        setSnapLine(r.lineX !== undefined || r.lineY !== undefined ? { x: r.lineX, y: r.lineY } : null);
+      } else setSnapLine(null);
       d.lastAnchors = d.baseAnchors.map((a) => (anchorSel.has(a.name) ? { ...a, x: a.x + dx, y: a.y + dy } : a));
       setAnchors(d.lastAnchors);
     } else if (d.mode === "move") {
       let dx = snapV(wp.x - d.startWorld.x), dy = snapV(wp.y - d.startWorld.y);
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
-      // A dragged node landing near a guide snaps onto it.
-      if (showGuides && selection.size) {
-        const [pi, ni] = parseKey([...selection][0]);
+      // A dragged node landing near a guide snaps onto it (Ctrl: no snapping).
+      let guideSnapped = false;
+      if (showGuides && selection.size && !e.ctrlKey && snapDistance > 0) {
+        const [pi, ni] = d.pi !== undefined && d.ni !== undefined && selection.has(nodeKey(d.pi, d.ni)) ? [d.pi, d.ni] : parseKey([...selection][0]);
         const n0 = d.base[pi]?.nodes[ni];
         if (n0) {
           const cand = { x: n0.x + dx, y: n0.y + dy };
-          const thresh = SNAP / view.s;
+          const thresh = snapDistance / view.s;
           let best: { ref: GuideRef; x: number; y: number; dist: number } | null = null;
           const test = (gs: Guide[], scope: GuideScope) => gs.forEach((g, index) => {
             const a = (g.angle * Math.PI) / 180;
@@ -1439,7 +1488,22 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             dx = b.x - n0.x;
             dy = b.y - n0.y;
             setSnapGuide(b.ref);
+            guideSnapped = true;
           } else setSnapGuide(null);
+        }
+      } else setSnapGuide(null);
+      // Otherwise the grabbed node snaps to other nodes' x and y, the metric lines and
+      // the sidebearings (magnetic guides).
+      setSnapLine(null);
+      if (!guideSnapped && selection.size && !e.ctrlKey) {
+        const [pi, ni] = d.pi !== undefined && d.ni !== undefined && selection.has(nodeKey(d.pi, d.ni)) ? [d.pi, d.ni] : parseKey([...selection][0]);
+        const n0 = d.base[pi]?.nodes[ni];
+        if (n0) {
+          const t = snapTargets(movingKeys(d.base, selection));
+          const r = magneticSnap({ x: n0.x + dx, y: n0.y + dy }, e.shiftKey && dx === 0 ? [] : t.xs, e.shiftKey && dy === 0 ? [] : t.ys, snapDistance / view.s);
+          dx = r.x - n0.x;
+          dy = r.y - n0.y;
+          if (r.lineX !== undefined || r.lineY !== undefined) setSnapLine({ x: r.lineX, y: r.lineY });
         }
       }
       d.lastPaths = moveSelection(d.base, selection, dx, dy);
@@ -1545,6 +1609,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     }
     const sp = local(e);
     setSnapGuide(null);
+    setSnapLine(null);
     // Commit what the last pointer move computed (state may not have re-rendered yet).
     if (d.mode === "guide" && d.moved && d.scope && d.gi !== undefined && d.lastGuide) {
       const g = { ...d.lastGuide, x: Math.round(d.lastGuide.x), y: Math.round(d.lastGuide.y) };
@@ -2438,6 +2503,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             const a = toScreen(knifeLine.p0.x, knifeLine.p0.y), b = toScreen(knifeLine.p1.x, knifeLine.p1.y);
             return <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="knife-line" pointerEvents="none" />;
           })()}
+          {snapLine?.x !== undefined && <line x1={toScreen(snapLine.x, 0).x} x2={toScreen(snapLine.x, 0).x} y1={0} y2={size.h} className="snap-line" pointerEvents="none" />}
+          {snapLine?.y !== undefined && <line x1={0} x2={size.w} y1={toScreen(0, snapLine.y).y} y2={toScreen(0, snapLine.y).y} className="snap-line" pointerEvents="none" />}
           {lassoPts && lassoPts.length > 1 && <polygon className="marquee" points={lassoPts.map((p) => `${p.x},${p.y}`).join(" ")} pointerEvents="none" />}
           {marquee && <rect className="marquee" x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)} />}
         </svg>

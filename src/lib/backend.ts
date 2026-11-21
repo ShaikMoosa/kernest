@@ -1410,6 +1410,8 @@ export interface Appearance {
   textWidth: number;
   /** Text tabs follow the direction of their text's first letter. */
   autoDirection: boolean;
+  /** Screen pixels within which dragged nodes snap; 0 turns magnetic snapping off. */
+  snapDistance?: number;
   colors: { light: Partial<Record<CanvasElement, string>>; dark: Partial<Record<CanvasElement, string>> };
 }
 export interface Onboarding {
@@ -1432,7 +1434,7 @@ export interface UpdateInfo {
 export function initialSettings(): Settings {
   return {
     pluginEnabled: {}, shortcuts: {}, pythonPath: null,
-    appearance: { theme: null, language: null, handleSize: "medium", textWidth: 16000, autoDirection: true, colors: { light: {}, dark: {} } },
+    appearance: { theme: null, language: null, handleSize: "medium", textWidth: 16000, autoDirection: true, snapDistance: 6, colors: { light: {}, dark: {} } },
     onboarding: { welcomeDone: false, experience: null, tourEnabled: false, tourStep: 0, completed: [] },
     updates: { enabled: false, lastChecked: null, latestVersion: null, error: null },
   };

@@ -807,6 +807,7 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .hint-row .select { height: var(--k-control-md); }
 .hints-add { display: flex; gap: var(--k-space-8); }
 .hints-note { margin: 0; }
+.snap-line { stroke: #e5484d; stroke-width: 1; opacity: 0.85; }
 .zone-band { fill: var(--k-editor-hint-color, var(--k-accent-default)); opacity: 0.07; }
 .zone-mark path, .zone-mark circle { fill: none; stroke-width: 1.5; }
 .zone-line path { stroke: #c9a227; fill: rgb(201 162 39 / 0.18); }

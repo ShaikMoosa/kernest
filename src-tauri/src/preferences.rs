@@ -33,6 +33,9 @@ pub struct Appearance {
     /// Text tabs switch to right to left when their text starts with right-to-left
     /// letters, and back (SMO-33).
     pub auto_direction: bool,
+    /// How close (screen pixels) a dragged node must come to another node, a metric
+    /// line or a guide to snap to it; 0 turns magnetic snapping off (SMO-43).
+    pub snap_distance: u32,
     pub colors: ThemeColors,
 }
 
@@ -44,6 +47,7 @@ impl Default for Appearance {
             handle_size: "medium".into(),
             text_width: 16000,
             auto_direction: true,
+            snap_distance: 6,
             colors: ThemeColors::default(),
         }
     }
@@ -67,6 +71,9 @@ impl Appearance {
         }
         if !["small", "medium", "large"].contains(&self.handle_size.as_str()) {
             return Err("Choose Small, Medium or Large for the handles.".into());
+        }
+        if self.snap_distance > 30 {
+            return Err("Snap distance must be between 0 and 30 pixels.".into());
         }
         if !(1000..=100000).contains(&self.text_width) {
             return Err("Text View width must be between 1000 and 100000.".into());
@@ -121,4 +128,29 @@ pub struct UpdateSettings {
     /// The first lines of the latest release's notes.
     pub latest_notes: Option<String>,
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Appearance;
+
+    #[test]
+    fn snap_distance_defaults_to_six_and_stays_in_range() {
+        let a = Appearance::default();
+        assert_eq!(a.snap_distance, 6);
+        assert!(a.validate().is_ok());
+        // Older settings files without the field get the default.
+        let old: Appearance = serde_json::from_str(r#"{"handleSize":"small"}"#).unwrap();
+        assert_eq!(old.snap_distance, 6);
+        let off = Appearance {
+            snap_distance: 0,
+            ..Appearance::default()
+        };
+        assert!(off.validate().is_ok());
+        let far = Appearance {
+            snap_distance: 31,
+            ..Appearance::default()
+        };
+        assert!(far.validate().is_err());
+    }
 }
