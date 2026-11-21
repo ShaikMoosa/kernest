@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { backend, type DocStatus, type FeaturesView, type FontInfo, type KernMode, type Location, type MetricName, type Milestone, type ShapedView, type TextItem, type TextLayout } from "../lib/backend";
+import { backend, type DocStatus, type FeaturesView, type FontInfo, type KernMode, type Location, type MetricName, type Milestone, type ShapedView, type TextDirection, type TextItem, type TextLayout } from "../lib/backend";
 import { t } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
 import { wrapRows } from "../lib/onboarding";
 import { loadSamples, onSamplesChanged } from "../lib/samples";
+import { firstStrongRtl, visualOrder } from "../lib/bidi";
 
 const PRESETS = loadSamples();
 const MISSING_WIDTH = 500;
@@ -13,9 +14,81 @@ const MODES: { id: KernMode; label: string; title: string }[] = [
   { id: "rightException", label: "Right exception", title: "Kern the left group against this right glyph" },
   { id: "exception", label: "Exception", title: "Kern exactly these two glyphs" },
 ];
+const DIRECTIONS: { id: TextDirection; label: string; title: string; icon: string }[] = [
+  { id: "ltr", label: "Left to right", title: "Left to right (Ctrl+Alt+Shift+←)", icon: "M3 6h11M3 11h7M3 16h11M15 11h6M18 8l3 3-3 3" },
+  { id: "rtl", label: "Right to left", title: "Right to left (Ctrl+Alt+Shift+→)", icon: "M10 6h11M14 11h7M10 16h11M3 11h6M6 8l-3 3 3 3" },
+  { id: "vertical", label: "Vertical", title: "Vertical, top to bottom (Ctrl+Alt+Shift+↓)", icon: "M18 3v11M13 3v7M8 3v11M13 15v6M10 18l3 3 3-3" },
+];
 
 type Glyph = Extract<TextItem, { type: "glyph" }>;
 interface Cursor { line: number; pos: number }
+
+/** One item to place: advances and offsets in font units. */
+interface GeomItem { adv: number; kern: number; rtl: boolean; vAdv: number; xOff: number; yOff: number }
+interface Box { x: number; y: number; w: number; h: number }
+/** A placed item: where its glyph origin goes and the box it occupies, in pixels. */
+interface Placed { ox: number; oy: number; box: Box }
+interface Caret { x1: number; y1: number; x2: number; y2: number }
+/** A line (a column in vertical text): cells and carets by logical index. */
+interface Row { cells: Placed[]; carets: Caret[]; base: number; start: number; end: number }
+
+/**
+ * Lays rows out in the writing direction. Horizontal rows run left to right, or end at
+ * the right edge in a right-to-left paragraph, reordered by `visualOrder` unless
+ * `ordered` (shaped glyphs come in visual order); kerning sits on the side of the
+ * glyph's direction. Vertical rows are columns from right to left, top to bottom.
+ */
+function layoutRows(lines: GeomItem[][], g: { scale: number; pad: number; asc: number; desc: number; lineH: number; vertical: boolean; paraRtl: boolean; ordered: boolean; minLen: number }): { rows: Row[]; width: number; height: number } {
+  const s = g.scale;
+  const len = (ln: GeomItem[]) => ln.reduce((n, it) => n + (g.vertical ? it.vAdv : it.adv + it.kern), 0) * s;
+  const longest = Math.max(g.minLen, ...lines.map(len));
+  const across = g.lineH * s;
+  if (g.vertical) {
+    const width = Math.max(400, lines.length * across + 2 * g.pad);
+    const rows = lines.map((ln): Row => {
+      const li = lines.indexOf(ln);
+      const cx = width - g.pad - (li + 0.5) * across;
+      const caret = (y: number): Caret => ({ x1: cx - across * 0.42, x2: cx + across * 0.42, y1: y, y2: y });
+      let pen = g.pad;
+      const cells: Placed[] = [];
+      const carets: Caret[] = [];
+      for (const it of ln) {
+        carets.push(caret(pen));
+        const w = (it.adv || g.lineH * 0.8) * s;
+        cells.push({ ox: cx + it.xOff * s, oy: pen - it.yOff * s, box: { x: cx - w / 2, y: pen, w, h: it.vAdv * s } });
+        pen += it.vAdv * s;
+      }
+      carets.push(caret(pen));
+      return { cells, carets, base: cx, start: g.pad, end: pen };
+    });
+    return { rows, width, height: longest + 2 * g.pad };
+  }
+  const width = longest + 2 * g.pad;
+  const rows = lines.map((ln, li): Row => {
+    const by = g.pad + (li * g.lineH + g.asc * 1.1) * s;
+    const start = g.paraRtl ? width - g.pad - len(ln) : g.pad;
+    let x = start;
+    const order = g.ordered ? ln.map((_, i) => i) : visualOrder(ln.map((it) => it.rtl), g.paraRtl);
+    const cells: Placed[] = new Array(ln.length);
+    for (const i of order) {
+      const it = ln[i];
+      if (it.rtl) x += it.kern * s;
+      cells[i] = { ox: x + it.xOff * s, oy: by - it.yOff * s, box: { x, y: by - g.asc * s, w: it.adv * s, h: (g.asc - g.desc) * s } };
+      x += it.adv * s;
+      if (!it.rtl) x += it.kern * s;
+    }
+    // The leading edge is the left one for left-to-right glyphs, the right one otherwise.
+    const edge = (i: number, leading: boolean) => { const b = cells[i].box; return ln[i].rtl === leading ? b.x + b.w : b.x; };
+    const y1 = by - g.asc * 1.05 * s, y2 = by - g.desc * 1.05 * s;
+    const carets = Array.from({ length: ln.length + 1 }, (_, p): Caret => {
+      const cx = ln.length === 0 ? start : p < ln.length && (p === 0 || ln[p].rtl === ln[p - 1].rtl) ? edge(p, true) : edge(p - 1, false);
+      return { x1: cx, x2: cx, y1, y2 };
+    });
+    return { cells, carets, base: by, start, end: x };
+  });
+  const height = lines.length ? g.pad + ((lines.length - 1) * g.lineH + g.asc * 1.1) * s + -g.desc * 1.2 * s + g.pad : 400;
+  return { rows, width, height };
+}
 
 function NumField({ label, value, title, disabled, onCommit }: { label: string; value: number | null; title?: string; disabled?: boolean; onCommit: (v: number) => void }) {
   const shown = value === null ? "" : String(Math.round(value));
@@ -64,30 +137,49 @@ interface Props {
   onError: (e: unknown) => void;
   onOpenGlyph: (name: string) => void;
   textWidth?: number;
+  /** Follow the writing direction of the text's first letter (Appearance setting). */
+  autoDirection?: boolean;
   onMilestone?: (milestone: Milestone) => void;
   /** The tab's title follows the sample text. */
   onTitle?: (title: string) => void;
 }
 
 /** S06 · Text view for spacing and kerning. */
-export function TextView({ masterId, version, active, onChanged, onError, onOpenGlyph, textWidth = 16000, onMilestone, onTitle }: Props) {
+export function TextView({ masterId, version, active, onChanged, onError, onOpenGlyph, textWidth = 16000, autoDirection = true, onMilestone, onTitle }: Props) {
   const [text, setText] = useState(PRESETS[0]);
   const [samples, setSamples] = useState(loadSamples);
   useEffect(() => onSamplesChanged(() => setSamples(loadSamples())), []);
   useEffect(() => { onTitle?.(text.trim()); }, [text, onTitle]);
+  // The tab's writing direction (session state, per tab).
+  const [direction, setDirection] = useState<TextDirection>("ltr");
+  const vertical = direction === "vertical";
+  const paraRtl = direction === "rtl";
+  // Typing right-to-left text switches the tab to right to left, and back.
+  useEffect(() => {
+    if (!autoDirection) return;
+    const rtl = firstStrongRtl(text);
+    if (rtl !== null) setDirection((d) => (d === "vertical" ? d : rtl ? "rtl" : "ltr"));
+  }, [text, autoDirection]);
   const [info, setInfo] = useState<FontInfo | null>(null);
   const [rawLayout, setLayout] = useState<TextLayout | null>(null);
   // The setting is in 1/1000 em; advances are in font units, so scale by the UPM.
   const wrapWidth = textWidth / 1000 * (info?.unitsPerEm ?? 1000);
-  const layout = useMemo(() => rawLayout ? { ...rawLayout, lines: wrapRows(rawLayout.lines, wrapWidth, item => item.type === "glyph" ? item.width + item.kern : MISSING_WIDTH) } : null, [rawLayout, wrapWidth]);
+  const layout = useMemo(() => {
+    if (!rawLayout) return null;
+    const em = rawLayout.metrics.ascender - rawLayout.metrics.descender;
+    const advance = vertical
+      ? (item: TextItem) => (item.type === "glyph" ? item.vAdvance : em)
+      : (item: TextItem) => (item.type === "glyph" ? item.width + item.kern : MISSING_WIDTH);
+    return { ...rawLayout, lines: wrapRows(rawLayout.lines, wrapWidth, advance) };
+  }, [rawLayout, wrapWidth, vertical]);
   const [size, setSize] = useState(140);
   const [mode, setMode] = useState<KernMode>("group");
   const [cursor, setCursor] = useState<Cursor>({ line: 0, pos: 1 });
   const [showMetrics, setShowMetrics] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
   const chain = useRef(Promise.resolve());
-  const latest = useRef({ layout, cursor, mode, previewing: false, shapeOn: false });
-  latest.current = { layout, cursor, mode, previewing: latest.current?.previewing ?? false, shapeOn: latest.current?.shapeOn ?? false };
+  const latest = useRef({ layout, cursor, mode, direction, previewing: false, shapeOn: false });
+  latest.current = { layout, cursor, mode, direction, previewing: latest.current?.previewing ?? false, shapeOn: latest.current?.shapeOn ?? false };
 
   // "" = the current master; "i:<name>" = an instance; "custom" = the sliders below.
   const [preview, setPreview] = useState("");
@@ -111,16 +203,18 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   const [panelOpen, setPanelOpen] = useState(() => { try { return localStorage.getItem("kernest.textPreviewPanel") !== "0"; } catch { return true; } });
   const [panelSize, setPanelSize] = useState(36);
   const [panelLayouts, setPanelLayouts] = useState<{ id: string; name: string; layout: TextLayout }[]>([]);
+  // The panel runs horizontally; vertical tabs preview left to right.
+  const panelDirection: TextDirection = paraRtl ? "rtl" : "ltr";
   useEffect(() => { try { localStorage.setItem("kernest.textPreviewPanel", panelOpen ? "1" : "0"); } catch { /* a convenience only */ } }, [panelOpen]);
   useEffect(() => {
     if (!panelOpen || !info) return;
     let live = true;
     const id = setTimeout(() => {
-      Promise.all(info.masters.map((m) => backend.textLayout(text, m.id).then((layout) => ({ id: m.id, name: m.name, layout }))))
+      Promise.all(info.masters.map((m) => backend.textLayout(text, m.id, undefined, panelDirection).then((layout) => ({ id: m.id, name: m.name, layout }))))
         .then((rows) => { if (live) setPanelLayouts(rows); }, () => {});
     }, 200);
     return () => { live = false; clearTimeout(id); };
-  }, [panelOpen, info, text, version]);
+  }, [panelOpen, info, text, version, panelDirection]);
 
   // ---------- Feature preview ----------
   const [featView, setFeatView] = useState<FeaturesView | null>(null);
@@ -129,7 +223,13 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   // Only the tags the user flipped; the rest follow what's in the font.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   const [rawShaped, setShaped] = useState<ShapedView | null>(null);
-  const shaped = useMemo(() => rawShaped ? { ...rawShaped, lines: wrapRows(rawShaped.lines, wrapWidth, glyph => glyph.advance, glyph => glyph.cluster) } : null, [rawShaped, wrapWidth]);
+  const shaped = useMemo(() => {
+    if (!rawShaped) return null;
+    if (vertical) return { ...rawShaped, lines: wrapRows(rawShaped.lines, wrapWidth, (glyph) => -glyph.yAdvance, (glyph) => glyph.cluster) };
+    // Shaped lines come in visual order: wrap a right-to-left line from its right end.
+    if (paraRtl) return { ...rawShaped, lines: rawShaped.lines.flatMap((line) => wrapRows([[...line].reverse()], wrapWidth, (glyph) => glyph.advance, (glyph) => glyph.cluster).map((row) => row.reverse())) };
+    return { ...rawShaped, lines: wrapRows(rawShaped.lines, wrapWidth, (glyph) => glyph.advance, (glyph) => glyph.cluster) };
+  }, [rawShaped, wrapWidth, vertical, paraRtl]);
   latest.current.shapeOn = shapeOn;
   const featRef = useRef<HTMLDivElement>(null);
   useEffect(() => { backend.features().then(setFeatView, () => setFeatView(null)); }, [version]);
@@ -142,12 +242,13 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
     return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
   }, [featOpen]);
   const featTags = useMemo(() => featView ? [...new Set([...featView.available, ...featView.handwritten])].sort() : [], [featView]);
-  const featChecked = (tag: string) => overrides[tag] ?? (featView?.automatic.includes(tag) || featView?.handwritten.includes(tag) || false);
+  // aalt only lists alternates for glyph palettes; text never applies it unasked.
+  const featChecked = (tag: string) => overrides[tag] ?? (tag !== "aalt" && (featView?.automatic.includes(tag) || featView?.handwritten.includes(tag) || false));
   // Explicit on/off per tag so default-on features like liga can be switched off too.
   const featSettings = useMemo(() => featTags.map((tag) => `${tag}=${featChecked(tag) ? 1 : 0}`), [featTags, overrides, featView]);
 
-  const reload = useCallback(() => backend.textLayout(text, masterId, location).then(result => { setLayout(result); if (preview.startsWith("i:")) onMilestone?.("instance"); }, onError), [text, masterId, location, preview, onMilestone, onError]);
-  const reloadShaped = useCallback(() => backend.shapeText(text, masterId, location, featSettings).then(result => { setShaped(result); if (preview.startsWith("i:")) onMilestone?.("instance"); }, onError), [text, masterId, location, featSettings, preview, onMilestone, onError]);
+  const reload = useCallback(() => backend.textLayout(text, masterId, location, direction).then(result => { setLayout(result); if (preview.startsWith("i:")) onMilestone?.("instance"); }, onError), [text, masterId, location, direction, preview, onMilestone, onError]);
+  const reloadShaped = useCallback(() => backend.shapeText(text, masterId, location, featSettings, direction).then(result => { setShaped(result); if (preview.startsWith("i:")) onMilestone?.("instance"); }, onError), [text, masterId, location, featSettings, direction, preview, onMilestone, onError]);
   useEffect(() => {
     if (!shapeOn) { reload(); return; }
     // Shaping compiles a preview font; don't do it on every keystroke.
@@ -190,6 +291,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   }, [masterId, run]);
 
   const setMetric = (glyph: string, metric: MetricName, v: number) => run(async () => (await backend.setMetric(glyph, masterId, metric, v)).status, "spaced");
+  const setVertical = (glyph: string, which: "advance" | "tsb" | "bsb", v: number) => run(() => backend.setVerticalMetric(glyph, masterId, which, v), "spaced");
   const setGroups = (glyph: string, l: string | null, r: string | null) => run(() => backend.setGlyphGroups(glyph, l, r));
 
   // ---------- Geometry ----------
@@ -197,75 +299,79 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   const metrics = layout?.metrics;
   const scale = size / 1000;
   const pad = 32;
-  const lineH = metrics ? (metrics.ascender - metrics.descender) * 1.25 : 1250;
-  const baseline = (line: number) => pad + (line * lineH + (metrics?.ascender ?? 800) * 1.1) * scale;
-  const positions = useMemo(() => (layout?.lines ?? []).map((line) => {
-    const xs = [pad];
-    let x = pad;
-    for (const it of line) {
-      x += ((it.type === "glyph" ? it.width + it.kern : MISSING_WIDTH)) * scale;
-      xs.push(x);
-    }
-    return xs;
-  }), [layout, scale]);
+  const minLen = textWidth * scale;
+  const asc = metrics?.ascender ?? 800;
+  const desc = metrics?.descender ?? -200;
+  const lineH = (asc - desc) * 1.25;
+  const geom = useMemo(() => layoutRows((layout?.lines ?? []).map((line) => line.map((it): GeomItem => {
+    const em = asc - desc;
+    if (it.type === "missing") return { adv: MISSING_WIDTH, kern: 0, rtl: it.rtl, vAdv: em, xOff: vertical ? -MISSING_WIDTH / 2 : 0, yOff: vertical ? -asc : 0 };
+    return { adv: it.width, kern: vertical ? 0 : it.kern, rtl: it.rtl, vAdv: it.vAdvance, xOff: vertical ? -it.width / 2 : 0, yOff: vertical ? -it.vOrigin : 0 };
+  })), { scale, pad, asc, desc, lineH, vertical, paraRtl, ordered: false, minLen }), [layout, scale, asc, desc, lineH, vertical, paraRtl, minLen]);
 
   // Shaped preview geometry: advances and offsets come from the shaper, not kerning.
   const showShaped = shapeOn && shaped !== null;
   const sMetrics = shaped?.metrics;
-  const sLineH = sMetrics ? (sMetrics.ascender - sMetrics.descender) * 1.25 : 1250;
-  const sBaseline = (line: number) => pad + (line * sLineH + (sMetrics?.ascender ?? 800) * 1.1) * scale;
-  const sPositions = useMemo(() => (shaped?.lines ?? []).map((line) => {
-    const xs = [pad];
-    let x = pad;
-    for (const g of line) {
-      x += g.advance * scale;
-      xs.push(x);
-    }
-    return xs;
-  }), [shaped, scale]);
+  const sAsc = sMetrics?.ascender ?? 800;
+  const sDesc = sMetrics?.descender ?? -200;
+  const sGeom = useMemo(() => layoutRows((shaped?.lines ?? []).map((line) => line.map((g): GeomItem => ({
+    adv: g.advance, kern: 0, rtl: false, vAdv: -g.yAdvance, xOff: g.xOffset, yOff: g.yOffset,
+  }))), { scale, pad, asc: sAsc, desc: sDesc, lineH: (sAsc - sDesc) * 1.25, vertical, paraRtl, ordered: true, minLen }), [shaped, scale, sAsc, sDesc, vertical, paraRtl, minLen]);
 
-  const activePositions = showShaped ? sPositions : positions;
-  const width = Math.max(textWidth * scale + pad * 2, ...activePositions.map((xs) => xs[xs.length - 1] + pad));
-  const activeLines = showShaped ? shaped.lines.length : layout?.lines.length;
-  const activeBaseline = showShaped ? sBaseline : baseline;
-  const activeDescender = (showShaped ? sMetrics : metrics)?.descender ?? -200;
-  const height = activeLines ? activeBaseline(activeLines - 1) + (-activeDescender * 1.2) * scale + pad : 400;
+  const active_ = showShaped ? sGeom : geom;
+  const width = active_.width;
+  const height = active_.height;
+  // Right-to-left and vertical text start at the right edge: keep it in view.
+  const canvasRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (el) el.scrollLeft = direction === "ltr" ? 0 : el.scrollWidth;
+  }, [direction, width]);
+
+  /** The row nearest the point, by its baseline (or column centre in vertical text). */
+  function nearestRow(rows: Row[], x: number, y: number): number {
+    let best = 0;
+    rows.forEach((r, i) => {
+      const d = vertical ? Math.abs(r.base - x) : Math.abs((r.carets[0].y1 + r.carets[0].y2) / 2 - y);
+      const b = rows[best];
+      const db = vertical ? Math.abs(b.base - x) : Math.abs((b.carets[0].y1 + b.carets[0].y2) / 2 - y);
+      if (d < db) best = i;
+    });
+    return best;
+  }
 
   function placeCursor(e: React.MouseEvent) {
-    if (!layout || shapeOn) return;
+    if (!layout || shapeOn || geom.rows.length === 0) return;
     const r = svgRef.current!.getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
-    let line = 0;
-    while (line < layout.lines.length - 1 && y > baseline(line) - (metrics?.descender ?? -200) * scale + 0.1 * lineH * scale) line++;
-    const xs = positions[line];
+    const line = nearestRow(geom.rows, x, y);
+    const carets = geom.rows[line].carets;
     let best = 0;
-    xs.forEach((bx, i) => { if (Math.abs(bx - x) < Math.abs(xs[best] - x)) best = i; });
+    carets.forEach((c, i) => {
+      const along = (k: Caret) => (vertical ? Math.abs(k.y1 - y) : Math.abs(k.x1 - x));
+      if (along(c) < along(carets[best])) best = i;
+    });
     setCursor({ line, pos: best });
   }
 
   function glyphAt(e: React.MouseEvent): string | null {
     const r = svgRef.current!.getBoundingClientRect();
     const x = e.clientX - r.left, y = e.clientY - r.top;
-    if (showShaped) {
-      for (let li = 0; li < shaped.lines.length; li++) {
-        if (Math.abs(y - (sBaseline(li) - 300 * scale)) > sLineH * scale * 0.6) continue;
-        const xs = sPositions[li];
-        for (let i = 0; i < shaped.lines[li].length; i++) {
-          if (x >= xs[i] && x < xs[i + 1]) return shaped.lines[li][i].name;
-        }
+    const hit = (rows: Row[]) => {
+      for (let li = 0; li < rows.length; li++) {
+        const i = rows[li].cells.findIndex((c) => x >= c.box.x && x < c.box.x + c.box.w && y >= c.box.y && y < c.box.y + c.box.h);
+        if (i >= 0) return { li, i };
       }
       return null;
+    };
+    if (showShaped) {
+      const h = hit(sGeom.rows);
+      return h ? shaped.lines[h.li][h.i].name : null;
     }
     if (!layout) return null;
-    for (let li = 0; li < layout.lines.length; li++) {
-      if (Math.abs(y - (baseline(li) - 300 * scale)) > lineH * scale * 0.6) continue;
-      const xs = positions[li];
-      for (let i = 0; i < layout.lines[li].length; i++) {
-        const it = layout.lines[li][i];
-        if (it.type === "glyph" && x >= xs[i] && x < xs[i + 1]) return it.name;
-      }
-    }
-    return null;
+    const h = hit(geom.rows);
+    const it = h ? layout.lines[h.li][h.i] : undefined;
+    return it?.type === "glyph" ? it.name : null;
   }
 
   // ---------- Keyboard ----------
@@ -273,15 +379,22 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
+      // Ctrl+Alt+Shift+←/→/↓ sets the writing direction, also while typing.
+      if (e.ctrlKey && e.altKey && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowDown")) {
+        setDirection(e.key === "ArrowLeft" ? "ltr" : e.key === "ArrowRight" ? "rtl" : "vertical");
+        e.preventDefault();
+        return;
+      }
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (latest.current.shapeOn) return;
-      const { layout, cursor } = latest.current;
+      const { layout, cursor, direction: dir } = latest.current;
       if (!layout) return;
       const line = layout.lines[cursor.line] ?? [];
       if (e.altKey && !e.ctrlKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         const left = line[cursor.pos - 1], right = line[cursor.pos];
-        if (left?.type === "glyph" && right?.type === "glyph") {
-          const step = (e.shiftKey ? 1 : 10) * (e.key === "ArrowLeft" ? -1 : 1);
+        // Kerning is horizontal; in right-to-left text the next glyph is on the left.
+        if (dir !== "vertical" && left?.type === "glyph" && right?.type === "glyph") {
+          const step = (e.shiftKey ? 1 : 10) * (e.key === "ArrowLeft" ? -1 : 1) * (dir === "rtl" ? -1 : 1);
           kern(left, right, (v) => v + step);
         }
         e.preventDefault();
@@ -289,11 +402,22 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
       }
       if (e.ctrlKey || e.altKey) return;
       const move = (c: Cursor) => { setCursor(c); e.preventDefault(); };
-      if (e.key === "ArrowLeft") move(cursor.pos > 0 ? { ...cursor, pos: cursor.pos - 1 } : cursor);
-      else if (e.key === "ArrowRight") move(cursor.pos < line.length ? { ...cursor, pos: cursor.pos + 1 } : cursor);
-      else if (e.key === "ArrowUp" && cursor.line > 0) move({ line: cursor.line - 1, pos: Math.min(cursor.pos, layout.lines[cursor.line - 1].length) });
-      else if (e.key === "ArrowDown" && cursor.line < layout.lines.length - 1) move({ line: cursor.line + 1, pos: Math.min(cursor.pos, layout.lines[cursor.line + 1].length) });
-      else if (e.key === "Home") move({ ...cursor, pos: 0 });
+      const forward = () => move(cursor.pos < line.length ? { ...cursor, pos: cursor.pos + 1 } : cursor);
+      const back = () => move(cursor.pos > 0 ? { ...cursor, pos: cursor.pos - 1 } : cursor);
+      const toLine = (d: number) => {
+        const l = cursor.line + d;
+        if (l >= 0 && l < layout.lines.length) move({ line: l, pos: Math.min(cursor.pos, layout.lines[l].length) });
+      };
+      if (dir === "vertical") {
+        if (e.key === "ArrowDown") forward();
+        else if (e.key === "ArrowUp") back();
+        else if (e.key === "ArrowLeft") toLine(1);
+        else if (e.key === "ArrowRight") toLine(-1);
+      } else if (e.key === "ArrowLeft") { if (dir === "rtl") forward(); else back(); }
+      else if (e.key === "ArrowRight") { if (dir === "rtl") back(); else forward(); }
+      else if (e.key === "ArrowUp") toLine(-1);
+      else if (e.key === "ArrowDown") toLine(1);
+      if (e.key === "Home") move({ ...cursor, pos: 0 });
       else if (e.key === "End") move({ ...cursor, pos: line.length });
     };
     window.addEventListener("keydown", onKey);
@@ -310,15 +434,26 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   const prev = ci > 0 && line[ci - 1].type === "glyph" ? (line[ci - 1] as Glyph) : undefined;
   const next = ci >= 0 && line[ci + 1]?.type === "glyph" ? (line[ci + 1] as Glyph) : undefined;
   const pairLabel = (g?: Glyph) => (g?.kernLeft ? `${g.kernLeft} | ${g.kernRight}` : t("no kerning"));
+  // The previous glyph sits to the right in right-to-left text.
+  const prevLabel = prev ? (paraRtl ? `${prev.name} ▸` : `◂ ${prev.name}`) : paraRtl ? `${t("kern")} ▸` : `◂ ${t("kern")}`;
+  const nextLabel = next ? (paraRtl ? `◂ ${next.name}` : `${next.name} ▸`) : paraRtl ? `◂ ${t("kern")}` : `${t("kern")} ▸`;
 
   return (
     <div className="textview">
       <div className="toolbar" role="toolbar" aria-label={t("Text tools")}>
-        <input className="text-input" value={text} onChange={(e) => setText(e.target.value)} aria-label={t("Sample text")} placeholder={t("Type text, or /glyphname")} spellCheck={false} />
+        <input className="text-input" value={text} dir="auto" onChange={(e) => setText(e.target.value)} aria-label={t("Sample text")} placeholder={t("Type text, or /glyphname")} spellCheck={false} />
         <select className="select" aria-label={t("Sample strings")} value="" onChange={(e) => e.target.value && setText(e.target.value)}>
           <option value="">{t("Samples…")}</option>
           {samples.map((p, i) => <option key={`${i}:${p}`} value={p}>{p}</option>)}
         </select>
+        <span className="toolbar-sep" />
+        <div className="segmented dir-seg" role="radiogroup" aria-label={t("Writing direction")}>
+          {DIRECTIONS.map((d) => (
+            <button key={d.id} role="radio" aria-checked={direction === d.id} aria-label={t(d.label)} title={t(d.title)} className={`segment${direction === d.id ? " is-selected" : ""}`} onClick={() => setDirection(d.id)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d.icon} /></svg>
+            </button>
+          ))}
+        </div>
         <span className="toolbar-sep" />
         <div className="segmented" role="radiogroup" aria-label={t("Kerning mode")}>
           {MODES.map((m) => (
@@ -385,47 +520,56 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
           </div>
         </div>
       )}
-      <div className="text-canvas" hidden={!text.trim()}>
-        <svg ref={svgRef} width={width} height={height} style={{ minWidth: "100%" }} onMouseDown={placeCursor} onDoubleClick={(e) => { const n = glyphAt(e); if (n) onOpenGlyph(n); }}>
+      <div className="text-canvas" ref={canvasRef} hidden={!text.trim()}>
+        <svg ref={svgRef} width={width} height={height} style={{ minWidth: "100%" }} data-direction={direction} onMouseDown={placeCursor} onDoubleClick={(e) => { const n = glyphAt(e); if (n) onOpenGlyph(n); }}>
           {!showShaped && layout?.lines.map((ln, li) => {
-            const by = baseline(li);
-            const xs = positions[li];
-            const pairKern = cursor.line === li ? (ln[cursor.pos - 1]?.type === "glyph" ? (ln[cursor.pos - 1] as Glyph) : undefined) : undefined;
+            const row = geom.rows[li];
+            if (!row) return null;
+            const by = row.base;
+            const pairKern = cursor.line === li && !vertical ? (ln[cursor.pos - 1]?.type === "glyph" ? (ln[cursor.pos - 1] as Glyph) : undefined) : undefined;
+            const caret = cursor.line === li ? row.carets[cursor.pos] : undefined;
             return (
               <g key={li}>
-                {showMetrics && metrics && ([[t("Ascender"), metrics.ascender], [t("x-height"), metrics.xHeight], [t("Baseline"), 0], [t("Descender"), metrics.descender]] as const).map(([label, m]) => (
+                {showMetrics && metrics && !vertical && ([[t("Ascender"), metrics.ascender], [t("x-height"), metrics.xHeight], [t("Baseline"), 0], [t("Descender"), metrics.descender]] as const).map(([label, m]) => (
                   <g key={label}>
                     <line x1={0} x2={Math.max(width, 6000)} y1={by - m * scale} y2={by - m * scale} className={m === 0 ? "metric-line baseline" : "metric-line"} />
-                    <text x={xs[xs.length - 1] + 24} y={by - m * scale - 4} className="metric-label">{label}</text>
+                    <text x={paraRtl ? row.start - 24 : row.end + 24} y={by - m * scale - 4} className="metric-label" textAnchor={paraRtl ? "end" : undefined}>{label}</text>
                   </g>
                 ))}
-                {ln.map((it, i) => it.type === "glyph" ? (
-                  <g key={i}>
-                    {showMetrics && <rect x={xs[i]} y={by - (metrics?.ascender ?? 800) * scale} width={it.width * scale} height={((metrics?.ascender ?? 800) - (metrics?.descender ?? -200)) * scale} className="sb-box" />}
-                    {it.svg ? (<>
-                      {it.color?.length ? (
-                        <g transform={`translate(${xs[i]} ${by}) scale(${scale} ${scale})`}><title>{it.name}</title><ColorGlyph layers={it.color} palette={layout?.palette ?? []} /></g>
-                      ) : (
-                        <path d={it.svg} transform={`translate(${xs[i]} ${by}) scale(${scale} ${-scale})`} className={it.incompatible ? "text-glyph is-incompatible" : "text-glyph"}><title>{it.incompatible ? t("{name}: masters can't be interpolated (default master shown)", { name: it.name }) : it.name}</title></path>
+                {showMetrics && vertical && <line x1={by} x2={by} y1={0} y2={height} className="metric-line baseline" />}
+                {ln.map((it, i) => {
+                  const cell = row.cells[i];
+                  const b = cell.box;
+                  return it.type === "glyph" ? (
+                    <g key={i}>
+                      {showMetrics && <rect x={b.x} y={b.y} width={b.w} height={b.h} className="sb-box" />}
+                      {it.svg ? (<>
+                        {it.color?.length ? (
+                          <g transform={`translate(${cell.ox} ${cell.oy}) scale(${scale} ${scale})`}><title>{it.name}</title><ColorGlyph layers={it.color} palette={layout?.palette ?? []} /></g>
+                        ) : (
+                          <path d={it.svg} transform={`translate(${cell.ox} ${cell.oy}) scale(${scale} ${-scale})`} className={it.incompatible ? "text-glyph is-incompatible" : "text-glyph"}><title>{it.incompatible ? t("{name}: masters can't be interpolated (default master shown)", { name: it.name }) : it.name}</title></path>
+                        )}
+                      </>) : (
+                        <text x={b.x + b.w / 2} y={cell.oy} className="text-placeholder" fontSize={size * 0.7}>{it.unicode ? String.fromCodePoint(parseInt(it.unicode, 16)) : "?"}</text>
                       )}
-                    </>) : (
-                      <text x={xs[i] + (it.width * scale) / 2} y={by} className="text-placeholder" fontSize={size * 0.7}>{it.unicode ? String.fromCodePoint(parseInt(it.unicode, 16)) : "?"}</text>
-                    )}
-                    {it.kern !== 0 && (
-                      <text x={xs[i] + (it.width + it.kern) * scale} y={by + 18} className={`kern-mark ${it.kern < 0 ? "neg" : "pos"}`}>{it.kern > 0 ? `+${it.kern}` : it.kern}</text>
-                    )}
-                  </g>
-                ) : (
-                  <g key={i}>
-                    <rect x={xs[i] + 4} y={by - 600 * scale} width={MISSING_WIDTH * scale - 8} height={600 * scale} className="missing-box" />
-                    <text x={xs[i] + (MISSING_WIDTH * scale) / 2} y={by - 260 * scale} className="missing-text">{it.text}</text>
-                  </g>
-                ))}
-                {cursor.line === li && (
+                      {!vertical && it.kern !== 0 && (
+                        <text x={it.rtl ? b.x - it.kern * scale : b.x + (it.width + it.kern) * scale} y={by + 18} className={`kern-mark ${it.kern < 0 ? "neg" : "pos"}`}>{it.kern > 0 ? `+${it.kern}` : it.kern}</text>
+                      )}
+                    </g>
+                  ) : (
+                    <g key={i}>
+                      {vertical
+                        ? <rect x={b.x + 4} y={b.y + 4} width={Math.max(0, b.w - 8)} height={Math.max(0, b.h - 8)} className="missing-box" />
+                        : <rect x={b.x + 4} y={by - 600 * scale} width={MISSING_WIDTH * scale - 8} height={600 * scale} className="missing-box" />}
+                      <text x={b.x + b.w / 2} y={vertical ? b.y + b.h / 2 : by - 260 * scale} className="missing-text">{it.text}</text>
+                    </g>
+                  );
+                })}
+                {caret && (
                   <>
-                    <line x1={xs[cursor.pos]} x2={xs[cursor.pos]} y1={by - (metrics?.ascender ?? 800) * 1.05 * scale} y2={by - (metrics?.descender ?? -200) * 1.05 * scale} className="text-cursor" />
+                    <line x1={caret.x1} x2={caret.x2} y1={caret.y1} y2={caret.y2} className="text-cursor" />
                     {pairKern && ln[cursor.pos]?.type === "glyph" && (
-                      <g transform={`translate(${xs[cursor.pos]} ${by - (metrics?.descender ?? -200) * scale + 22})`}>
+                      <g transform={`translate(${caret.x1} ${by - desc * scale + 22})`}>
                         {(() => {
                           const value = pairKern.kern === 0 ? "0" : pairKern.kern > 0 ? `+${pairKern.kern}` : String(pairKern.kern);
                           const label = pairKern.kernLeft ? `${value}  ${pairKern.kernLeft} | ${pairKern.kernRight}` : value;
@@ -443,15 +587,17 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
             );
           })}
           {showShaped && shaped.lines.map((ln, li) => {
-            const by = sBaseline(li);
-            const xs = sPositions[li];
+            const row = sGeom.rows[li];
+            if (!row) return null;
+            const by = row.base;
             return (
               <g key={li}>
-                {showMetrics && sMetrics && [sMetrics.ascender, sMetrics.xHeight, 0, sMetrics.descender].map((m) => (
+                {showMetrics && sMetrics && !vertical && [sMetrics.ascender, sMetrics.xHeight, 0, sMetrics.descender].map((m) => (
                   <line key={m} x1={0} x2={Math.max(width, 6000)} y1={by - m * scale} y2={by - m * scale} className={m === 0 ? "metric-line baseline" : "metric-line"} />
                 ))}
+                {showMetrics && vertical && <line x1={by} x2={by} y1={0} y2={height} className="metric-line baseline" />}
                 {ln.map((g, i) => (
-                  <g key={i} transform={`translate(${xs[i] + g.xOffset * scale} ${by - g.yOffset * scale})`}>
+                  <g key={i} transform={`translate(${row.cells[i].ox} ${row.cells[i].oy})`}>
                     <title>{g.name}</title>
                     {g.color?.length ? (
                       <g transform={`scale(${scale} ${scale})`}><ColorGlyph layers={g.color} palette={shaped.palette ?? []} /></g>
@@ -471,12 +617,18 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
             <span className="k-body-strong">{current.name}</span>
             <span className="k-code muted">{current.unicode ? `U+${current.unicode}` : ""}</span>
           </div>
-          <NumField label={prev ? `◂ ${prev.name}` : `◂ ${t("kern")}`} value={prev ? prev.kern : null} disabled={!prev || previewing} title={prev ? pairLabel(prev) : undefined}
+          <NumField label={prevLabel} value={prev && !vertical ? prev.kern : null} disabled={!prev || previewing || vertical} title={prev ? pairLabel(prev) : undefined}
             onCommit={(v) => prev && kern(prev, current, () => v)} />
-          <NumField label={t("LSB")} value={current.lsb} disabled={current.lsb === null || previewing} onCommit={(v) => setMetric(current.name, "lsb", v)} />
-          <NumField label={t("Width")} value={current.width} disabled={previewing} onCommit={(v) => setMetric(current.name, "width", v)} />
-          <NumField label={t("RSB")} value={current.rsb} disabled={current.rsb === null || previewing} onCommit={(v) => setMetric(current.name, "rsb", v)} />
-          <NumField label={next ? `${next.name} ▸` : `${t("kern")} ▸`} value={next ? current.kern : null} disabled={!next || previewing} title={next ? pairLabel(current) : undefined}
+          {vertical ? (<>
+            <NumField label={t("TSB")} value={current.tsb} disabled={current.tsb === null || previewing} onCommit={(v) => setVertical(current.name, "tsb", v)} />
+            <NumField label={t("Height")} value={current.vAdvance} disabled={previewing} onCommit={(v) => setVertical(current.name, "advance", v)} />
+            <NumField label={t("BSB")} value={current.bsb} disabled={current.bsb === null || previewing} onCommit={(v) => setVertical(current.name, "bsb", v)} />
+          </>) : (<>
+            <NumField label={t("LSB")} value={current.lsb} disabled={current.lsb === null || previewing} onCommit={(v) => setMetric(current.name, "lsb", v)} />
+            <NumField label={t("Width")} value={current.width} disabled={previewing} onCommit={(v) => setMetric(current.name, "width", v)} />
+            <NumField label={t("RSB")} value={current.rsb} disabled={current.rsb === null || previewing} onCommit={(v) => setMetric(current.name, "rsb", v)} />
+          </>)}
+          <NumField label={nextLabel} value={next && !vertical ? current.kern : null} disabled={!next || previewing || vertical} title={next ? pairLabel(current) : undefined}
             onCommit={(v) => next && kern(current, next, () => v)} />
           <span className="info-sep" />
           <GroupField label={t("Left group")} value={current.leftGroup} disabled={previewing} onCommit={(v) => setGroups(current.name, v, current.rightGroup)} />
@@ -504,13 +656,19 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
           <div className="text-preview-rows">
             {panelLayouts.map((row) => {
               const sc = panelSize / 1000;
-              const asc = row.layout.metrics.ascender;
+              const rasc = row.layout.metrics.ascender;
               let x = 0;
-              const items = row.layout.lines.flatMap((ln, li) => {
-                const out = ln.map((it, i) => {
+              // Lines follow each other in reading order; right-to-left text from the right.
+              const lines = paraRtl ? [...row.layout.lines].reverse() : row.layout.lines;
+              const items = lines.flatMap((ln, li) => {
+                const out = visualOrder(ln.map((it) => it.rtl), paraRtl).map((i) => {
+                  const it = ln[i];
+                  const kernPx = it.type === "glyph" ? it.kern * sc : 0;
+                  if (it.rtl) x += kernPx;
                   const at = x;
-                  x += (it.type === "glyph" ? it.width + it.kern : MISSING_WIDTH) * sc;
-                  return it.type === "glyph" && it.svg ? <path key={`${li}:${i}`} d={it.svg} transform={`translate(${at} ${asc * sc}) scale(${sc} ${-sc})`} /> : null;
+                  x += (it.type === "glyph" ? it.width : MISSING_WIDTH) * sc;
+                  if (!it.rtl) x += kernPx;
+                  return it.type === "glyph" && it.svg ? <path key={`${li}:${i}`} d={it.svg} transform={`translate(${at} ${rasc * sc}) scale(${sc} ${-sc})`} /> : null;
                 });
                 x += 300 * sc;
                 return out;
@@ -518,18 +676,18 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
               return (
                 <div key={row.id} className={`text-preview-row${row.id === masterId ? " is-current" : ""}`}>
                   <span className="k-caption text-preview-name">{row.name}</span>
-                  <svg width={Math.max(1, x)} height={(asc - row.layout.metrics.descender) * sc} aria-label={row.name}>{items}</svg>
+                  <svg width={Math.max(1, x)} height={(rasc - row.layout.metrics.descender) * sc} aria-label={row.name}>{items}</svg>
                 </div>
               );
             })}
           </div>
         )}
       </section>
-      <footer className="statusbar k-caption text-status" title={t("Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it")}>
+      <footer className="statusbar k-caption text-status" title={t("Click to place the cursor · arrow keys move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · Ctrl+Alt+Shift+←/→/↓ sets the writing direction · double-click a glyph to edit it")}>
         <span>{shapeOn ? t("Feature preview · spacing edits are paused: turn off Shape preview to edit") : previewing ? t("Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit")
           : before?.type === "glyph" && after?.type === "glyph" ? t("Text mode · cursor between {left} | {right}", { left: before.name, right: after.name }) : t("Text mode")}</span>
         <span className="spacer" />
-        {!shapeOn && !previewing && before?.type === "glyph" && after?.type === "glyph" && (
+        {!shapeOn && !previewing && !vertical && before?.type === "glyph" && after?.type === "glyph" && (
           <span>{before.kernLeft ? t("Kerning {value} ({pair}) · Alt+←/→", { value: before.kern, pair: `${before.kernLeft} | ${before.kernRight}` }) : t("No kerning · Alt+←/→ to kern")}</span>
         )}
       </footer>

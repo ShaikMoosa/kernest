@@ -30,6 +30,9 @@ pub struct Appearance {
     pub language: Option<String>,
     pub handle_size: String,
     pub text_width: u32,
+    /// Text tabs switch to right to left when their text starts with right-to-left
+    /// letters, and back (SMO-33).
+    pub auto_direction: bool,
     pub colors: ThemeColors,
 }
 
@@ -40,6 +43,7 @@ impl Default for Appearance {
             language: None,
             handle_size: "medium".into(),
             text_width: 16000,
+            auto_direction: true,
             colors: ThemeColors::default(),
         }
     }

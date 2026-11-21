@@ -2,12 +2,14 @@
 
 use std::collections::{HashMap, HashSet};
 
+use kernest_core::bidi::{self, TextDirection};
 use kernest_core::designspace::Location;
 use kernest_core::geometry::{sidebearings, svg_path};
 use kernest_core::interpolate::{default_master, Interpolator};
 use kernest_core::kerning::{edit_keys, pair_value, validate_side, with_pair, EditMode, PairKind};
 use kernest_core::text::{parse, Token};
-use kernest_core::{Font, KernPair, Metrics, Shape};
+use kernest_core::vertical;
+use kernest_core::{Font, KernPair, Layer, Metrics, Shape};
 use serde::Serialize;
 use tauri::State;
 
@@ -28,7 +30,15 @@ pub enum TextItem {
         rsb: Option<f64>,
         left_group: Option<String>,
         right_group: Option<String>,
-        /// Kerning with the next glyph on the line (0 when none).
+        /// Resolved right to left (bidi), for laying the line out.
+        rtl: bool,
+        /// Vertical advance and origin height (font units), for vertical text.
+        v_advance: f64,
+        v_origin: f64,
+        tsb: Option<f64>,
+        bsb: Option<f64>,
+        /// Kerning with the next glyph on the line (0 when none, and between glyphs
+        /// of different directions).
         kern: f64,
         kern_kind: Option<PairKind>,
         /// The pair sides the kerning came from, e.g. "@T" and "o".
@@ -41,6 +51,7 @@ pub enum TextItem {
     },
     Missing {
         text: String,
+        rtl: bool,
     },
 }
 
@@ -54,8 +65,17 @@ pub struct TextLayout {
     status: DocStatus,
 }
 
-/// Outline, sidebearings and advance width of a glyph as drawn in the text view.
-type DrawnGlyph = (String, Option<(f64, f64)>, f64);
+/// A glyph as drawn in the text view: outline, sidebearings, advance width, vertical
+/// origin and advance, and top/bottom sidebearings.
+#[derive(Clone)]
+struct DrawnGlyph {
+    svg: String,
+    sb: Option<(f64, f64)>,
+    width: f64,
+    v_origin: f64,
+    v_advance: f64,
+    vsb: Option<(f64, f64)>,
+}
 
 /// A one-master copy of the glyphs needed to draw `names` (plus their components)
 /// at an interpolated location. Glyphs that can't be interpolated keep their
@@ -119,6 +139,7 @@ fn layout(
     text: &str,
     master_id: &str,
     location: Option<&Location>,
+    direction: Option<TextDirection>,
 ) -> CmdResult<TextLayout> {
     let font = &doc.font;
     let master = font
@@ -191,10 +212,29 @@ fn layout(
         }
     };
 
+    let Some(draw_m) = draw_font.master(&draw_master) else {
+        return Err(format!("No master with id \"{draw_master}\""));
+    };
+    let vertical = direction == Some(TextDirection::Vertical);
     let mut svgs: HashMap<String, DrawnGlyph> = HashMap::new();
     let lines = tokens
         .into_iter()
         .map(|tokens| {
+            let strong: Vec<Option<bool>> = tokens
+                .iter()
+                .map(|t| match t {
+                    Token::Glyph { name } => font.glyph(name).and_then(bidi::strong_glyph),
+                    Token::Missing { text } => text
+                        .chars()
+                        .next()
+                        .and_then(|c| bidi::strong_codepoint(c as u32)),
+                })
+                .collect();
+            let rtl = if vertical {
+                vec![false; strong.len()]
+            } else {
+                bidi::resolve(&strong, TextDirection::paragraph_rtl(direction, &strong))
+            };
             let names: Vec<Option<&str>> = tokens
                 .iter()
                 .map(|t| match t {
@@ -206,38 +246,56 @@ fn layout(
                 .iter()
                 .enumerate()
                 .map(|(i, t)| match t {
-                    Token::Missing { text } => TextItem::Missing { text: text.clone() },
+                    Token::Missing { text } => TextItem::Missing {
+                        text: text.clone(),
+                        rtl: rtl[i],
+                    },
                     Token::Glyph { name } => {
                         let g = font.glyph(name).expect("parsed glyphs exist");
-                        let (svg, sb, width) = svgs
+                        let d = svgs
                             .entry(name.clone())
                             .or_insert_with(|| {
-                                match draw_font.glyph(name).and_then(|g| g.layer(&draw_master)) {
-                                    Some(l) => (
-                                        svg_path(draw_font, l),
-                                        sidebearings(draw_font, l),
-                                        l.width,
-                                    ),
-                                    None => (String::new(), None, 0.0),
+                                let empty = Layer::new(&draw_master, 0.0);
+                                let l = draw_font.glyph(name).and_then(|g| g.layer(&draw_master));
+                                let (v_origin, v_advance) =
+                                    vertical::origin_and_advance(draw_m, l.unwrap_or(&empty));
+                                DrawnGlyph {
+                                    svg: l.map(|l| svg_path(draw_font, l)).unwrap_or_default(),
+                                    sb: l.and_then(|l| sidebearings(draw_font, l)),
+                                    width: l.map_or(0.0, |l| l.width),
+                                    v_origin,
+                                    v_advance,
+                                    vsb: l
+                                        .and_then(|l| vertical::sidebearings(draw_font, draw_m, l)),
                                 }
                             })
                             .clone();
-                        let next = names.get(i + 1).copied().flatten();
+                        // Kerning applies between glyphs of the same direction.
+                        let next = names
+                            .get(i + 1)
+                            .copied()
+                            .flatten()
+                            .filter(|_| rtl.get(i + 1) == Some(&rtl[i]));
                         let kern = next.and_then(|n| kern_at(name, n));
                         TextItem::Glyph {
                             name: name.clone(),
                             unicode: g.unicodes.first().map(|c| c.to_string()),
                             incompatible: incompatible.contains(name),
-                            width,
-                            lsb: sb.map(|s| s.0),
-                            rsb: sb.map(|s| s.1),
+                            width: d.width,
+                            lsb: d.sb.map(|s| s.0),
+                            rsb: d.sb.map(|s| s.1),
+                            rtl: rtl[i],
+                            v_advance: d.v_advance,
+                            v_origin: d.v_origin,
+                            tsb: d.vsb.map(|s| s.0),
+                            bsb: d.vsb.map(|s| s.1),
                             left_group: g.left_group.clone(),
                             right_group: g.right_group.clone(),
                             kern: kern.as_ref().map_or(0.0, |k| k.0),
                             kern_kind: kern.as_ref().map(|k| k.1),
                             kern_left: kern.as_ref().map(|k| k.2.clone()),
                             kern_right: kern.as_ref().map(|k| k.3.clone()),
-                            svg,
+                            svg: d.svg,
                             color: crate::commands::color_views(font, g, master_id),
                         }
                     }
@@ -259,9 +317,16 @@ pub fn text_layout(
     text: String,
     master_id: String,
     location: Option<Location>,
+    direction: Option<String>,
 ) -> CmdResult<TextLayout> {
     let mut guard = lock(&state)?;
-    layout(doc_mut(&mut guard)?, &text, &master_id, location.as_ref())
+    layout(
+        doc_mut(&mut guard)?,
+        &text,
+        &master_id,
+        location.as_ref(),
+        direction.as_deref().and_then(TextDirection::parse),
+    )
 }
 
 fn mode_of(mode: &str) -> CmdResult<EditMode> {
@@ -525,10 +590,67 @@ mod tests {
     use kernest_core::sample::sample_font;
 
     #[test]
+    fn right_to_left_layout_resolves_runs_and_vertical_metrics() {
+        let mut f = sample_font();
+        let mut beh = kernest_core::Glyph::new("beh-ar", vec![kernest_core::Codepoint(0x628)]);
+        beh.layers.push(f.glyph("o").unwrap().layers[0].clone());
+        f.glyphs.push(beh);
+        let doc = Document::new(f, None);
+        let items = |dir| {
+            layout(&doc, "To \u{628}\u{628}", "m01", None, dir)
+                .unwrap()
+                .lines
+                .remove(0)
+        };
+        let rtl_of = |items: &[TextItem]| -> Vec<bool> {
+            items
+                .iter()
+                .map(|it| match it {
+                    TextItem::Glyph { rtl, .. } | TextItem::Missing { rtl, .. } => *rtl,
+                })
+                .collect()
+        };
+        let line = items(Some(TextDirection::Rtl));
+        // The space between Latin and Arabic takes the paragraph direction.
+        assert_eq!(rtl_of(&line), [false, false, true, true, true]);
+        // T–o keeps its kerning; o–space is between directions, so it has none.
+        let kern = |it: &TextItem| match it {
+            TextItem::Glyph { kern, .. } => *kern,
+            TextItem::Missing { .. } => 0.0,
+        };
+        assert_eq!(kern(&line[0]), -60.0);
+        assert_eq!(kern(&line[1]), 0.0);
+        // Left to right, the space is left to right; with no choice the Latin first
+        // letter makes the paragraph left to right too.
+        assert_eq!(
+            rtl_of(&items(Some(TextDirection::Ltr))),
+            [false, false, false, true, true]
+        );
+        assert_eq!(rtl_of(&items(None)), [false, false, false, true, true]);
+        // Vertical: nothing is right to left; the defaults are ascender − descender.
+        let v = items(Some(TextDirection::Vertical));
+        assert_eq!(rtl_of(&v), [false; 5]);
+        match &v[0] {
+            TextItem::Glyph {
+                v_advance,
+                v_origin,
+                tsb,
+                ..
+            } => {
+                let m = doc.font.masters[0].metrics;
+                assert_eq!(*v_advance, m.ascender - m.descender);
+                assert_eq!(*v_origin, m.ascender);
+                assert!(tsb.is_some());
+            }
+            TextItem::Missing { .. } => panic!("T is a glyph"),
+        }
+    }
+
+    #[test]
     fn layout_includes_kerning() {
         let doc = Document::new(sample_font(), None);
         // The sample font kerns T–o by -60 (glyph pair).
-        let l = layout(&doc, "To\nH/nope", "m01", None).unwrap();
+        let l = layout(&doc, "To\nH/nope", "m01", None, None).unwrap();
         assert_eq!(l.lines.len(), 2);
         match &l.lines[0][0] {
             TextItem::Glyph {
@@ -543,7 +665,7 @@ mod tests {
             }
             _ => panic!("expected a glyph"),
         }
-        assert!(matches!(&l.lines[1][1], TextItem::Missing { text } if text == "/nope"));
+        assert!(matches!(&l.lines[1][1], TextItem::Missing { text, .. } if text == "/nope"));
     }
 
     #[test]
@@ -599,7 +721,7 @@ mod interpolation_tests {
         }
         doc.history.apply_font(&mut doc.font, f).unwrap();
         let mid = BTreeMap::from([("wght".to_string(), 550.0)]);
-        let l = layout(&doc, "To", "m01", Some(&mid)).unwrap();
+        let l = layout(&doc, "To", "m01", Some(&mid), None).unwrap();
         match &l.lines[0][0] {
             TextItem::Glyph {
                 width,

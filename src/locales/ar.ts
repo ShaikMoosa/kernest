@@ -932,7 +932,7 @@ export const ar: Dict = {
   "Left group": "المجموعة اليسرى",
   "Right group": "المجموعة اليمنى",
   "Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit": "معاينة موضع مستوفى · تعديلات التباعد متوقفة: اختر «النسخة الرئيسية الحالية» للتحرير",
-  "Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it": "انقر لوضع المؤشر · ←/→ للتحريك · Alt+←/→ للتقنين ‎±10 ‏(Alt+Shift ‎±1) · انقر نقرًا مزدوجًا على حرف لتحريره",
+  "Click to place the cursor · arrow keys move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · Ctrl+Alt+Shift+←/→/↓ sets the writing direction · double-click a glyph to edit it": "انقر لوضع المؤشر · مفاتيح الأسهم للتحريك · Alt+←/→ للتقنين ‎±10 ‏(Alt+Shift ‎±1) · Ctrl+Alt+Shift+←/→/↓ لتعيين اتجاه الكتابة · انقر نقرًا مزدوجًا على حرف لتحريره",
 
   // ---------- Data shown in the UI (locales/dynamic.ts) ----------
   "Latin Basic (ASCII)": "اللاتينية الأساسية (ASCII)",
@@ -2466,6 +2466,11 @@ export const ar: Dict = {
   "Writing direction": "اتجاه الكتابة",
   "Left to right": "من اليسار إلى اليمين",
   "Right to left": "من اليمين إلى اليسار",
+  "Switch a text tab to right to left when its text starts with Arabic or Hebrew letters, and back to left to right for other letters": "حوّل علامة تبويب النص إلى الكتابة من اليمين إلى اليسار عندما يبدأ نصها بحروف عربية أو عبرية، وأعدها من اليسار إلى اليمين مع الحروف الأخرى",
+  "Text tabs follow the writing direction of their text": "تتبع علامات تبويب النص اتجاه كتابة نصها",
+  "Left to right (Ctrl+Alt+Shift+←)": "من اليسار إلى اليمين (Ctrl+Alt+Shift+←)",
+  "Right to left (Ctrl+Alt+Shift+→)": "من اليمين إلى اليسار (Ctrl+Alt+Shift+→)",
+  "Vertical, top to bottom (Ctrl+Alt+Shift+↓)": "عمودي، من الأعلى إلى الأسفل (Ctrl+Alt+Shift+↓)",
   "Both directions": "كلا الاتجاهين",
   "Spacing for vertical typesetting. Editing a value turns vertical metrics on for the font.": "التباعد للتنضيد الرأسي. تعديل أي قيمة يفعّل المقاييس الرأسية للخط.",
   "Use the default vertical metrics": "استخدام المقاييس الرأسية الافتراضية",

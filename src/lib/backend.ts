@@ -770,7 +770,14 @@ export type TextItem =
       rsb: number | null;
       leftGroup: string | null;
       rightGroup: string | null;
-      /** Kerning with the next glyph on the line. */
+      /** Resolved right to left by the bidi algorithm, for laying the line out. */
+      rtl: boolean;
+      /** Vertical advance and origin height (font units), for vertical text. */
+      vAdvance: number;
+      vOrigin: number;
+      tsb: number | null;
+      bsb: number | null;
+      /** Kerning with the next glyph on the line (none between directions). */
       kern: number;
       kernKind: "group" | "exception" | null;
       kernLeft: string | null;
@@ -779,7 +786,10 @@ export type TextItem =
       /** Colour layers, bottom to top (colour glyphs only). */
       color?: ColorLayerView[];
     }
-  | { type: "missing"; text: string };
+  | { type: "missing"; text: string; rtl: boolean };
+
+/** A text tab's writing direction. */
+export type TextDirection = "ltr" | "rtl" | "vertical";
 
 export interface TextLayout {
   lines: TextItem[][];
@@ -839,6 +849,8 @@ export interface ShapedGlyph {
   svg: string;
   color?: ColorLayerView[];
   advance: number;
+  /** Vertical advance (negative: down), for vertical text. */
+  yAdvance: number;
   xOffset: number;
   yOffset: number;
   /** Byte offset in the line's text, for caret placement. */
@@ -941,7 +953,7 @@ export interface Backend {
   undo(): Promise<UndoResult | null>;
   redo(): Promise<UndoResult | null>;
   /** Lays out text for a master, or at an interpolated `location` (axis tag → value). */
-  textLayout(text: string, masterId: string, location?: Location): Promise<TextLayout>;
+  textLayout(text: string, masterId: string, location?: Location, direction?: TextDirection): Promise<TextLayout>;
   /** Kerns two glyphs; `mode` decides whether their groups or the glyphs are kerned. 0 removes the pair. */
   setGlyphKerning(masterId: string, left: string, right: string, mode: KernMode, value: number): Promise<{ left: string; right: string; value: number; status: DocStatus }>;
   kerningList(masterId: string): Promise<KerningList>;
@@ -961,7 +973,7 @@ export interface Backend {
   previewFeatureImport(path: string): Promise<FeatureImportPreview>;
   importFeatures(path: string): Promise<FeaturesView>;
   /** Shapes text with feature settings like "ss01=1" against a compiled preview. */
-  shapeText(text: string, masterId: string, location?: Location, features?: string[]): Promise<ShapedView>;
+  shapeText(text: string, masterId: string, location?: Location, features?: string[], direction?: TextDirection): Promise<ShapedView>;
   /** Hinted and unhinted outlines of text at pixel sizes, for the edit view's pixel preview. */
   pixelPreview(text: string, masterId: string, location: Location | undefined, sizes: number[]): Promise<PixelPreview>;
   setAxes(axes: Axis[]): Promise<FontInfo>;
@@ -1344,6 +1356,8 @@ export interface Appearance {
   language: "en" | "es" | "ar" | null;
   handleSize: "small" | "medium" | "large";
   textWidth: number;
+  /** Text tabs follow the direction of their text's first letter. */
+  autoDirection: boolean;
   colors: { light: Partial<Record<CanvasElement, string>>; dark: Partial<Record<CanvasElement, string>> };
 }
 export interface Onboarding {
@@ -1366,7 +1380,7 @@ export interface UpdateInfo {
 export function initialSettings(): Settings {
   return {
     pluginEnabled: {}, shortcuts: {}, pythonPath: null,
-    appearance: { theme: null, language: null, handleSize: "medium", textWidth: 16000, colors: { light: {}, dark: {} } },
+    appearance: { theme: null, language: null, handleSize: "medium", textWidth: 16000, autoDirection: true, colors: { light: {}, dark: {} } },
     onboarding: { welcomeDone: false, experience: null, tourEnabled: false, tourStep: 0, completed: [] },
     updates: { enabled: false, lastChecked: null, latestVersion: null, error: null },
   };
@@ -1471,7 +1485,7 @@ const tauriBackend: Backend = {
   setGlyphHints: (glyph, masterId, hints) => invoke("set_glyph_hints", { glyph, masterId, hints }),
   undo: () => invoke("undo"),
   redo: () => invoke("redo"),
-  textLayout: (text, masterId, location) => invoke("text_layout", { text, masterId, location: location ?? null }),
+  textLayout: (text, masterId, location, direction) => invoke("text_layout", { text, masterId, location: location ?? null, direction: direction ?? null }),
   setGlyphKerning: (masterId, left, right, mode, value) => invoke("set_glyph_kerning", { masterId, left, right, mode, value }),
   kerningList: (masterId) => invoke("kerning_list", { masterId }),
   setKerningPair: (masterId, left, right, value) => invoke("set_kerning_pair", { masterId, left, right, value }),
@@ -1485,7 +1499,7 @@ const tauriBackend: Backend = {
   setAutomaticFeatures: (automatic) => invoke("set_automatic_features", { automatic }),
   previewFeatureImport: (path) => invoke("preview_feature_import", { path }),
   importFeatures: (path) => invoke("import_features", { path }),
-  shapeText: (text, masterId, location, features) => invoke("shape_text", { text, masterId, location: location ?? null, features: features ?? [] }),
+  shapeText: (text, masterId, location, features, direction) => invoke("shape_text", { text, masterId, location: location ?? null, features: features ?? [], direction: direction ?? null }),
   pixelPreview: (text, masterId, location, sizes) => invoke("pixel_preview", { text, masterId, location: location ?? null, sizes }),
   setHinting: (hinting) => invoke("set_hinting", { hinting }),
   setAlignmentZones: (masterId, zones) => invoke("set_alignment_zones", { masterId, zones }),
@@ -2569,12 +2583,13 @@ const mockBackend: Backend = {
     const d = need();
     const lines = parseText(d, text).map((line) =>
       line.map((t, i): TextItem => {
-        if ("missing" in t) return { type: "missing", text: t.missing };
+        if ("missing" in t) return { type: "missing", text: t.missing, rtl: false };
         const g = findGlyph(d, t.name);
         const next = line[i + 1];
         const k = next && "name" in next ? pairValue(d, t.name, next.name) : null;
         return {
           type: "glyph", name: g.name, unicode: g.unicode, incompatible: false, width: g.width, ...sb(d, g), leftGroup: g.leftGroup, rightGroup: g.rightGroup,
+          rtl: false, vAdvance: METRICS.ascender - METRICS.descender, vOrigin: METRICS.ascender, tsb: null, bsb: null,
           kern: k?.value ?? 0, kernKind: k?.kind ?? null, kernLeft: k?.left ?? null, kernRight: k?.right ?? null, svg: pathsToSvg(resolved(d, g)),
         };
       }),

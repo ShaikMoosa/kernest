@@ -834,7 +834,7 @@ export const es: Dict = {
   "Left group": "Grupo izquierdo",
   "Right group": "Grupo derecho",
   "Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit": "Vista previa de una posición interpolada · el espaciado no se puede editar: elige «Máster actual» para editar",
-  "Click to place the cursor · ←/→ move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · double-click a glyph to edit it": "Clic para colocar el cursor · ←/→ mueven · Alt+←/→ ajusta el kerning ±10 (Alt+Mayús ±1) · doble clic en un glifo para editarlo",
+  "Click to place the cursor · arrow keys move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · Ctrl+Alt+Shift+←/→/↓ sets the writing direction · double-click a glyph to edit it": "Clic para colocar el cursor · las flechas mueven · Alt+←/→ ajusta el kerning ±10 (Alt+Mayús ±1) · Ctrl+Alt+Mayús+←/→/↓ fija la dirección de escritura · doble clic en un glifo para editarlo",
 
   // ---------- Data shown in the UI (locales/dynamic.ts) ----------
   "Latin Basic (ASCII)": "Latín básico (ASCII)",
@@ -2255,6 +2255,11 @@ export const es: Dict = {
   "Writing direction": "Dirección de escritura",
   "Left to right": "De izquierda a derecha",
   "Right to left": "De derecha a izquierda",
+  "Switch a text tab to right to left when its text starts with Arabic or Hebrew letters, and back to left to right for other letters": "Cambia una pestaña de texto a derecha a izquierda cuando su texto empieza con letras árabes o hebreas, y de vuelta a izquierda a derecha con otras letras",
+  "Text tabs follow the writing direction of their text": "Las pestañas de texto siguen la dirección de escritura de su texto",
+  "Left to right (Ctrl+Alt+Shift+←)": "De izquierda a derecha (Ctrl+Alt+Mayús+←)",
+  "Right to left (Ctrl+Alt+Shift+→)": "De derecha a izquierda (Ctrl+Alt+Mayús+→)",
+  "Vertical, top to bottom (Ctrl+Alt+Shift+↓)": "Vertical, de arriba abajo (Ctrl+Alt+Mayús+↓)",
   "Both directions": "Ambas direcciones",
   "Spacing for vertical typesetting. Editing a value turns vertical metrics on for the font.": "Espaciado para la composición vertical. Al editar un valor se activan las métricas verticales en la fuente.",
   "Use the default vertical metrics": "Usar las métricas verticales predeterminadas",
