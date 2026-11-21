@@ -11,6 +11,7 @@ import { CloseIcon, SearchIcon } from "./Icons";
 import { pickImage, pickPng, pickSvgDrawing } from "../lib/desktop";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { t, tn, translateMessage } from "../lib/i18n";
+import { combineSelection, extendLasso, insidePolygon, isLassoClick, selectModeFor, type LassoPt, type SelectMode } from "../lib/lasso";
 import { ColorGlyph } from "./ColorGlyph";
 import { PaintDialog } from "./PaintDialog";
 import { PixelPreviewPanel } from "./PixelPreviewPanel";
@@ -36,6 +37,13 @@ const TOOLS: { id: Tool; key: string; shift?: boolean; label: string; icon: Reac
   { id: "measure", key: "l", label: "Measure (L)", icon: <><path d="M4 20L20 4" /><path d="M4 15v5h5" /><path d="M20 9V4h-5" /></> },
   { id: "hand", key: "h", label: "Hand (H) · or hold Space", icon: <path d="M8 12V6.5a1.5 1.5 0 0 1 3 0V11V5a1.5 1.5 0 0 1 3 0v6V6.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-1a6 6 0 0 1-4.6-2.2L4 15a1.5 1.5 0 0 1 2.2-2z" /> },
 ];
+
+/** The Select tool's lasso icon, shown in the toolbar while lasso selection is on. */
+const LASSO_ICON = <><path d="M12 5c4.4 0 8 2 8 4.6S16.4 14.2 12 14.2 4 12.2 4 9.6 7.6 5 12 5z" strokeDasharray="2.6 2" /><path d="M6.5 12.6c-.8 1.6.2 3.4 2 3.4 1.4 0 1.6 1.6.6 2.6" /></>;
+const SELECT_SHAPE_KEY = "kernest.selectShape";
+function storedSelectShape(): "rect" | "lasso" {
+  try { return localStorage.getItem(SELECT_SHAPE_KEY) === "lasso" ? "lasso" : "rect"; } catch { return "rect"; }
+}
 
 const HIT = 7; // px
 const EDGE = 10; // px strip at the canvas border: dragging from it pulls out a new guide
@@ -379,6 +387,17 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [cursor, setCursor] = useState<Pt | null>(null);
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  // Select tool: rectangle or lasso (free-form) selection; Shift+V switches.
+  const [selectShape, setSelectShapeState] = useState<"rect" | "lasso">(storedSelectShape);
+  const setSelectShape = (shape: "rect" | "lasso") => {
+    setSelectShapeState(shape);
+    try { localStorage.setItem(SELECT_SHAPE_KEY, shape); } catch { /* not kept */ }
+  };
+  // Each glyph tab follows the shape last chosen in any tab.
+  useEffect(() => { if (active) setSelectShapeState(storedSelectShape()); }, [active]);
+  const [lassoPts, setLassoPts] = useState<LassoPt[] | null>(null);
+  const [selectMenu, setSelectMenu] = useState(false);
+  const selectHold = useRef<number | null>(null);
   const [preview, setPreview] = useState<EditPath | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -429,7 +448,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const fitted = useRef(false);
-  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; baseAnchors: LayerView["anchors"]; moved: boolean; additive?: boolean; pi?: number; ni?: number; startView?: View; lastPaths?: EditPath[]; lastComps?: Comp[]; lastAnchors?: LayerView["anchors"]; scope?: GuideScope; gi?: number; angle?: number; baseLocal?: Guide[]; baseGlobal?: Guide[]; lastGuide?: Guide }>(null);
+  const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; baseAnchors: LayerView["anchors"]; moved: boolean; selMode?: SelectMode; lasso?: LassoPt[]; pi?: number; ni?: number; startView?: View; lastPaths?: EditPath[]; lastComps?: Comp[]; lastAnchors?: LayerView["anchors"]; scope?: GuideScope; gi?: number; angle?: number; baseLocal?: Guide[]; baseGlobal?: Guide[]; lastGuide?: Guide }>(null);
   const pen = useRef<{ path: number | null; pendingOut: Pt | null }>({ path: null, pendingOut: null });
   const chain = useRef(Promise.resolve());
   const measureSeq = useRef(0);
@@ -1238,12 +1257,16 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           setGuideDraft({ x: wp.x, y: wp.y, angle, locked: false });
           drag.current = { mode: "new-guide", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, angle };
         } else {
-          if (!e.shiftKey) { setSelection(new Set()); setCompSel(new Set()); setAnchorSel(new Set()); }
-          if (!e.shiftKey && hitImage(wp)) {
+          // Shift adds to the selection, Ctrl takes away; Alt uses the other shape
+          // (lasso or rectangle) for this drag.
+          const selMode = selectModeFor(e);
+          if (selMode === "replace") { setSelection(new Set()); setCompSel(new Set()); setAnchorSel(new Set()); }
+          if (selMode === "replace" && hitImage(wp)) {
             drag.current = { mode: "image", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false };
             return;
           }
-          drag.current = { mode: "marquee", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, additive: e.shiftKey };
+          const lasso = (selectShape === "lasso") !== e.altKey;
+          drag.current = { mode: "marquee", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, selMode, lasso: lasso ? [sp] : undefined };
         }
       }
       return;
@@ -1405,6 +1428,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       }
     } else if (d.mode === "knife") {
       setKnifeLine({ p0: d.startWorld, p1: round(wp) });
+    } else if (d.mode === "marquee" && d.lasso) {
+      d.lasso = extendLasso(d.lasso, sp);
+      setLassoPts(d.lasso);
     } else if (d.mode === "marquee") {
       setMarquee({ x0: d.startScreen.x, y0: d.startScreen.y, x1: sp.x, y1: sp.y });
     } else if (d.mode === "shape") {
@@ -1497,36 +1523,39 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         })
         .filter((m) => m.dx !== 0 || m.dy !== 0);
       moveAnchorsBy(moves);
-    } else if (d.mode === "marquee" && d.moved) {
-      // Use the drag's own start point: state may not have re-rendered yet on a fast drag.
-      const marquee = { x0: d.startScreen.x, y0: d.startScreen.y };
-      const [x0, x1] = [Math.min(marquee.x0, sp.x), Math.max(marquee.x0, sp.x)];
-      const [y0, y1] = [Math.min(marquee.y0, sp.y), Math.max(marquee.y0, sp.y)];
-      const sel = new Set(d.additive ? selection : []);
+    } else if (d.mode === "marquee" && d.moved && !(d.lasso && isLassoClick(d.lasso))) {
+      // Use the drag's own points: state may not have re-rendered yet on a fast drag.
+      const mode = d.selMode ?? "replace";
+      let inside: (q: Pt) => boolean;
+      if (d.lasso) {
+        const poly = extendLasso(d.lasso, sp);
+        inside = (q) => insidePolygon(q, poly);
+      } else {
+        const [x0, x1] = [Math.min(d.startScreen.x, sp.x), Math.max(d.startScreen.x, sp.x)];
+        const [y0, y1] = [Math.min(d.startScreen.y, sp.y), Math.max(d.startScreen.y, sp.y)];
+        inside = (q) => q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1;
+      }
+      const nodeHits: string[] = [];
       if (showNodes) paths.forEach((p, pi) => {
         if (p.locked) return;
         p.nodes.forEach((n, ni) => {
-          const q = toScreen(n.x, n.y);
-          if (q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1) sel.add(nodeKey(pi, ni));
+          if (inside(toScreen(n.x, n.y))) nodeHits.push(nodeKey(pi, ni));
         });
       });
-      setSelection(sel);
-      // Components are selected when their whole outline is inside the box.
-      const cs = new Set(d.additive ? compSel : []);
+      setSelection(combineSelection(selection, nodeHits, mode));
+      // Components are selected when their whole outline box is inside.
+      const compHits: number[] = [];
       svgRef.current?.querySelectorAll<SVGPathElement>("path[data-comp]").forEach((el) => {
-        const r = el.getBoundingClientRect(), s = svgRef.current!.getBoundingClientRect();
-        if (r.width && r.left - s.left >= x0 && r.right - s.left <= x1 && r.top - s.top >= y0 && r.bottom - s.top <= y1) cs.add(Number(el.dataset.comp));
+        const r = el.getBoundingClientRect(), sr = svgRef.current!.getBoundingClientRect();
+        const [l, tp, rt, bt] = [r.left - sr.left, r.top - sr.top, r.right - sr.left, r.bottom - sr.top];
+        if (r.width && [{ x: l, y: tp }, { x: rt, y: tp }, { x: rt, y: bt }, { x: l, y: bt }].every(inside)) compHits.push(Number(el.dataset.comp));
       });
-      setCompSel(cs);
+      setCompSel(combineSelection(compSel, compHits, mode));
       if (showAnchors) {
-        const as = new Set(d.additive ? anchorSel : []);
-        for (const a of anchors) {
-          const q = toScreen(a.x, a.y);
-          if (q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1) as.add(a.name);
-        }
-        setAnchorSel(as);
+        setAnchorSel(combineSelection(anchorSel, anchors.filter((an) => inside(toScreen(an.x, an.y))).map((an) => an.name), mode));
       }
       setMarquee(null);
+      setLassoPts(null);
     } else if (d.mode === "shape") {
       const shape = d.moved ? shapeFor(d.startWorld, round(toWorld(sp.x, sp.y)), e.shiftKey) : null;
       if (shape) {
@@ -1560,6 +1589,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       }
     }
     setMarquee(null);
+    setLassoPts(null);
   }
 
   // ---------- Components & clipboard ----------
@@ -1802,6 +1832,13 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         rerender((n) => n + 1);
         return;
       }
+      if (e.key.toLowerCase() === "v" && e.shiftKey) {
+        // Shift+V: the Select tool, switching between rectangle and lasso selection.
+        setTool("select");
+        setSelectShape(selectShape === "lasso" ? "rect" : "lasso");
+        pen.current = { path: null, pendingOut: null };
+        return;
+      }
       const t = TOOLS.find((x) => x.key === e.key.toLowerCase() && !!x.shift === e.shiftKey);
       if (t) {
         setTool(t.id);
@@ -1815,7 +1852,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       window.removeEventListener("keydown", onDown);
       window.removeEventListener("keyup", onUp);
     };
-  }, [active, picking, commit, fit, zoomAt, size, runCommand, showAnchors, ctxMenu, focusPath, moveAnchorsBy, removeAnchorsNamed, toggleBackground, deleteGuide]);
+  }, [active, picking, commit, fit, zoomAt, size, runCommand, showAnchors, ctxMenu, focusPath, moveAnchorsBy, removeAnchorsNamed, toggleBackground, deleteGuide, selectShape]);
 
   const glyphNames = useMemo(() => new Set(glyphs.map((g) => g.name)), [glyphs]);
 
@@ -1872,12 +1909,42 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   return (
     <div className="editor">
       <div className="toolbar" role="toolbar" aria-label={t("Tools")}>
-        {TOOLS.map((tl) => (
-          <button key={tl.id} className={`tool${tool === tl.id ? " is-selected" : ""}`} title={t(tl.label)} aria-label={t(tl.label)} aria-pressed={tool === tl.id}
-            onClick={() => { setTool(tl.id); pen.current = { path: null, pendingOut: null }; }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">{tl.icon}</svg>
-          </button>
-        ))}
+        {TOOLS.map((tl) => {
+          if (tl.id !== "select") return (
+            <button key={tl.id} className={`tool${tool === tl.id ? " is-selected" : ""}`} title={t(tl.label)} aria-label={t(tl.label)} aria-pressed={tool === tl.id}
+              onClick={() => { setTool(tl.id); pen.current = { path: null, pendingOut: null }; }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">{tl.icon}</svg>
+            </button>
+          );
+          // Select: hold it or right-click it to choose rectangle or lasso selection.
+          const lasso = selectShape === "lasso";
+          const label = lasso ? t("Lasso Select (Shift+V)") : t(tl.label);
+          const stopHold = () => { if (selectHold.current) { window.clearTimeout(selectHold.current); selectHold.current = null; } };
+          const choose = (shape: "rect" | "lasso") => { setSelectShape(shape); setTool("select"); setSelectMenu(false); pen.current = { path: null, pendingOut: null }; };
+          return (
+            <span key={tl.id} className="tool-wrap">
+              <button className={`tool${tool === tl.id ? " is-selected" : ""}`} title={t("{tool} · hold or right-click to choose rectangle or lasso", { tool: label })} aria-label={label} aria-pressed={tool === tl.id} aria-haspopup="menu" aria-expanded={selectMenu}
+                onClick={() => { if (selectMenu) return; setTool(tl.id); pen.current = { path: null, pendingOut: null }; }}
+                onPointerDown={() => { stopHold(); selectHold.current = window.setTimeout(() => { selectHold.current = null; setSelectMenu(true); }, 450); }}
+                onPointerUp={stopHold} onPointerLeave={stopHold}
+                onContextMenu={(e) => { e.preventDefault(); stopHold(); setSelectMenu(true); }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">{lasso ? LASSO_ICON : tl.icon}</svg>
+              </button>
+              {selectMenu && <>
+                <span className="tool-menu-scrim" onPointerDown={() => setSelectMenu(false)} />
+                <div className="ctx-menu tool-menu" role="menu" aria-label={t("Selection shape")}
+                  onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setSelectMenu(false); } }}>
+                  <button type="button" role="menuitemradio" aria-checked={!lasso} autoFocus={!lasso} onClick={() => choose("rect")}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">{tl.icon}</svg>{t("Select (V)")}
+                  </button>
+                  <button type="button" role="menuitemradio" aria-checked={lasso} autoFocus={lasso} onClick={() => choose("lasso")}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">{LASSO_ICON}</svg>{t("Lasso Select (Shift+V)")}
+                  </button>
+                </div>
+              </>}
+            </span>
+          );
+        })}
         <span className="toolbar-sep" />
         <button className="btn btn-secondary btn-sm" onClick={() => setPicking(true)} title={t("Add Component (Ctrl+Shift+C)")}>{t("Add Component")}</button>
         <span className="toolbar-sep" />
@@ -1889,7 +1956,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             {t("Locked")}
           </span>
         )}
-        <span className="toolbar-hint k-caption muted" title={hint(activeTool)}>{toolName(activeTool)}</span>
+        <span className="toolbar-hint k-caption muted" title={hint(activeTool, selectShape === "lasso")}>{toolName(activeTool, selectShape === "lasso")}</span>
         <span className="spacer" />
         {onToggleView && (
           <div className="segmented view-toggles" role="group" aria-label={t("Show")}>
@@ -2281,6 +2348,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             const a = toScreen(knifeLine.p0.x, knifeLine.p0.y), b = toScreen(knifeLine.p1.x, knifeLine.p1.y);
             return <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="knife-line" pointerEvents="none" />;
           })()}
+          {lassoPts && lassoPts.length > 1 && <polygon className="marquee" points={lassoPts.map((p) => `${p.x},${p.y}`).join(" ")} pointerEvents="none" />}
           {marquee && <rect className="marquee" x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)} />}
         </svg>
         {activeTool === "annotate" && (() => {
@@ -3118,16 +3186,19 @@ function hoiAt(kind: HoiKind | null, p0: [number, number], p1: [number, number],
 }
 
 /** The active tool and its shortcut, as the toolbar shows it ("Select  V"). */
-function toolName(tool: Tool): string {
+function toolName(tool: Tool, lasso = false): string {
+  if (tool === "select" && lasso) return `${t("Lasso Select")}  Shift+V`;
   const tl = TOOLS.find((x) => x.id === tool);
   if (!tl) return "";
   const [name] = t(tl.label).split(/ \(/);
   return `${name}  ${tl.shift ? "Shift+" : ""}${tl.key.toUpperCase()}`;
 }
 
-function hint(tool: Tool): string {
+function hint(tool: Tool, lasso = false): string {
   switch (tool) {
-    case "select": return t("Click or drag to select · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes");
+    case "select": return lasso
+      ? t("Draw around nodes to select them · Shift adds, Ctrl removes · Alt+drag for a rectangle · drag to move · Shift+V switches")
+      : t("Click or drag to select · Shift adds, Ctrl removes · Alt+drag for a lasso · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes");
     case "pen": return t("Click for corners, drag for curves · click the first point to close · Esc ends the path");
     case "rect": return t("Drag to draw a rectangle · Shift for a square");
     case "pixel": return t("Click a grid cell to add or remove a pixel · drag to paint");

@@ -331,6 +331,11 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .tool { width: 32px; height: 32px; border: 0; border-radius: var(--k-radius-md); background: none; display: grid; place-items: center; color: var(--k-text-primary); }
 .tool:hover { background: var(--k-bg-hover); }
 .tool.is-selected { background: var(--k-accent-default); color: var(--k-text-on-accent); }
+.tool-wrap { position: relative; display: inline-flex; }
+.ctx-menu.tool-menu { top: calc(100% + 4px); inset-inline-start: 0; min-width: 0; z-index: 20; }
+.tool-menu button { white-space: nowrap; }
+.tool-menu button[aria-checked="true"] { font-weight: 600; }
+.tool-menu-scrim { position: fixed; inset: 0; z-index: 19; }
 .toolbar-hint { margin-inline-start: var(--k-space-12); white-space: pre; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .toolbar .zoom { width: 44px; text-align: end; }
 .btn-sm { height: var(--k-control-md); padding: 0 var(--k-space-8); }

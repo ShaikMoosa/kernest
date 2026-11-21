@@ -596,7 +596,6 @@ export const ar: Dict = {
   "Selected component": "المكوّن المحدد",
   "Selected: {list}": "المحدد: {list}",
   "No selection": "لا يوجد تحديد",
-  "Click or drag to select · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes": "انقر أو اسحب للتحديد · اسحب للنقل · الأسهم للتحريك (Shift ×10) · Enter ناعمة/زاوية · Delete للحذف",
   "Click for corners, drag for curves · click the first point to close · Esc ends the path": "انقر للزوايا واسحب للمنحنيات · انقر النقطة الأولى للإغلاق · Esc لإنهاء المسار",
   "Drag to draw a rectangle · Shift for a square": "اسحب لرسم مستطيل · Shift لمربع",
   "Drag to draw an ellipse · Shift for a circle": "اسحب لرسم شكل بيضاوي · Shift لدائرة",
@@ -2509,4 +2508,10 @@ export const ar: Dict = {
   "{instance}: file name \"{f}\" can't contain < > : \" / \\ | ? or *.": "{instance}: لا يمكن أن يحتوي اسم الملف «{f}» على < > : \" / \\ | ? أو *.",
   "{instance}: name table entry \"{entry}\" isn't allowed.": "{instance}: إدخال جدول الأسماء «{entry}» غير مسموح.",
   "{name}: Name Table Entry: {e}": "{name}: Name Table Entry: {e}",
+  "Click or drag to select · Shift adds, Ctrl removes · Alt+drag for a lasso · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes": "انقر أو اسحب للتحديد · Shift يضيف وCtrl يزيل · Alt+سحب لتحديد حر · اسحب للنقل · الأسهم تزيح (Shift ×10) · Enter ناعم/زاوية · Delete يحذف",
+  "Draw around nodes to select them · Shift adds, Ctrl removes · Alt+drag for a rectangle · drag to move · Shift+V switches": "ارسم حول النقاط لتحديدها · Shift يضيف وCtrl يزيل · Alt+سحب لمستطيل · اسحب للنقل · Shift+V للتبديل",
+  "Lasso Select (Shift+V)": "التحديد الحر (Shift+V)",
+  "Lasso Select": "التحديد الحر",
+  "{tool} · hold or right-click to choose rectangle or lasso": "{tool} · اضغط مطولًا أو انقر بزر الفأرة الأيمن لاختيار مستطيل أو تحديد حر",
+  "Selection shape": "شكل التحديد",
 };

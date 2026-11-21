@@ -117,7 +117,7 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
 
 | Tool | Key | What it does |
 |---|---|---|
-| Select | V | Click or drag to select nodes; drag to move them. |
+| Select | V | Click or drag to select nodes; drag to move them. Shift+V switches to lasso selection and back. |
 | Pen | P | Click to add corner points, drag to add curve points. Click the first point to close the path. |
 | Rectangle | F | Drag to draw a rectangle. |
 | Ellipse | Shift+E | Drag to draw an ellipse. |
@@ -130,6 +130,8 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
   - Enter switches the selected nodes between smooth and corner;
   - Delete removes them.
 - **Selecting:** Ctrl+A selects everything, and double-clicking a node selects its whole path.
+- **Lasso selection:** to select along a free-form shape, hold the Select tool (or right-click it) and choose **Lasso Select**, or press Shift+V; the toolbar icon shows which one is on. Draw around the nodes, anchors and components you want. Where the lasso crosses itself, the parts it loops over twice are left out.
+- **Adding and removing:** with either shape, Shift+drag adds to the selection and Ctrl+drag takes away from it. Alt+drag uses the other shape for that one drag.
 - **Zoom:** Ctrl+= and Ctrl+- zoom in and out, and Ctrl+0 fits the glyph to the window.
 - **Components** (Ctrl+Shift+C): add another glyph as a component. Kernest won't let a glyph contain itself.
 - **Clipboard:** Ctrl+X, Ctrl+C and Ctrl+V cut, copy and paste paths and components, including between glyph tabs.
@@ -700,6 +702,7 @@ Every command is in the menu bar: File, Edit, Glyph, Path, Filter, View, Script,
 | Tidy up Paths | Ctrl+Shift+T |
 | Repeat Last Filter | Ctrl+Shift+F |
 | Knife / Ellipse tool | E / Shift+E |
+| Select / Lasso Select tool | V / Shift+V |
 | Show Metrics | Ctrl+Shift+M |
 | Show Guides / Show Background | Ctrl+Shift+L / Ctrl+Shift+B |
 | Show Bounding Box | Ctrl+Alt+Shift+B |

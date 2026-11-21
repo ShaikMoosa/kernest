@@ -559,7 +559,6 @@ export const es: Dict = {
   "Selected component": "Componente seleccionado",
   "Selected: {list}": "Seleccionado: {list}",
   "No selection": "Nada seleccionado",
-  "Click or drag to select · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes": "Haz clic o arrastra para seleccionar · arrastra para mover · flechas desplazan (Mayús ×10) · Intro suave/esquina · Supr elimina",
   "Click for corners, drag for curves · click the first point to close · Esc ends the path": "Clic para esquinas, arrastra para curvas · clic en el primer punto para cerrar · Esc termina el trazado",
   "Drag to draw a rectangle · Shift for a square": "Arrastra para dibujar un rectángulo · Mayús para un cuadrado",
   "Drag to draw an ellipse · Shift for a circle": "Arrastra para dibujar una elipse · Mayús para un círculo",
@@ -2298,4 +2297,10 @@ export const es: Dict = {
   "{instance}: file name \"{f}\" can't contain < > : \" / \\ | ? or *.": "{instance}: el nombre de archivo «{f}» no puede contener < > : \" / \\ | ? ni *.",
   "{instance}: name table entry \"{entry}\" isn't allowed.": "{instance}: la entrada de la tabla name «{entry}» no está permitida.",
   "{name}: Name Table Entry: {e}": "{name}: Name Table Entry: {e}",
+  "Click or drag to select · Shift adds, Ctrl removes · Alt+drag for a lasso · drag to move · arrows nudge (Shift ×10) · Enter smooth/corner · Delete removes": "Haz clic o arrastra para seleccionar · Mayús añade, Ctrl quita · Alt+arrastrar para un lazo · arrastra para mover · las flechas desplazan (Mayús ×10) · Intro suave/esquina · Supr elimina",
+  "Draw around nodes to select them · Shift adds, Ctrl removes · Alt+drag for a rectangle · drag to move · Shift+V switches": "Dibuja alrededor de los nodos para seleccionarlos · Mayús añade, Ctrl quita · Alt+arrastrar para un rectángulo · arrastra para mover · Mayús+V cambia",
+  "Lasso Select (Shift+V)": "Selección con lazo (Mayús+V)",
+  "Lasso Select": "Selección con lazo",
+  "{tool} · hold or right-click to choose rectangle or lasso": "{tool} · mantén pulsado o haz clic derecho para elegir rectángulo o lazo",
+  "Selection shape": "Forma de selección",
 };
