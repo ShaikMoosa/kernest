@@ -1279,7 +1279,10 @@ export type PathEditOperation =
   | "tidy-up"
   | "round-coordinates"
   | "harmonize"
-  | "super-smooth";
+  | "super-smooth"
+  | "union"
+  | "subtract"
+  | "intersect";
 
 export interface PathEditResult {
   layer: LayerView;

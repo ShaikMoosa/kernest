@@ -348,6 +348,15 @@ The **Transform** panel in the editor sidebar scales, rotates, skews and mirrors
   - **A metric line**: for top, middle and bottom, the baseline, x-height, cap height, ascender or descender. For example, select nodes, choose **x-height** and click **Align top** to put them all on the x-height.
 - Each click is one step that Ctrl+Z undoes. A moved component stops following its anchors.
 
+**Boolean operations.** Three more buttons in the same row, also in the Path menu, combine closed paths:
+- **Union** merges the selected paths, or every path when none is selected.
+- **Subtract** takes the selected paths away from the unselected ones, for example a circle over a stem to cut a hole.
+- **Intersect** keeps only the parts where the selected paths overlap the unselected ones.
+- With nothing selected, Subtract and Intersect use the frontmost path (the last one drawn) as the selected one.
+- A path counts as selected when any of its nodes is. Each side is merged first, and only unselected paths the selected ones reach change: paths elsewhere in the glyph stay as drawn.
+- The result keeps curves and follows the usual path direction, so holes run the other way. On a compatible glyph, it applies to every master when the results still interpolate.
+- Open, locked and stroked paths, and components, take no part. If open paths were selected, Kernest says so.
+
 **Align Selection** (Path menu, Ctrl+Alt+Shift+A) lines the selected nodes, handles and anchors up on one line:
 - It picks a vertical line when they're closer together horizontally, and a horizontal line otherwise.
 - The transform origin picks the line: the origin's column gives left, centre or right; its row gives top, middle or bottom.
