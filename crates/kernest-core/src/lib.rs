@@ -49,6 +49,7 @@ pub mod stroke;
 pub mod structure;
 pub mod text;
 pub mod transform;
+pub mod vertical;
 pub mod wizard;
 
 pub use error::{Error, Result};

@@ -359,6 +359,9 @@ fn vertical_metrics(fi: &norad::FontInfo) -> kernest_core::VerticalMetrics {
         win_descent: fi.open_type_os2_win_descent.map(|v| v as f64),
         underline_thickness: fi.postscript_underline_thickness,
         underline_position: fi.postscript_underline_position,
+        vhea_ascender: fi.open_type_vhea_vert_typo_ascender.map(|v| v as f64),
+        vhea_descender: fi.open_type_vhea_vert_typo_descender.map(|v| v as f64),
+        vhea_line_gap: fi.open_type_vhea_vert_typo_line_gap.map(|v| v as f64),
     }
 }
 
@@ -547,6 +550,7 @@ fn build(
             for (k, &i) in order.iter().enumerate() {
                 if let Some(ug) = sources[i].2.get_glyph(n) {
                     let mut l = layer(&master_id(k), ug, &mut open_points);
+                    read_vertical(&mut l, ug, &sources[i].2.font_info);
                     l.guides = guides(&ug.guidelines);
                     // The "public.background" layer holds the reference drawing.
                     if let Some(bg) = sources[i]
@@ -648,6 +652,29 @@ fn build(
         variable_fonts: Vec::new(),
         export_presets: Vec::new(),
     }
+}
+
+/// A glyph's vertical advance and origin (UFO `height` and `public.verticalOrigin`),
+/// in Glyphs' terms: `vertOrigin` is how far the origin sits below the typo ascender.
+/// Read only when the UFO uses vertical metrics (vhea values or an origin on the
+/// glyph), since many UFOs carry an arbitrary height.
+fn read_vertical(l: &mut Layer, g: &norad::Glyph, fi: &norad::FontInfo) {
+    let origin = g.lib.get("public.verticalOrigin").and_then(|v| {
+        v.as_real()
+            .or_else(|| v.as_signed_integer().map(|i| i as f64))
+    });
+    if origin.is_none() && fi.open_type_vhea_vert_typo_ascender.is_none() {
+        return;
+    }
+    let asc = fi
+        .open_type_os2_typo_ascender
+        .map(|v| v as f64)
+        .or(fi.ascender)
+        .unwrap_or(0.0);
+    if g.height > 0.0 {
+        l.vert_width = Some(g.height);
+    }
+    l.vert_origin = origin.map(|o| asc - o).filter(|v| *v != 0.0);
 }
 
 fn layer(id: &str, g: &norad::Glyph, skipped: &mut usize) -> Layer {

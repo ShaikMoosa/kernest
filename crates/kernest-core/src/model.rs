@@ -398,6 +398,14 @@ pub struct VerticalMetrics {
     pub underline_thickness: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub underline_position: Option<f64>,
+    /// vhea ascender, descender and line gap for vertical typesetting (Glyphs'
+    /// `vheaVertAscender`…). Unset: half the em above and below, as ufo2ft does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vhea_ascender: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vhea_descender: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vhea_line_gap: Option<f64>,
 }
 
 impl VerticalMetrics {
@@ -448,6 +456,9 @@ pub struct Glyph {
     /// The name this glyph carries in exported fonts when production names are used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub production_name: Option<String>,
+    /// Writing direction set for this glyph; `None` takes it from glyph data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<WritingDirection>,
     /// A locked glyph refuses every edit until it is unlocked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locked: bool,
@@ -467,6 +478,37 @@ pub struct Glyph {
 
 /// A PNG picture of a glyph at one pixel size (an sbix strike). Like a layer image,
 /// the file is referenced by path, relative to the font file where possible.
+/// A glyph's writing direction (Glyphs' `direction`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WritingDirection {
+    #[serde(rename = "LTR")]
+    Ltr,
+    #[serde(rename = "RTL")]
+    Rtl,
+    #[serde(rename = "BIDI")]
+    Bidi,
+}
+
+impl WritingDirection {
+    /// From a Glyphs value (`LTR`, `RTL`, `BIDI`), any case.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "LTR" => Some(Self::Ltr),
+            "RTL" => Some(Self::Rtl),
+            "BIDI" => Some(Self::Bidi),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ltr => "LTR",
+            Self::Rtl => "RTL",
+            Self::Bidi => "BIDI",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GlyphBitmap {
@@ -513,6 +555,7 @@ impl Glyph {
             tags: Vec::new(),
             note: None,
             production_name: None,
+            direction: None,
             locked: false,
             smart_axes: Vec::new(),
             layers: Vec::new(),
@@ -606,6 +649,14 @@ pub struct Layer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<crate::color::ColorInfo>,
     pub width: f64,
+    /// Vertical advance for vertical typesetting (Glyphs' `vertWidth`). Unset: the
+    /// master's typo ascender minus its typo descender.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vert_width: Option<f64>,
+    /// How far the vertical origin sits below the typo ascender (Glyphs'
+    /// `vertOrigin`). Unset: the origin is at the typo ascender.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vert_origin: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shapes: Vec<Shape>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -733,6 +784,22 @@ impl Background {
     }
 }
 
+impl Font {
+    /// Whether the font has vertical metrics: a layer with a vertical width or origin,
+    /// or a master with vhea values. Export then writes vhea and vmtx.
+    pub fn uses_vertical_metrics(&self) -> bool {
+        self.masters.iter().any(|m| {
+            m.vertical.vhea_ascender.is_some()
+                || m.vertical.vhea_descender.is_some()
+                || m.vertical.vhea_line_gap.is_some()
+        }) || self.glyphs.iter().any(|g| {
+            g.layers
+                .iter()
+                .any(|l| l.vert_width.is_some() || l.vert_origin.is_some())
+        })
+    }
+}
+
 impl Layer {
     pub fn new(master_id: impl Into<String>, width: f64) -> Self {
         Self {
@@ -743,6 +810,8 @@ impl Layer {
             smart: None,
             color: None,
             width,
+            vert_width: None,
+            vert_origin: None,
             shapes: Vec::new(),
             anchors: Vec::new(),
             metrics_keys: MetricsKeys::default(),

@@ -497,7 +497,6 @@ export const ENGINE_MESSAGES = [
   "unknown glyph \"{name}\" in token",
   "glyph \"{name}\" has no layer for master \"{master}\"",
   "glyph \"{name}\" has no outline in \"{master}\", so it has no sidebearings",
-  "TSB and BSB need vertical metrics, which Kernest doesn't support yet",
   "\"{path}\" isn't a glyph property; use width, LSB, RSB or anchors.<name>.x / .y",
   "glyph \"{name}\" has no anchor \"{anchor}\" in \"{master}\"",
   "#else without #ifdef",
@@ -550,4 +549,9 @@ export const ENGINE_MESSAGES = [
   "Pasting kerning needs the desktop app (npm run tauri dev).",
   "Select the glyphs to duplicate.",
   "Duplicating glyphs needs the desktop app (npm run tauri dev).",
+  "Writing directions need the desktop app (npm run tauri dev).",
+  "Vertical metrics need the desktop app (npm run tauri dev).",
+  "\"{name}\" isn't a writing direction; use LTR, RTL or BIDI.",
+  "The vertical width can't be negative.",
+  "Glyph \"{name}\" has no outline, so it has no top or bottom sidebearing.",
 ];

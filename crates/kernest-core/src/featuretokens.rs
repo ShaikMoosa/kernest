@@ -241,10 +241,18 @@ impl<'a> Numbers<'a> {
                     "width" => Ok(layer.width),
                     "lsb" => Ok(sides()?.0),
                     "rsb" => Ok(sides()?.1),
-                    "tsb" | "bsb" => Err(
-                        "TSB and BSB need vertical metrics, which Kernest doesn't support yet"
-                            .into(),
-                    ),
+                    "tsb" | "bsb" => {
+                        // The vertical origin and advance, with export's defaults.
+                        let (origin, advance) = crate::vertical::origin_and_advance(m, layer);
+                        let b = crate::geometry::bounds(font, layer).ok_or_else(|| {
+                            format!("glyph \"{name}\" has no outline in \"{}\", so it has no sidebearings", m.name)
+                        })?;
+                        Ok(if lower == "tsb" {
+                            origin - b.max_y
+                        } else {
+                            b.min_y - (origin - advance)
+                        })
+                    }
                     _ => {
                         let anchor = lower
                             .starts_with("anchors.")
@@ -1820,6 +1828,20 @@ mod tests {
     }
 
     #[test]
+    fn tsb_and_bsb_tokens_use_vertical_metrics() {
+        let mut f = property_font();
+        let m = f.masters[0].clone();
+        let l = f.glyph("H").unwrap().layers[0].clone();
+        let (tsb, bsb) = crate::vertical::sidebearings(&f, &m, &l).unwrap();
+        let s = expand(&f, "pos A ${H:TSB}; pos B ${H:BSB};", &Context::DEFAULT).unwrap();
+        assert_eq!(s, format!("pos A {}; pos B {};", fmt(tsb), fmt(bsb)));
+        // A vertical origin 50 below the ascender: TSB shrinks by 50.
+        f.glyph_mut("H").unwrap().layers[0].vert_origin = Some(50.0);
+        let s = expand(&f, "pos A ${H:TSB};", &Context::DEFAULT).unwrap();
+        assert_eq!(s, format!("pos A {};", fmt(tsb - 50.0)));
+    }
+
+    #[test]
     fn glyph_property_errors_point_at_the_token() {
         let f = property_font();
         let check = |code: &str, msg: &str| {
@@ -1829,7 +1851,7 @@ mod tests {
         };
         check("\npos A ${nosuch:LSB};", "unknown glyph \"nosuch\"");
         check("\npos A ${H:anchors.nope.x};", "has no anchor \"nope\"");
-        check("\npos A ${H:TSB};", "vertical metrics");
+        check("\npos A ${space:TSB};", "no outline");
         check("\npos A ${H:height};", "isn't a glyph property");
         check("\npos A ${space:LSB};", "no outline");
         // Alt+click shows the value per master.

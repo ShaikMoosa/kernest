@@ -550,7 +550,42 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
             location: Some(&src.location),
         },
     )?;
+    add_vertical_metrics(src, &mut ufo);
     Ok(ufo)
+}
+
+/// Vertical metrics for vertical typesetting, when the font uses them: each glyph's
+/// height and `public.verticalOrigin`, and the vhea values, which make fontc write
+/// vhea and vmtx (and VVAR for variable fonts). Defaults follow glyphsLib: the
+/// advance is typo ascender − typo descender and the origin sits at the typo
+/// ascender; vhea is half the em above and below.
+fn add_vertical_metrics(src: &UfoSource, ufo: &mut norad::Font) {
+    let font = src.font;
+    if !font.uses_vertical_metrics() {
+        return;
+    }
+    let master = font
+        .masters
+        .iter()
+        .find(|m| m.location == src.location)
+        .unwrap_or_else(|| kernest_core::interpolate::default_master(font));
+    let v = &master.vertical;
+    let asc = v.typo_ascender.unwrap_or(src.metrics.ascender);
+    let desc = v.typo_descender.unwrap_or(src.metrics.descender);
+    let half = f64::from(font.info.units_per_em) / 2.0;
+    let int = |x: f64| x.round() as i32;
+    let info = &mut ufo.font_info;
+    info.open_type_vhea_vert_typo_ascender = Some(int(v.vhea_ascender.unwrap_or(half)));
+    info.open_type_vhea_vert_typo_descender = Some(int(v.vhea_descender.unwrap_or(-half)));
+    info.open_type_vhea_vert_typo_line_gap = Some(int(v.vhea_line_gap.unwrap_or(0.0)));
+    let layers: BTreeMap<&str, &Layer> = src.layers.iter().map(|(n, l)| (n.as_str(), l)).collect();
+    for g in ufo.default_layer_mut().iter_mut() {
+        let l = layers.get(g.name().as_str());
+        g.height = l.and_then(|l| l.vert_width).unwrap_or(asc - desc);
+        let origin = asc - l.and_then(|l| l.vert_origin).unwrap_or(0.0);
+        g.lib
+            .insert("public.verticalOrigin".into(), plist::Value::Real(origin));
+    }
 }
 
 fn xml_escape(s: &str) -> String {

@@ -141,7 +141,7 @@ export const DYNAMIC_KEYS = [
   "Add an instance and preview it", "Set up a named instance in Font Info. Then choose it in Text View's preview selector.",
   "Export your first font", "Choose a format and destination, then export. Check font reports any problems in the exported files.",
   "Create or open a font", "Space glyphs in Text View", "Export your font",
-  "Names & metadata", "Vertical metrics", "Outlines", "OpenType features", "PASS", "WARN", "FAIL", "SKIP", "INFO", "ERROR",
+  "Names & metadata", "Vertical metrics", "TSB", "BSB", "Outlines", "OpenType features", "PASS", "WARN", "FAIL", "SKIP", "INFO", "ERROR",
   // Glyph sets (from the font engine)
   "Latin Basic (ASCII)",
   "Latin-1 Supplement",

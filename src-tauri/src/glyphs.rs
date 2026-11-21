@@ -248,6 +248,98 @@ pub fn set_production_name(
     Ok(status(doc))
 }
 
+/// Sets a glyph's writing direction (`LTR`, `RTL`, `BIDI`; empty for automatic).
+/// One undoable step.
+#[tauri::command]
+pub fn set_writing_direction(
+    state: State<AppState>,
+    glyph: String,
+    direction: String,
+) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, &glyph)?;
+    let dir =
+        match direction.trim() {
+            "" => None,
+            d => Some(kernest_core::WritingDirection::parse(d).ok_or_else(|| {
+                format!("\"{d}\" isn't a writing direction; use LTR, RTL or BIDI.")
+            })?),
+        };
+    let mut next = doc.font.clone();
+    next.glyph_mut(&glyph)
+        .ok_or_else(|| format!("There is no glyph named \"{glyph}\"."))?
+        .direction = dir;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
+/// Sets one vertical metric of a glyph in a master: `advance` (vertical width),
+/// `tsb` (moves the vertical origin) or `bsb` (changes the advance). `reset` clears
+/// the layer's own values so the defaults apply. One undoable step.
+#[tauri::command]
+pub fn set_vertical_metric(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    which: String,
+    value: Option<f64>,
+) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    ensure_glyph_unlocked(&doc.font, &glyph)?;
+    let master = doc
+        .font
+        .master(&master_id)
+        .ok_or_else(|| format!("No master with id \"{master_id}\""))?
+        .clone();
+    let mut next = doc.font.clone();
+    let font = doc.font.clone();
+    let layer = next
+        .glyph_mut(&glyph)
+        .ok_or_else(|| format!("There is no glyph named \"{glyph}\"."))?
+        .layer_mut(&master_id)
+        .ok_or_else(|| format!("Glyph \"{glyph}\" has no layer for this master."))?;
+    let need = |v: Option<f64>| -> Result<f64, String> {
+        v.filter(|v| v.is_finite())
+            .ok_or_else(|| "Enter a number.".to_string())
+    };
+    let empty =
+        || format!("Glyph \"{glyph}\" has no outline, so it has no top or bottom sidebearing.");
+    match which.as_str() {
+        "advance" => {
+            let v = need(value)?;
+            if v < 0.0 {
+                return Err("The vertical width can't be negative.".into());
+            }
+            layer.vert_width = Some(v);
+        }
+        "tsb" => kernest_core::vertical::set_tsb(&font, &master, layer, need(value)?)
+            .ok_or_else(empty)?,
+        "bsb" => kernest_core::vertical::set_bsb(&font, &master, layer, need(value)?)
+            .ok_or_else(empty)?,
+        "reset" => {
+            layer.vert_width = None;
+            layer.vert_origin = None;
+        }
+        other => return Err(format!("Unknown vertical metric \"{other}\".")),
+    }
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
 /// Production names follow the glyph-name rules and must not clash with the name
 /// any other glyph exports under (its production name, or its own name).
 fn with_production_name(font: &Font, name: &str, production: &str) -> Result<Font, String> {
