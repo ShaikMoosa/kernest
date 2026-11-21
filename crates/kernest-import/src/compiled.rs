@@ -375,6 +375,7 @@ fn named_instances(font: &FontRef, kernest_axes: &[Axis]) -> Vec<Instance> {
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "Instance".into());
             Instance {
+                names: Default::default(),
                 name,
                 location,
                 export: true,

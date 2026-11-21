@@ -430,6 +430,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         .iter()
         .filter(|i| i.type_ == InstanceType::Single)
         .map(|i| Instance {
+            names: Default::default(),
             name: i.name.clone(),
             location: location(&i.axes_values),
             export: i.active,
@@ -559,7 +560,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
             font.variable_fonts = variable_settings_from(&root, &font, &mut warnings);
             read_virtual_masters(&root, &mut font);
             read_numbers(&root, &mut font, &master_ids);
-            read_instance_swaps(&root, &mut font);
+            read_instance_swaps(&root, &mut font, &mut warnings);
         }
         Err(e) => warnings.push(format!("Master guides couldn't be read: {e}")),
     }
@@ -992,6 +993,15 @@ fn localized_names(list: &glyphs_reader::Plist) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// A naming property's value: its `value`, or the default (else English, else first)
+/// of its localized `values`.
+fn property_value(prop: &glyphs_reader::Plist) -> Option<String> {
+    if let Some(v) = prop.get("value").and_then(|v| v.as_str()) {
+        return Some(v.trim().to_string()).filter(|v| !v.is_empty());
+    }
+    split_family_names(localized_names(prop.get("values")?)).0
+}
+
 /// Splits localized family names into the default name ("dflt", else English) and
 /// the other languages.
 fn split_family_names(
@@ -1009,7 +1019,7 @@ fn split_family_names(
 /// Glyphs 3; the `familyName` and `Localized Family Names` parameters in Glyphs 2).
 /// Static instances are matched by position, since several can share a name (one
 /// "Bold" per family).
-fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font) {
+fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font, warnings: &mut Vec<String>) {
     let font_family = font.info.family_name.clone();
     let statics = root
         .get("instances")
@@ -1027,7 +1037,8 @@ fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font) {
             .and_then(|p| p.as_array())
             .unwrap_or(&[])
         {
-            if prop.get("key").and_then(|k| k.as_str()) == Some("familyNames") {
+            let key = prop.get("key").and_then(|k| k.as_str());
+            if key == Some("familyNames") {
                 if let Some(v) = prop.get("values") {
                     names.extend(localized_names(v));
                 }
@@ -1035,6 +1046,19 @@ fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font) {
                     names.insert("dflt".into(), v.trim().to_string());
                 }
             }
+            // Glyphs 3 keeps the other naming overrides as properties too.
+            let slot = match key {
+                Some("postscriptFontName") => &mut target.names.postscript_font_name,
+                Some("postscriptFullNames" | "postscriptFullName") => &mut target.names.full_name,
+                Some("compatibleFullNames" | "compatibleFullName") => {
+                    &mut target.names.compatible_full_name
+                }
+                Some("styleMapFamilyNames" | "styleMapFamilyName") => {
+                    &mut target.names.style_map_family_name
+                }
+                _ => continue,
+            };
+            *slot = property_value(prop);
         }
         for p in inst
             .get("customParameters")
@@ -1072,7 +1096,24 @@ fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font) {
             if p.get("disabled").and_then(num).is_some_and(|v| v != 0.0) {
                 continue;
             }
+            let text = || {
+                p.get("value")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            };
             match p.get("name").and_then(|n| n.as_str()) {
+                Some("postscriptFontName") => target.names.postscript_font_name = text(),
+                Some("postscriptFullName") => target.names.full_name = text(),
+                Some("compatibleFullName") => target.names.compatible_full_name = text(),
+                Some("styleMapFamilyName") => target.names.style_map_family_name = text(),
+                Some("fileName") => target.names.file_name = text(),
+                Some("Name Table Entry") => {
+                    match kernest_core::NameRecord::parse(&text().unwrap_or_default()) {
+                        Ok(r) => target.names.records.push(r),
+                        Err(e) => warnings.push(format!("{}: Name Table Entry: {e}", target.name)),
+                    }
+                }
                 Some("Rename Glyphs") => target.rename_glyphs = swaps_in(p),
                 Some("Disable Masters") => {
                     target.disabled_masters = p
@@ -1373,6 +1414,8 @@ fn read_root(path: &Path) -> Result<glyphs_reader::Plist, String> {
 pub(crate) const HANDLED_PARAMETERS: &[&str] = &[
     "glyphOrder",
     "Variable Font Origin",
+    "Variable Font Family Name",
+    "Variable Font File Name",
     "vendorID",
     "openTypeOS2VendorID",
     "TTFAutohint options",
@@ -1477,6 +1520,14 @@ fn variable_settings_from(
             .unwrap_or("Variable")
             .to_string();
         let mut file_name = None;
+        let mut vf_family = inst
+            .get("properties")
+            .and_then(|p| p.as_array())
+            .unwrap_or(&[])
+            .iter()
+            .find(|p| p.get("key").and_then(|k| k.as_str()) == Some("familyNames"))
+            .and_then(property_value);
+        let mut records = Vec::new();
         let mut glyphs: Vec<String> = Vec::new();
         let mut rename: Vec<[String; 2]> = Vec::new();
         let mut disabled: Vec<String> = Vec::new();
@@ -1502,7 +1553,22 @@ fn variable_settings_from(
                     .unwrap_or_default()
             };
             match pname {
-                "fileName" => file_name = p.get("value").and_then(|v| v.as_str()).map(String::from),
+                "fileName" | "Variable Font File Name" | "variableFileName" => {
+                    file_name = p.get("value").and_then(|v| v.as_str()).map(String::from)
+                }
+                "Variable Font Family Name" | "familyName" => {
+                    vf_family = p
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .map(|v| v.trim().to_string())
+                        .filter(|v| !v.is_empty())
+                }
+                "Name Table Entry" => match kernest_core::NameRecord::parse(
+                    p.get("value").and_then(|v| v.as_str()).unwrap_or_default(),
+                ) {
+                    Ok(r) => records.push(r),
+                    Err(e) => warnings.push(format!("{name}: Name Table Entry: {e}")),
+                },
                 "Keep Glyphs" => {
                     let keep = list();
                     glyphs = font
@@ -1546,6 +1612,8 @@ fn variable_settings_from(
             }
         });
         out.push(kernest_core::VariableFontSetting {
+            family_name: vf_family,
+            name_records: records,
             name,
             file_name,
             axes: Vec::new(),
@@ -1554,6 +1622,35 @@ fn variable_settings_from(
             remove_glyphs: Vec::new(),
             disabled_masters: disabled,
         });
+    }
+    // Glyphs 2 names the variable font with font parameters instead.
+    if out.is_empty() {
+        let param = |n: &str| {
+            root.get("customParameters")
+                .and_then(|p| p.as_array())
+                .unwrap_or(&[])
+                .iter()
+                .filter(|p| p.get("disabled").and_then(num).is_none_or(|v| v == 0.0))
+                .find(|p| p.get("name").and_then(|x| x.as_str()) == Some(n))
+                .and_then(|p| p.get("value").and_then(|v| v.as_str()))
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
+        let vf_family = param("Variable Font Family Name");
+        let vf_file = param("Variable Font File Name");
+        if vf_family.is_some() || vf_file.is_some() {
+            out.push(kernest_core::VariableFontSetting {
+                name: "Variable".into(),
+                file_name: vf_file.unwrap_or_else(|| format!("{family}-VF")),
+                family_name: vf_family,
+                name_records: Vec::new(),
+                axes: Vec::new(),
+                glyphs: Vec::new(),
+                rename_glyphs: Vec::new(),
+                remove_glyphs: Vec::new(),
+                disabled_masters: Vec::new(),
+            });
+        }
     }
     if !ignored.is_empty() {
         warnings.push(format!(

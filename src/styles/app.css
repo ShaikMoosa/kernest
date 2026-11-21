@@ -564,6 +564,10 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .fi-vf-axis { gap: var(--k-space-4); }
 .fi-vf-range { display: flex; align-items: center; gap: var(--k-space-4); }
 .fi-vf-glyphs-hint { align-self: center; }
+.fi-names { flex-basis: 100%; }
+.fi-names > summary { cursor: pointer; color: var(--k-text-secondary); padding: var(--k-space-4) 0; }
+.fi-names > .fi-row { padding-top: var(--k-space-8); }
+.fi-name-records textarea { width: 280px; min-height: 52px; padding: var(--k-space-4) var(--k-space-8); border: 1px solid var(--k-border-strong); border-radius: var(--k-radius-md); background: var(--k-bg-surface); color: var(--k-text-primary); font-size: 12px; resize: vertical; }
 .fi-vf-masters { margin: 0; padding: 0; border: 0; min-width: 0; flex-wrap: wrap; align-items: center; column-gap: var(--k-space-16); }
 .fi-vf-masters legend { float: left; margin-inline-end: var(--k-space-8); padding: 0; }
 .fi-adding { border-style: dashed; border-color: var(--k-border-focus); }

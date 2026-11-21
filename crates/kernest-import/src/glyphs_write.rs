@@ -1265,6 +1265,15 @@ pub fn glyphs_source(font: &Font) -> String {
                             v.join(",\n")
                         ));
                     }
+                    if let Some(f) = &i.names.file_name {
+                        ip.push(format!("{{\nname = fileName;\nvalue = {};\n}}", q(f)));
+                    }
+                    for r in &i.names.records {
+                        ip.push(format!(
+                            "{{\nname = \"Name Table Entry\";\nvalue = {};\n}}",
+                            q(&r.to_glyphs())
+                        ));
+                    }
                     if !ip.is_empty() {
                         let _ = writeln!(e, "customParameters = (\n{}\n);", ip.join(",\n"));
                     }
@@ -1284,12 +1293,34 @@ pub fn glyphs_source(font: &Font) -> String {
                             q(f)
                         ));
                     }
+                    // Naming properties, in Glyphs' key order.
+                    let mut props: Vec<String> = Vec::new();
+                    let localized = |key: &str, v: &str| {
+                        format!(
+                            "{{\nkey = {key};\nvalues = (\n{{\nlanguage = dflt;\nvalue = {};\n}}\n);\n}}",
+                            q(v)
+                        )
+                    };
+                    if let Some(v) = &i.names.compatible_full_name {
+                        props.push(localized("compatibleFullNames", v));
+                    }
                     if !names.is_empty() {
-                        let _ = writeln!(
-                            e,
-                            "properties = (\n{{\nkey = familyNames;\nvalues = (\n{}\n);\n}}\n);",
+                        props.push(format!(
+                            "{{\nkey = familyNames;\nvalues = (\n{}\n);\n}}",
                             names.join(",\n")
-                        );
+                        ));
+                    }
+                    if let Some(v) = &i.names.postscript_font_name {
+                        props.push(format!("{{\nkey = postscriptFontName;\nvalue = {};\n}}", q(v)));
+                    }
+                    if let Some(v) = &i.names.full_name {
+                        props.push(localized("postscriptFullNames", v));
+                    }
+                    if let Some(v) = &i.names.style_map_family_name {
+                        props.push(localized("styleMapFamilyNames", v));
+                    }
+                    if !props.is_empty() {
+                        let _ = writeln!(e, "properties = (\n{}\n);", props.join(",\n"));
                     }
                     e.push('}');
                     e
@@ -1325,8 +1356,24 @@ pub fn glyphs_source(font: &Font) -> String {
                     names.join(",\n")
                 ));
             }
+            for r in &vf.name_records {
+                vp.push(format!(
+                    "{{\nname = \"Name Table Entry\";\nvalue = {};\n}}",
+                    q(&r.to_glyphs())
+                ));
+            }
+            let props = vf
+                .family_name
+                .as_ref()
+                .map(|f| {
+                    format!(
+                        "properties = (\n{{\nkey = familyNames;\nvalues = (\n{{\nlanguage = dflt;\nvalue = {};\n}}\n);\n}}\n);\n",
+                        q(f)
+                    )
+                })
+                .unwrap_or_default();
             insts.push(format!(
-                "{{\ncustomParameters = (\n{}\n);\nname = {};\ntype = variable;\n}}",
+                "{{\ncustomParameters = (\n{}\n);\nname = {};\n{props}type = variable;\n}}",
                 vp.join(",\n"),
                 q(&vf.name)
             ));
