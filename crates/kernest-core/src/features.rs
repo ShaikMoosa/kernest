@@ -18,10 +18,13 @@ pub struct Diagnostic {
 }
 
 /// Order the generated blocks are emitted in, so the output is stable and readable.
+/// Composition first, then the positional forms of joining scripts in the order
+/// Glyphs writes them, then the rest.
 const ORDER: &[&str] = &[
-    "liga", "locl", "smcp", "c2sc", "case", "tnum", "onum", "lnum", "sups", "subs", "salt", "ss01",
-    "ss02", "ss03", "ss04", "ss05", "ss06", "ss07", "ss08", "ss09", "ss10", "ss11", "ss12", "ss13",
-    "ss14", "ss15", "ss16", "ss17", "ss18", "ss19", "ss20", "aalt",
+    "ccmp", "isol", "fina", "fin2", "fin3", "medi", "med2", "init", "liga", "locl", "smcp", "c2sc",
+    "case", "tnum", "onum", "lnum", "sups", "subs", "salt", "ss01", "ss02", "ss03", "ss04", "ss05",
+    "ss06", "ss07", "ss08", "ss09", "ss10", "ss11", "ss12", "ss13", "ss14", "ss15", "ss16", "ss17",
+    "ss18", "ss19", "ss20", "aalt",
 ];
 
 /// Tags the designer wrote by hand. Anything here is left out of generation.
@@ -41,9 +44,120 @@ pub fn handwritten_tags(font: &Font) -> BTreeSet<String> {
     out
 }
 
+/// The positional features of joining scripts, by glyph-name suffix (Glyphs names
+/// them `beh-ar.init`, `alaph-syriac.fin2` and so on).
+const POSITIONAL: &[&str] = &["isol", "fina", "fin2", "fin3", "medi", "med2", "init"];
+
+/// The OpenType script tag for a glyph data script name (`None` for scripts with no
+/// tag, such as Common: those rules go under the default script).
+fn ot_script(script: &str) -> Option<&'static str> {
+    Some(match script {
+        "Arabic" => "arab",
+        "Syriac" => "syrc",
+        "Hebrew" => "hebr",
+        "Latin" => "latn",
+        "Greek" => "grek",
+        "Cyrillic" => "cyrl",
+        _ => return None,
+    })
+}
+
+/// Positional substitutions (`sub beh-ar by beh-ar.init;`) per feature tag, grouped
+/// under `script …;` statements by the base glyph's script.
+fn positional(font: &Font) -> BTreeMap<String, Vec<String>> {
+    // tag → script (None = default) → lines
+    let mut by_tag: BTreeMap<&str, BTreeMap<Option<&str>, Vec<String>>> = BTreeMap::new();
+    for g in font.glyphs.iter().filter(|g| g.export) {
+        let Some((base, suf)) = g.name.rsplit_once('.') else {
+            continue;
+        };
+        let Some(tag) = POSITIONAL.iter().find(|t| **t == suf) else {
+            continue;
+        };
+        let Some(b) = font.glyph(base).filter(|b| b.export) else {
+            continue;
+        };
+        let script = ot_script(crate::glyphdata::script_of(b));
+        by_tag
+            .entry(tag)
+            .or_default()
+            .entry(script)
+            .or_default()
+            .push(format!("  sub {base} by {};", g.name));
+    }
+    by_tag
+        .into_iter()
+        .map(|(tag, scripts)| {
+            let mut lines = Vec::new();
+            // Rules with no script first: a script statement applies to what follows.
+            for (script, subs) in scripts {
+                if let Some(s) = script {
+                    lines.push(format!("  script {s};"));
+                }
+                lines.extend(subs);
+            }
+            (tag.to_string(), lines)
+        })
+        .collect()
+}
+
+/// The scripts the positional features use, so the generated header declares them.
+fn positional_scripts(font: &Font) -> BTreeSet<&'static str> {
+    font.glyphs
+        .iter()
+        .filter(|g| g.export)
+        .filter_map(|g| {
+            let (base, suf) = g.name.rsplit_once('.')?;
+            POSITIONAL.contains(&suf).then_some(())?;
+            ot_script(crate::glyphdata::script_of(font.glyph(base)?))
+        })
+        .filter(|s| *s != "latn")
+        .collect()
+}
+
+/// `ccmp`: `i` and `j` become dotless before a top mark, as Glyphs generates it. The
+/// marks are the exporting glyphs with a `_top` anchor.
+fn ccmp(font: &Font) -> Option<Vec<String>> {
+    let pairs: Vec<(&str, &str)> = [("i", "idotless"), ("j", "jdotless")]
+        .into_iter()
+        .filter(|(a, b)| {
+            font.glyph(a).is_some_and(|g| g.export) && font.glyph(b).is_some_and(|g| g.export)
+        })
+        .collect();
+    if pairs.is_empty() {
+        return None;
+    }
+    let marks: Vec<&str> = font
+        .glyphs
+        .iter()
+        .filter(|g| {
+            g.export
+                && g.layers
+                    .iter()
+                    .any(|l| l.anchors.iter().any(|a| a.name == "_top"))
+        })
+        .map(|g| g.name.as_str())
+        .collect();
+    if marks.is_empty() {
+        return None;
+    }
+    let (from, to): (Vec<&str>, Vec<&str>) = pairs.into_iter().unzip();
+    Some(vec![
+        format!("  @CombiningTopAccents = [{}];", marks.join(" ")),
+        format!(
+            "  sub [{}]' @CombiningTopAccents by [{}];",
+            from.join(" "),
+            to.join(" ")
+        ),
+    ])
+}
+
 /// Substitution lines per feature tag, including the `aalt` aggregate.
 fn collect(font: &Font) -> BTreeMap<String, Vec<String>> {
-    let mut blocks: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut blocks: BTreeMap<String, Vec<String>> = positional(font);
+    if let Some(lines) = ccmp(font) {
+        blocks.insert("ccmp".into(), lines);
+    }
     let mut alternates: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let has = |n: &str| font.glyph(n).is_some();
     fn put(blocks: &mut BTreeMap<String, Vec<String>>, tag: &str, base: &str, alt: &str) {
@@ -176,7 +290,12 @@ pub fn generate(font: &Font) -> String {
     if declares_language_systems(&font.features) {
         out
     } else {
-        format!("languagesystem DFLT dflt;\nlanguagesystem latn dflt;\n{out}")
+        // Joining scripts the positional features use need their own language system.
+        let mut header = String::from("languagesystem DFLT dflt;\nlanguagesystem latn dflt;\n");
+        for s in positional_scripts(font) {
+            header.push_str(&format!("languagesystem {s} dflt;\n"));
+        }
+        format!("{header}{out}")
     }
 }
 
@@ -342,6 +461,100 @@ mod tests {
 
     fn enable_all(f: &mut Font) {
         f.feature_settings.automatic = available(f);
+    }
+
+    /// A font with encoded base glyphs and their positional forms.
+    fn joining_font() -> Font {
+        let mut f = Font::new("Test", std::iter::empty());
+        let enc = |n: &str, cp: u32| Glyph::new(n, vec![crate::model::Codepoint(cp)]);
+        f.glyphs.push(enc("beh-ar", 0x0628));
+        f.glyphs.push(enc("alef-ar", 0x0627));
+        f.glyphs.push(enc("alaph-syriac", 0x0710));
+        for n in [
+            "beh-ar.init",
+            "beh-ar.medi",
+            "beh-ar.fina",
+            "alef-ar.fina",
+            "alaph-syriac.fin2",
+            "alaph-syriac.fin3",
+            "alaph-syriac.med2",
+        ] {
+            f.glyphs.push(Glyph::new(n, vec![]));
+        }
+        f
+    }
+
+    #[test]
+    fn positional_forms_generate_joining_features() {
+        let mut f = joining_font();
+        enable_all(&mut f);
+        let a = available(&f);
+        for tag in ["init", "medi", "fina", "fin2", "fin3", "med2"] {
+            assert!(a.contains(tag), "{tag} in {a:?}");
+        }
+        assert!(!a.contains("isol"), "no .isol glyphs");
+        let out = generate(&f);
+        assert!(out.contains("languagesystem arab dflt;\n"), "{out}");
+        assert!(out.contains("languagesystem syrc dflt;\n"), "{out}");
+        assert!(
+            out.contains("feature init {\n  script arab;\n  sub beh-ar by beh-ar.init;\n} init;")
+        );
+        assert!(out.contains(
+            "feature fina {\n  script arab;\n  sub beh-ar by beh-ar.fina;\n  sub alef-ar by alef-ar.fina;\n} fina;"
+        ));
+        assert!(out.contains(
+            "feature fin2 {\n  script syrc;\n  sub alaph-syriac by alaph-syriac.fin2;\n} fin2;"
+        ));
+        // Glyphs' order: fina, fin2, fin3, medi, med2, init.
+        let pos = |t: &str| out.find(&format!("feature {t} ")).unwrap();
+        assert!(pos("fina") < pos("fin2") && pos("fin3") < pos("medi"));
+        assert!(pos("medi") < pos("med2") && pos("med2") < pos("init"));
+    }
+
+    #[test]
+    fn positional_features_respect_hand_code_switches_and_export() {
+        let mut f = joining_font();
+        f.glyph_mut("beh-ar.medi").unwrap().export = false;
+        f.features = "feature init {\n  sub beh-ar by beh-ar.init;\n} init;\n".into();
+        enable_all(&mut f);
+        let a = available(&f);
+        assert!(!a.contains("init"), "hand-written init wins");
+        assert!(!a.contains("medi"), "only a non-exporting .medi");
+        f.feature_settings.automatic.remove("fina");
+        let out = generate(&f);
+        assert!(!out.contains("feature fina"), "switched off");
+        assert!(!out.contains("feature init"));
+        // The designer's own language systems are left alone.
+        f.features = format!("languagesystem DFLT dflt;\n{}", f.features);
+        assert!(!generate(&f).contains("languagesystem"));
+    }
+
+    #[test]
+    fn ccmp_makes_i_and_j_dotless_before_top_marks() {
+        let mut f = font_with(&[
+            "i",
+            "j",
+            "idotless",
+            "jdotless",
+            "acutecomb",
+            "dotbelowcomb",
+        ]);
+        let mut top = crate::model::Layer::new("m01", 0.0);
+        top.anchors.push(crate::model::Anchor {
+            name: "_top".into(),
+            x: 0.0,
+            y: 500.0,
+        });
+        f.glyph_mut("acutecomb").unwrap().layers.push(top);
+        enable_all(&mut f);
+        let out = generate(&f);
+        assert!(
+            out.contains("feature ccmp {\n  @CombiningTopAccents = [acutecomb];\n  sub [i j]' @CombiningTopAccents by [idotless jdotless];\n} ccmp;"),
+            "{out}"
+        );
+        // Without dotless forms or top marks there's nothing to do.
+        let plain = font_with(&["i", "acutecomb"]);
+        assert!(!available(&plain).contains("ccmp"));
     }
 
     #[test]

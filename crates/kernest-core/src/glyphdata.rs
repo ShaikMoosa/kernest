@@ -264,6 +264,9 @@ pub fn script(cp: u32) -> &'static str {
     {
         return "Arabic";
     }
+    if (0x0700..=0x074F).contains(&cp) || (0x0860..=0x086F).contains(&cp) {
+        return "Syriac";
+    }
     let latin_letter =
         (0x00C0..=0x02AF).contains(&cp) && char::from_u32(cp).is_some_and(|c| c.is_alphabetic());
     if (0x0041..=0x005A).contains(&cp)
