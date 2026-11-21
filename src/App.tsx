@@ -115,6 +115,7 @@ export default function App() {
   const [showImage, toggleImage] = useViewToggle("kernest.showImage", true);
   const [showAnnotations, toggleAnnotations] = useViewToggle("kernest.showAnnotations", true);
   const [showBoundingBox, toggleBoundingBox] = useViewToggle("kernest.showBoundingBox", false);
+  const [showZones, toggleZones] = useViewToggle("kernest.showZones", true);
   const [showSidebar, toggleSidebar] = useViewToggle("kernest.showSidebar", true);
   const [importNotes, setImportNotes] = useState<{ source: string; familyName: string; warnings: string[] } | null>(null);
   const [toast, setToast] = useState<{ kind: "info" | "danger"; text: string } | null>(null);
@@ -1212,6 +1213,7 @@ export default function App() {
       { label: t("Show Image"), onSelect: toggleImage, checked: showImage },
       { label: t("Show Annotations"), onSelect: toggleAnnotations, checked: showAnnotations },
       { label: t("Show Bounding Box"), shortcut: shortcutText("show-bounding-box"), onSelect: toggleBoundingBox, checked: showBoundingBox },
+      { label: t("Show Alignment Zones"), onSelect: toggleZones, checked: showZones },
       { label: t("Show Sidebar"), onSelect: toggleSidebar, checked: showSidebar },
       { label: t("Theme: System"), onSelect: () => setTheme("system"), checked: theme === "system", separatorBefore: true },
       { label: t("Theme: Light"), onSelect: () => setTheme("light"), checked: theme === "light" },
@@ -1328,7 +1330,7 @@ export default function App() {
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onStructureChanged={onStructureChanged} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showImage={showImage} showAnnotations={showAnnotations} showBoundingBox={showBoundingBox} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} onToggleView={(v) => ({ nodes: toggleNodes, metrics: toggleMetrics, anchors: toggleAnchors, guides: toggleGuides, background: toggleBackground })[v]()} handleSize={settings.appearance.handleSize} onDrawn={() => recordMilestone("drawn")} reporters={enabledReporters} />
+                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onStructureChanged={onStructureChanged} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showImage={showImage} showAnnotations={showAnnotations} showBoundingBox={showBoundingBox} showZones={showZones} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} onToggleView={(v) => ({ nodes: toggleNodes, metrics: toggleMetrics, anchors: toggleAnchors, guides: toggleGuides, background: toggleBackground, zones: toggleZones })[v]()} handleSize={settings.appearance.handleSize} onDrawn={() => recordMilestone("drawn")} reporters={enabledReporters} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} onGenerateInstances={generateInstances} />
               ) : id === "kerning" ? (
