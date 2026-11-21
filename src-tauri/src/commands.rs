@@ -368,6 +368,8 @@ pub struct LayerView {
     pub(crate) hints: Vec<Hint>,
     /// The automatic stem hints the master's stems produce for this layer.
     auto_hints: Vec<Hint>,
+    /// The master's alignment zones, for highlighting nodes in them (SMO-42).
+    zones: Vec<kernest_core::Zone>,
     /// Metrics keys of this layer, e.g. `=n` for the left sidebearing.
     metrics_keys: kernest_core::MetricsKeys,
     /// This glyph's smart axes, if it is a smart glyph.
@@ -587,6 +589,7 @@ fn layer_view_font(
         image: layer.image.clone(),
         anchors: layer.anchors.clone(),
         hints: layer.hints.clone(),
+        zones: master.alignment_zones.clone(),
         auto_hints: kernest_core::hinting::auto_stems(
             font,
             layer,
