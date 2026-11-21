@@ -387,6 +387,48 @@ mod tests {
     }
 
     #[test]
+    fn arabic_letters_join_with_generated_positional_features() {
+        // beh and alef with positional forms drawn like H (SMO-20).
+        let mut f = sample_font();
+        let mid = f.masters[0].id.clone();
+        let layer = f.glyph("H").and_then(|g| g.layer(&mid)).cloned().unwrap();
+        for (n, cp) in [
+            ("beh-ar", Some(0x0628)),
+            ("alef-ar", Some(0x0627)),
+            ("beh-ar.init", None),
+            ("beh-ar.medi", None),
+            ("beh-ar.fina", None),
+            ("alef-ar.fina", None),
+        ] {
+            let mut g = Glyph::new(n, cp.map(kernest_core::Codepoint).into_iter().collect());
+            g.layers.push(layer.clone());
+            f.glyphs.push(g);
+        }
+        f.feature_settings.automatic = available(&f);
+        let mut doc = Document::new(f, None);
+        let names = |doc: &mut Document, text: &str| -> Vec<String> {
+            shape(doc, text, "m01", None, &[]).unwrap().lines[0]
+                .iter()
+                .map(|g| g.name.clone())
+                .collect()
+        };
+        // Right to left, so the glyphs come back in visual order.
+        assert_eq!(
+            names(&mut doc, "\u{628}\u{628}"),
+            ["beh-ar.fina", "beh-ar.init"]
+        );
+        assert_eq!(
+            names(&mut doc, "\u{628}\u{628}\u{628}"),
+            ["beh-ar.fina", "beh-ar.medi", "beh-ar.init"]
+        );
+        // Alef doesn't join to the left, so beh after it starts a new word form.
+        assert_eq!(
+            names(&mut doc, "\u{628}\u{627}"),
+            ["alef-ar.fina", "beh-ar.init"]
+        );
+    }
+
+    #[test]
     fn shaping_applies_liga_and_ss01() {
         let mut doc = doc_with_alternates();
         let on = shape(
