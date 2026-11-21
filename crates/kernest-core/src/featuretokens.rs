@@ -10,6 +10,8 @@
 //!   that part of the design space (a feature variation in variable fonts).
 //! - `pos @A 10 (wdth:80) 20;`: a value that varies, as in Glyphs.
 //! - `lookupflag;` resets the flags, and `delete x;` is `sub x by NULL;`.
+//! - `standalone lookup NAME { … } NAME;` inside a feature is defined but not used by
+//!   it, and a lookup may close with `} ;` without its name.
 //! - `@MMK_L_T` and `@MMK_R_o`: kerning groups as classes (the glyphs whose right
 //!   group is T, used on the left of a pair; whose left group is o, on the right).
 //!
@@ -61,7 +63,7 @@ pub fn expand(font: &Font, text: &str, ctx: &Context) -> Result<String, Diagnost
     if !text.contains('$')
         && !text.contains("#if")
         && !text.contains("condition")
-        && !text.contains("lookupflag")
+        && !text.contains("lookup")
         && !text.contains("delete")
         && !text.contains(':')
         && !text.contains("@MMK_")
@@ -73,6 +75,7 @@ pub fn expand(font: &Font, text: &str, ctx: &Context) -> Result<String, Diagnost
     let t = tokens(font, &t, &numbers).map_err(|(o, e)| err(text, o, e))?;
     let t = varying_values(font, &t, ctx).map_err(|(o, e)| err(text, o, e))?;
     let t = statements(&t);
+    let t = lookup_syntax(&t);
     let t = kerning_classes(font, &t);
     conditions(font, &t, ctx).map_err(|(o, e)| err(text, o, e))
 }
@@ -1196,6 +1199,212 @@ fn statements(text: &str) -> String {
     out
 }
 
+// --- Glyphs lookup syntax ---------------------------------------------------------------
+
+/// A token of feature code for the lookup pass: a word or one of `{ } ;`, with its
+/// byte range. Comments and strings are skipped.
+struct FeaTok<'a> {
+    text: &'a str,
+    start: usize,
+    end: usize,
+}
+
+fn fea_tokens(text: &str) -> Vec<FeaTok<'_>> {
+    let b = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'#' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'"' => {
+                i += 1;
+                while i < b.len() && b[i] != b'"' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'{' | b'}' | b';' => {
+                out.push(FeaTok {
+                    text: &text[i..i + 1],
+                    start: i,
+                    end: i + 1,
+                });
+                i += 1;
+            }
+            c if c.is_ascii_whitespace() => i += 1,
+            _ => {
+                let start = i;
+                while i < b.len()
+                    && !b[i].is_ascii_whitespace()
+                    && !matches!(b[i], b'{' | b'}' | b';' | b'#' | b'"')
+                {
+                    i += 1;
+                }
+                out.push(FeaTok {
+                    text: &text[start..i],
+                    start,
+                    end: i,
+                });
+            }
+        }
+    }
+    out
+}
+
+enum Block {
+    /// A feature block: its tag and the latest `script`, `language` and `lookupflag`
+    /// statements at its top level.
+    Feature {
+        tag: String,
+        script: Option<String>,
+        language: Option<String>,
+        flags: Option<String>,
+    },
+    /// A lookup block: its name, and the tag of the feature it's standalone in.
+    Lookup {
+        name: String,
+        standalone_in: Option<String>,
+    },
+    Other,
+}
+
+/// Glyphs' lookup syntax, rewritten for the compiler without moving any line:
+///
+/// - `} ;` closing a lookup gets the lookup's name: `} NAME;`.
+/// - `standalone lookup NAME { … } NAME;` inside a feature is defined but not used
+///   by the feature: the feature block is closed before it and opened again after it
+///   (with its `script`, `language` and `lookupflag` statements repeated), so the lookup
+///   keeps its place in lookup order. Outside a feature `standalone` changes nothing.
+fn lookup_syntax(text: &str) -> String {
+    let toks = fea_tokens(text);
+    // (start, end, replacement), in text order.
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    let mut stack: Vec<Block> = Vec::new();
+    let mut i = 0;
+    while i < toks.len() {
+        let t = &toks[i];
+        let next = |k: usize| toks.get(i + k).map(|t| t.text);
+        let at_statement_start = i == 0 || matches!(toks[i - 1].text, ";" | "{" | "}");
+        match t.text {
+            "feature" if next(2) == Some("{") => {
+                stack.push(Block::Feature {
+                    tag: next(1).unwrap_or_default().to_string(),
+                    script: None,
+                    language: None,
+                    flags: None,
+                });
+                i += 3;
+                continue;
+            }
+            "standalone" if next(1) == Some("lookup") && next(3) == Some("{") => {
+                let feature = match stack.last() {
+                    Some(Block::Feature { tag, .. }) => Some(tag.clone()),
+                    _ => None,
+                };
+                // Close the feature here (or just drop the word outside a feature).
+                edits.push((
+                    t.start,
+                    t.end,
+                    feature
+                        .as_ref()
+                        .map(|tag| format!("}} {tag};"))
+                        .unwrap_or_default(),
+                ));
+                stack.push(Block::Lookup {
+                    name: next(2).unwrap_or_default().to_string(),
+                    standalone_in: feature,
+                });
+                i += 4;
+                continue;
+            }
+            "lookup" if next(2) == Some("{") => {
+                stack.push(Block::Lookup {
+                    name: next(1).unwrap_or_default().to_string(),
+                    standalone_in: None,
+                });
+                i += 3;
+                continue;
+            }
+            "script" | "language" | "lookupflag" if at_statement_start => {
+                if let Some(Block::Feature {
+                    script,
+                    language,
+                    flags,
+                    ..
+                }) = stack.last_mut()
+                {
+                    let end = toks[i..]
+                        .iter()
+                        .position(|x| x.text == ";")
+                        .map(|k| toks[i + k].end);
+                    if let Some(end) = end {
+                        let stmt = text[t.start..end]
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        match t.text {
+                            "script" => {
+                                *script = Some(stmt);
+                                *language = None;
+                            }
+                            "language" => *language = Some(stmt),
+                            _ => *flags = Some(stmt),
+                        }
+                    }
+                }
+            }
+            "{" => stack.push(Block::Other),
+            "}" => {
+                if let Some(Block::Lookup {
+                    name,
+                    standalone_in,
+                }) = stack.pop()
+                {
+                    // `} ;`: the name is optional in Glyphs.
+                    let mut close_end = t.end;
+                    if next(1) == Some(";") {
+                        let at = toks[i + 1].start;
+                        let space = if at > t.end { "" } else { " " };
+                        edits.push((at, at, format!("{space}{name}")));
+                        close_end = toks[i + 1].end;
+                    } else if next(2) == Some(";") {
+                        close_end = toks[i + 2].end;
+                    }
+                    if let Some(tag) = standalone_in {
+                        // Open the feature again, as it was before the lookup.
+                        let mut reopen = format!(" feature {tag} {{");
+                        if let Some(Block::Feature {
+                            script,
+                            language,
+                            flags,
+                            ..
+                        }) = stack.last()
+                        {
+                            for s in [script, language, flags].into_iter().flatten() {
+                                reopen.push(' ');
+                                reopen.push_str(s);
+                            }
+                        }
+                        edits.push((close_end, close_end, reopen));
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    edits.sort_by_key(|e| (e.0, e.1));
+    let mut out = text.to_string();
+    for (start, end, rep) in edits.into_iter().rev() {
+        out.replace_range(start..end, &rep);
+    }
+    out
+}
+
 // --- Conditions -------------------------------------------------------------------------
 
 /// One range of a condition: axis tag, user-space min and max.
@@ -1495,6 +1704,42 @@ mod tests {
         );
         let e = expand(&f, "\n pos A $nothing;", &Context::DEFAULT).unwrap_err();
         assert_eq!((e.line, e.column), (2, 8));
+    }
+
+    #[test]
+    fn optional_closing_lookup_name() {
+        let code = "lookup TEST {\n  sub x by y; # } ;\n} ;\nfeature calt {\n  sub period x' lookup TEST;\n} calt;\n";
+        let out = lookup_syntax(code);
+        assert_eq!(
+            out,
+            "lookup TEST {\n  sub x by y; # } ;\n} TEST;\nfeature calt {\n  sub period x' lookup TEST;\n} calt;\n"
+        );
+        // Named closings and `} ;` outside a lookup are left alone.
+        let named = "lookup A { sub a by b; } A;\nfeature liga { sub f i by f_i; } liga;\n} ;\n";
+        assert_eq!(lookup_syntax(named), named);
+    }
+
+    #[test]
+    fn standalone_lookups_leave_the_feature_and_keep_their_lines() {
+        let code = "feature ccmp {\n  script latn;\n  lookupflag IgnoreMarks;\n  standalone lookup demo {\n    sub acutecomb by acutecomb.case;\n  } demo;\n  sub A acutecomb' lookup demo;\n} ccmp;\n";
+        let out = lookup_syntax(code);
+        assert_eq!(
+            out,
+            "feature ccmp {\n  script latn;\n  lookupflag IgnoreMarks;\n  } ccmp; lookup demo {\n    sub acutecomb by acutecomb.case;\n  } demo; feature ccmp { script latn; lookupflag IgnoreMarks;\n  sub A acutecomb' lookup demo;\n} ccmp;\n"
+        );
+        assert_eq!(out.lines().count(), code.lines().count());
+        // Two standalone lookups, one with `} ;`.
+        let two = "feature calt {\nstandalone lookup a { sub a by b; } ;\nstandalone lookup c { sub c by d; } c;\nsub x a' lookup a c' lookup c;\n} calt;";
+        let out = lookup_syntax(two);
+        assert_eq!(
+            out,
+            "feature calt {\n} calt; lookup a { sub a by b; } a; feature calt {\n} calt; lookup c { sub c by d; } c; feature calt {\nsub x a' lookup a c' lookup c;\n} calt;"
+        );
+        // Outside a feature, standalone is just dropped.
+        assert_eq!(
+            lookup_syntax("standalone lookup z { sub z by y; } z;"),
+            " lookup z { sub z by y; } z;"
+        );
     }
 
     /// Two masters where H's Bold layer is 40 units wider on the right and has its
