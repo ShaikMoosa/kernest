@@ -839,6 +839,23 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                 <span className="k-caption muted fi-vf-glyphs-hint">{t("Empty keeps every glyph.")}</span>
                 <SwapFields rename={vf.renameGlyphs} remove={vf.removeGlyphs} onChange={(renameGlyphs, removeGlyphs) => patch({ renameGlyphs, removeGlyphs })} />
               </div>
+              {info.masters.length > 1 && (
+                <fieldset className="fi-row fi-vf-masters" title={t("Masters left out of this variable font. Its axes shrink to the masters that remain.")}>
+                  <legend className="k-caption muted">{t("Disable masters")}</legend>
+                  {info.masters.map((m) => {
+                    const off = (vf.disabledMasters ?? []).includes(m.name);
+                    return (
+                      <label key={m.id} className="check-row">
+                        <input type="checkbox" checked={off} aria-label={t("Leave out {name}", { name: m.name })} onChange={(e) => {
+                          const rest = (vf.disabledMasters ?? []).filter((n) => n !== m.name);
+                          patch({ disabledMasters: e.target.checked ? [...rest, m.name] : rest });
+                        }} />
+                        {m.name}
+                      </label>
+                    );
+                  })}
+                </fieldset>
+              )}
             </div>
             );
           })}

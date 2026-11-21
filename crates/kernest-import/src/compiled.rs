@@ -383,6 +383,7 @@ fn named_instances(font: &FontRef, kernest_axes: &[Axis]) -> Vec<Instance> {
                 style_link: None,
                 rename_glyphs: Vec::new(),
                 remove_glyphs: Vec::new(),
+                disabled_masters: Vec::new(),
                 family_name: None,
                 localized_family_names: Default::default(),
             }

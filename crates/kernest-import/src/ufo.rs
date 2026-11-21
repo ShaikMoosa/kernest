@@ -151,6 +151,7 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
             style_link: None,
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
             family_name: inst
                 .familyname
                 .as_deref()
@@ -198,6 +199,7 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
             glyphs: Vec::new(),
             rename_glyphs: Vec::new(),
             remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
         })
         .collect();
     Ok(Imported { font, warnings })

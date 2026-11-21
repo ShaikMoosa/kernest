@@ -554,6 +554,8 @@ export interface Instance {
   familyName?: string;
   /** Family names in other languages, by Glyphs language tag ("DEU", "JAN"…). */
   localizedFamilyNames?: Record<string, string>;
+  /** Masters (by name) this instance is interpolated without ("Disable Masters"). */
+  disabledMasters?: string[];
 }
 
 /** A virtual master: a named location only glyphs with intermediate layers there use. */
@@ -589,6 +591,8 @@ export interface VariableFontSetting {
   glyphs?: string[];
   renameGlyphs?: [string, string][];
   removeGlyphs?: string[];
+  /** Masters (by name) left out ("Disable Masters"); the axes shrink to the rest. */
+  disabledMasters?: string[];
 }
 
 export interface VariableAxisSubset {
@@ -2197,7 +2201,7 @@ const mockBackend: Backend = {
       const glyphs = s.glyphs ?? [];
       for (const g of glyphs)
         if (!d.glyphs.some((x) => x.name === g)) throw `Variable font "${name}" keeps unknown glyph "${g}".`;
-      return { name, fileName, axes, glyphs: [...glyphs] };
+      return { name, fileName, axes, glyphs: [...glyphs], renameGlyphs: s.renameGlyphs, removeGlyphs: s.removeGlyphs, disabledMasters: s.disabledMasters };
     });
     return editMeta(d, (m) => { m.variableFonts = clean; });
   },

@@ -330,6 +330,10 @@ pub struct VariableFontSetting {
     /// Glyphs left out of this variable font.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remove_glyphs: Vec<String>,
+    /// Masters (by name) left out of this variable font ("Disable Masters"); the axis
+    /// ranges shrink to the masters that remain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_masters: Vec<String>,
 }
 
 /// The part of one axis a variable font covers, in user coordinates. A missing
@@ -1333,6 +1337,9 @@ pub struct Instance {
     /// Family names in other languages, keyed by Glyphs language tag ("DEU", "JAN"…).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub localized_family_names: BTreeMap<String, String>,
+    /// Masters (by name) this instance is interpolated without ("Disable Masters").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_masters: Vec<String>,
 }
 
 impl Instance {
