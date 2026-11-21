@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, type Annotation, type HoiKind, type HoiView, type GlyphPicture, type ImageData, type LayerImage, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
+import { backend, type AlignOp, type Annotation, type HoiKind, type HoiView, type GlyphPicture, type ImageData, type LayerImage, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
 import { VariationPreview } from "./VariationPreview";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
@@ -45,6 +45,18 @@ function storedSelectShape(): "rect" | "lasso" {
   try { return localStorage.getItem(SELECT_SHAPE_KEY) === "lasso" ? "lasso" : "rect"; } catch { return "rect"; }
 }
 
+/** The Transform panel's align and distribute buttons: operation, label, icon. */
+const ALIGN_BUTTONS: [AlignOp, string, React.ReactNode][] = [
+  ["left", "Align left", <><path d="M4 3v18" /><rect x="7" y="6" width="11" height="4" rx="1" /><rect x="7" y="14" width="7" height="4" rx="1" /></>],
+  ["h-center", "Align centres horizontally", <><path d="M12 3v18" /><rect x="5" y="6" width="14" height="4" rx="1" /><rect x="8" y="14" width="8" height="4" rx="1" /></>],
+  ["right", "Align right", <><path d="M20 3v18" /><rect x="6" y="6" width="11" height="4" rx="1" /><rect x="10" y="14" width="7" height="4" rx="1" /></>],
+  ["top", "Align top", <><path d="M3 4h18" /><rect x="6" y="7" width="4" height="11" rx="1" /><rect x="14" y="7" width="4" height="7" rx="1" /></>],
+  ["v-center", "Align middles vertically", <><path d="M3 12h18" /><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="8" width="4" height="8" rx="1" /></>],
+  ["bottom", "Align bottom", <><path d="M3 20h18" /><rect x="6" y="6" width="4" height="11" rx="1" /><rect x="14" y="10" width="4" height="7" rx="1" /></>],
+  ["distribute-h", "Distribute horizontally (equal gaps)", <><path d="M3 4v16M21 4v16" /><rect x="6" y="8" width="3" height="8" rx="1" /><rect x="15" y="8" width="3" height="8" rx="1" /><rect x="10.5" y="8" width="3" height="8" rx="1" /></>],
+  ["distribute-v", "Distribute vertically (equal gaps)", <><path d="M4 3h16M4 21h16" /><rect x="8" y="6" width="8" height="3" rx="1" /><rect x="8" y="10.5" width="8" height="3" rx="1" /><rect x="8" y="15" width="8" height="3" rx="1" /></>],
+];
+
 const HIT = 7; // px
 const EDGE = 10; // px strip at the canvas border: dragging from it pulls out a new guide
 const SNAP = 6; // px: a dragged node this close to a guide lands on it
@@ -53,7 +65,7 @@ const SNAP = 6; // px: a dragged node this close to a guide lands on it
 export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes" | "remove-overlap"
   | "edit-background" | "to-background" | "add-to-background" | "swap-background" | "clear-background"
   | "open-corner" | "reconnect-nodes" | "connect-nodes" | "close-open-paths" | "make-node-first" | "reverse-contours" | "tidy-up" | "round-coordinates"
-  | "harmonize" | "super-smooth" | "focus-path" | "clear-focus"
+  | "harmonize" | "super-smooth" | "align-selection" | "focus-path" | "clear-focus"
   | "select-all" | "deselect-all" | "invert-selection" | "zoom-in" | "zoom-out" | "zoom-fit" | "zoom-actual" | "shape-order";
 export const sendEditCommand = (name: EditCommand) => window.dispatchEvent(new CustomEvent("kernest:edit", { detail: name }));
 
@@ -442,6 +454,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [layersOpen, setLayersOpen] = useState(true);
   const [hintsOpen, setHintsOpen] = useState(false);
   const [strokeOpen, setStrokeOpen] = useState(true);
+  // Align buttons: what they line the selection up with (SMO-40).
+  const [alignTo, setAlignTo] = useState<"selection" | "width" | "baseline" | "xHeight" | "capHeight" | "ascender" | "descender">("selection");
   const [tf, setTf] = useState({ sx: 100, sy: 100, rot: 0, kx: 0, ky: 0, mh: false, mv: false, origin: 4, allMasters: false });
   const [, rerender] = useState(0);
 
@@ -893,6 +907,29 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       }
     });
   };
+
+  /** Aligns or distributes the selection; `origin` is for Align Selection ("points"). */
+  const runAlign = (op: AlignOp) => {
+    const l = latest.current.layer;
+    if (!l || latest.current.editingBackground) return;
+    const horizontal = op === "left" || op === "h-center" || op === "right";
+    const vertical = op === "top" || op === "v-center" || op === "bottom";
+    let to: number | undefined;
+    if (horizontal && alignTo === "width") to = op === "left" ? 0 : op === "right" ? l.width : l.width / 2;
+    if (vertical && alignTo !== "selection" && alignTo !== "width") to = alignTo === "baseline" ? 0 : l.metrics[alignTo];
+    const sel = currentSelection();
+    chain.current = chain.current.then(async () => {
+      try {
+        accept(await backend.alignSelection(glyph, masterId, sel, op, to, tf.origin));
+      } catch (e) {
+        onError(e);
+      }
+    });
+  };
+
+  // runCommand is memoized; it reaches the current origin and target through this.
+  const runAlignRef = useRef(runAlign);
+  runAlignRef.current = runAlign;
 
   // ---------- Measure ----------
 
@@ -1670,6 +1707,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       return;
     }
     if (name === "edit-background") return toggleBackground();
+    if (name === "align-selection") {
+      runAlignRef.current("points");
+      return;
+    }
     if (name === "harmonize" || name === "super-smooth") {
       // The selected on-curve nodes; Harmonize with none selected takes every smooth node.
       const cur = latest.current.paths;
@@ -2711,6 +2752,28 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                 <span className="k-body">{t("All masters")}</span>
               </label>
               <button type="button" className="btn btn-primary btn-sm" onClick={applyTransform}>{t("Apply")}</button>
+              <div className="align-row" role="group" aria-label={t("Align")}>
+                {ALIGN_BUTTONS.map(([op, label, icon]) => {
+                  const disabled = editingBackground || layer.glyphLocked || (selection.size === 0 && compSel.size === 0 && anchorSel.size === 0);
+                  return (
+                    <button key={op} type="button" className="icon-btn align-btn" title={t(label)} aria-label={t(label)} disabled={disabled} onClick={() => runAlign(op)}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">{icon}</svg>
+                    </button>
+                  );
+                })}
+                <label className="align-to" title={t("Align to the selection's box, the glyph's width (left, centre, right) or a metric line (top, middle, bottom)")}>
+                  <span className="k-caption muted">{t("to")}</span>
+                  <select className="select" value={alignTo} aria-label={t("Align to")} onChange={(e) => setAlignTo(e.target.value as typeof alignTo)}>
+                    <option value="selection">{t("Selection")}</option>
+                    <option value="width">{t("Glyph width")}</option>
+                    <option value="baseline">{t("Baseline")}</option>
+                    <option value="xHeight">{t("x-height")}</option>
+                    <option value="capHeight">{t("Cap height")}</option>
+                    <option value="ascender">{t("Ascender")}</option>
+                    <option value="descender">{t("Descender")}</option>
+                  </select>
+                </label>
+              </div>
             </div>
           )}
         </div>

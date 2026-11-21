@@ -38,6 +38,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: "correct-direction", label: "Correct Path Direction", default: "Ctrl+Shift+R", scope: "glyph" },
   { id: "tidy-up", label: "Tidy up Paths", default: "Ctrl+Shift+T", scope: "glyph" },
   { id: "harmonize", label: "Harmonize", default: "Ctrl+Shift+H", scope: "glyph" },
+  { id: "align-selection", label: "Align Selection", default: "Ctrl+Alt+Shift+A", scope: "glyph" },
   { id: "repeat-filter", label: "Repeat Last Filter", default: "Ctrl+Shift+F", scope: "font" },
   { id: "show-metrics", label: "Show Metrics", default: "Ctrl+Shift+M", scope: "global" },
   { id: "show-anchors", label: "Show Anchors", default: "Ctrl+Shift+A", scope: "global" },

@@ -796,6 +796,10 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .origin-dot:hover::after { background: var(--k-text-muted); }
 .origin-dot.is-active::after { background: var(--k-accent-default); }
 .transform-body .check-row { align-self: center; height: auto; }
+.align-row { display: flex; align-items: center; gap: 2px; flex-basis: 100%; flex-wrap: wrap; }
+.align-btn { width: 28px; height: 28px; }
+.align-to { display: inline-flex; align-items: center; gap: var(--k-space-4); margin-inline-start: var(--k-space-8); }
+.align-to .select { width: auto; }
 [dir="rtl"] .transform-panel { direction: rtl; }
 .hints-panel { max-width: min(480px, calc(100vw - 32px)); }
 .hints-body { flex-direction: column; align-items: stretch; max-height: 240px; overflow: auto; }

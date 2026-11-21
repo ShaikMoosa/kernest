@@ -1044,6 +1044,8 @@ export interface Backend {
   setGuideScope(glyph: string, masterId: string, index: number, toGlobal: boolean): Promise<LayerView>;
   /** Applies affine [xx, xy, yx, yy, dx, dy] around `origin` to the selection (empty = whole layer). */
   transform(glyph: string, masterId: string, selection: Selection, affine: number[], origin: [number, number], allMasters: boolean, onBackground?: boolean): Promise<LayerView>;
+  /** Aligns or distributes the selection; `to` replaces the selection's box on that axis. */
+  alignSelection(glyph: string, masterId: string, selection: Selection, op: AlignOp, to?: number, origin?: number): Promise<LayerView>;
   /** Moves the selection to / adds it to / swaps it with / clears the background. */
   backgroundEdit(glyph: string, masterId: string, edit: BackgroundEdit, selection: Selection): Promise<LayerView>;
   /** Replaces the background's outlines and anchors (drawing in background edit mode). */
@@ -1263,6 +1265,8 @@ export interface ClipGlyph {
   layers: unknown[];
   [key: string]: unknown;
 }
+
+export type AlignOp = "left" | "h-center" | "right" | "top" | "v-center" | "bottom" | "distribute-h" | "distribute-v" | "points";
 
 export type PathEditOperation =
   | "knife"
@@ -1561,6 +1565,7 @@ const tauriBackend: Backend = {
   setGuideScope: (glyph, masterId, index, toGlobal) => invoke("set_guide_scope", { glyph, masterId, index, toGlobal }),
   transform: (glyph, masterId, selection, affine, origin, allMasters, onBackground) =>
     invoke("transform", { glyph, masterId, selection, affine, origin, allMasters, onBackground: onBackground ?? false }),
+  alignSelection: (glyph, masterId, selection, op, to, origin) => invoke("align_selection", { glyph, masterId, selection, op, to: to ?? null, origin: origin ?? null }),
   backgroundEdit: (glyph, masterId, edit, selection) => invoke("background_edit", { glyph, masterId, edit, selection }),
   updateBackground: (glyph, masterId, paths, components, anchors) => invoke("update_background", { glyph, masterId, paths, components, anchors }),
   measure: (glyph, masterId, p0, p1, onBackground) => invoke("measure", { glyph, masterId, p0, p1, onBackground: onBackground ?? false }),
@@ -2166,6 +2171,9 @@ const mockBackend: Backend = {
   },
   async transform() {
     throw "Transforms need the desktop app (npm run tauri dev).";
+  },
+  async alignSelection() {
+    throw "Aligning needs the desktop app (npm run tauri dev).";
   },
   async backgroundEdit() {
     throw "The background layer needs the desktop app (npm run tauri dev).";
