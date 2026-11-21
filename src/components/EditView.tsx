@@ -53,7 +53,7 @@ const SNAP = 6; // px: a dragged node this close to a guide lands on it
 export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes" | "remove-overlap"
   | "edit-background" | "to-background" | "add-to-background" | "swap-background" | "clear-background"
   | "open-corner" | "reconnect-nodes" | "connect-nodes" | "close-open-paths" | "make-node-first" | "reverse-contours" | "tidy-up" | "round-coordinates"
-  | "focus-path" | "clear-focus"
+  | "harmonize" | "super-smooth" | "focus-path" | "clear-focus"
   | "select-all" | "deselect-all" | "invert-selection" | "zoom-in" | "zoom-out" | "zoom-fit" | "zoom-actual" | "shape-order";
 export const sendEditCommand = (name: EditCommand) => window.dispatchEvent(new CustomEvent("kernest:edit", { detail: name }));
 
@@ -1670,6 +1670,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       return;
     }
     if (name === "edit-background") return toggleBackground();
+    if (name === "harmonize" || name === "super-smooth") {
+      // The selected on-curve nodes; Harmonize with none selected takes every smooth node.
+      const cur = latest.current.paths;
+      const sel = [...latest.current.selection].map(parseKey).filter(([pi, ni]) => { const n = cur[pi]?.nodes[ni]; return !!n && isOn(n); });
+      if (name === "super-smooth" && !sel.length) return;
+      runPathEdit(name, { nodes: sel });
+      return;
+    }
     if (name === "open-corner" || name === "make-node-first" || name === "connect-nodes" || name === "reconnect-nodes"
       || name === "close-open-paths" || name === "reverse-contours" || name === "tidy-up" || name === "round-coordinates") {
       const sel = [...latest.current.selection].map(parseKey);
@@ -1764,6 +1772,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         e.preventDefault();
         return;
       }
+      if (e.key === "Enter" && e.shiftKey && e.altKey && selection.size) {
+        // Super-smooth (G2) on or off for the selected nodes.
+        runCommand("super-smooth");
+        e.preventDefault();
+        return;
+      }
       if (e.altKey) return;
       const nudge: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
       if (nudge[e.key] && showAnchors && anchorSel.size) {
@@ -1807,13 +1821,13 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         return;
       }
       if (e.key === "Enter" && selection.size) {
-        // Toggle smooth / corner on selected curve points.
+        // Toggle smooth / corner on selected curve points (a corner is never super-smooth).
         const next = clonePaths(paths);
         let changed = false;
         for (const k of selection) {
           const [pi, ni] = parseKey(k);
           const n = next[pi]?.nodes[ni];
-          if (n && isOn(n)) { n.smooth = !n.smooth; changed = true; }
+          if (n && isOn(n)) { n.smooth = !n.smooth; if (!n.smooth) n.g2 = false; changed = true; }
         }
         if (changed) { setPaths(next); commit(next); }
         e.preventDefault();
@@ -2003,8 +2017,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             }
             const hit = hitNode(sp);
             if (!hit) return;
-            const [pi] = parseKey(hit);
-            setSelection(new Set(paths[pi].nodes.map((_, ni) => nodeKey(pi, ni))));
+            const [pi, ni] = parseKey(hit);
+            if (e.shiftKey && isOn(paths[pi].nodes[ni]) && !layer.glyphLocked) {
+              // Shift+double-click: the node becomes super-smooth, or back to smooth.
+              setSelection(new Set([hit]));
+              runPathEdit("super-smooth", { nodes: [[pi, ni]] });
+              return;
+            }
+            setSelection(new Set(paths[pi].nodes.map((_, k) => nodeKey(pi, k))));
           }}>
           {/* Metric lines */}
           {showMetrics && lines.map(([label, y]) => {
@@ -3211,9 +3231,20 @@ function hint(tool: Tool, lasso = false): string {
   }
 }
 
+/** A five-pointed star around `at`: the super-smooth node marker. */
+function starPath(at: Pt, outer: number, inner: number): string {
+  const pts: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? inner : outer, a = -Math.PI / 2 + (i * Math.PI) / 5;
+    pts.push(`${(at.x + Math.cos(a) * r).toFixed(2)} ${(at.y + Math.sin(a) * r).toFixed(2)}`);
+  }
+  return `M${pts.join("L")}Z`;
+}
+
 function NodeMark({ n, at, scale, selected, first, dir, duplicate, dim }: { n: EditNode; at: Pt; scale: number; selected: boolean; first: boolean; dir?: number; duplicate?: boolean; dim?: boolean }) {
   const cls = selected ? " is-selected" : "";
   const mark = !isOn(n) ? <circle cx={at.x} cy={at.y} r={3 * scale} className={`node-off${cls}`} />
+    : n.g2 ? <path d={starPath(at, 6.5 * scale, 2.9 * scale)} className={`node-smooth node-g2${cls}${first ? " is-first" : ""}`} />
     : n.smooth ? <circle cx={at.x} cy={at.y} r={4.5 * scale} className={`node-smooth${cls}${first ? " is-first" : ""}`} />
     : <rect x={at.x - 4 * scale} y={at.y - 4 * scale} width={8 * scale} height={8 * scale} className={`node-corner${cls}${first ? " is-first" : ""}`} />;
   return (

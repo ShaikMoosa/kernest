@@ -369,6 +369,7 @@ impl Piece {
                         y: m.1,
                         kind: NodeKind::Curve,
                         smooth: true,
+                        g2: false,
                     });
                     Piece::Cubic(m, bcd, cd, d)
                 }
@@ -381,6 +382,7 @@ impl Piece {
                         y: m.1,
                         kind: NodeKind::QCurve,
                         smooth: true,
+                        g2: false,
                     });
                     Piece::Quad(m, bc, c)
                 }
@@ -529,6 +531,7 @@ pub fn apply_extremes(layer: &mut Layer, plan: &ExtremesPlan) -> usize {
                                 y: m.1,
                                 kind: NodeKind::QCurve,
                                 smooth: true,
+                                g2: false,
                             });
                         }
                     }
@@ -651,6 +654,7 @@ fn knife_nodes(p: &Path, line: Line) -> Option<(Vec<Node>, Vec<usize>)> {
                             y: m.1,
                             kind: NodeKind::QCurve,
                             smooth: true,
+                            g2: false,
                         });
                     }
                 }

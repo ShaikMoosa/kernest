@@ -73,6 +73,17 @@ class WrapperTests(unittest.TestCase):
         nodes[0].smooth = True
         self.assertEqual(self.data["glyphs"][0]["layers"][0]["shapes"][0]["nodes"][0], "100 0 line smooth")
 
+    def test_super_smooth_nodes_keep_their_flag(self):
+        raw = self.data["glyphs"][0]["layers"][0]["shapes"][0]["nodes"]
+        raw[2] = "300 700 curve smooth g2"
+        nodes = self.font.glyphs["A"].layers["m01"].paths[0].nodes
+        self.assertTrue(nodes[2].super_smooth and nodes[2].smooth)
+        nodes[2].x = 310
+        self.assertEqual(raw[2], "310 700 curve smooth g2")
+        nodes[2].smooth = False
+        self.assertEqual(raw[2], "310 700 curve")
+        self.assertFalse(nodes[2].super_smooth)
+
     def test_node_append_formats_whole_numbers(self):
         nodes = self.font.glyphs["A"].layers["m01"].paths[0].nodes
         nodes.append(300, 350, "curve")

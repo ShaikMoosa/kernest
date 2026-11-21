@@ -142,6 +142,7 @@ impl WPath {
                 y: (n.pt.y * 100.0).round() / 100.0,
                 kind: n.kind,
                 smooth: n.smooth,
+                g2: false,
             })
             .collect();
     }
@@ -257,6 +258,7 @@ impl WPath {
                 y: n.pt.y,
                 kind: n.kind,
                 smooth: n.smooth,
+                g2: false,
             })
             .collect();
     }

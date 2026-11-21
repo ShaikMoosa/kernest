@@ -2488,3 +2488,67 @@ fn glyphs_round_trip_keeps_sbix_bitmaps_and_svg() {
     // The picture layers don't come back as backups.
     assert_eq!(a.layers.len(), b.layers.len());
 }
+
+/// SMO-39: super-smooth nodes survive a .kernest save (format 19); a .glyphs file
+/// keeps them as smooth nodes at their harmonized position.
+#[test]
+fn super_smooth_nodes_round_trip() {
+    use kernest_core::model::{NodeKind, Shape};
+    let mut src = sample_font();
+    // The first smooth node between two curves in "O".
+    let o = src.glyph_mut("O").unwrap();
+    let layer = &mut o.layers[0];
+    let mut pick = None;
+    for (pi, p) in layer
+        .shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Path(p) => Some(p),
+            _ => None,
+        })
+        .enumerate()
+    {
+        if let Some(ni) = (0..p.nodes.len()).find(|&i| {
+            p.nodes[i].kind == NodeKind::Curve
+                && kernest_core::harmonize::g2_position(p, i).is_some()
+        }) {
+            pick = Some([pi, ni]);
+            break;
+        }
+    }
+    let pick = pick.expect("a smooth curve node in O");
+    kernest_core::harmonize::toggle_super_smooth(layer, &[pick]).unwrap();
+    let node = |f: &kernest_core::Font| {
+        let l = &f.glyph("O").unwrap().layers[0];
+        let p = l
+            .shapes
+            .iter()
+            .filter_map(|s| match s {
+                Shape::Path(p) => Some(p),
+                _ => None,
+            })
+            .nth(pick[0])
+            .unwrap();
+        p.nodes[pick[1]]
+    };
+    let before = node(&src);
+    assert!(before.g2);
+
+    let dir = tempfile::tempdir().unwrap();
+    let pkg = dir.path().join("G2.kernest");
+    kernest_core::package::save(&src, &pkg).unwrap();
+    let meta = fs::read_to_string(pkg.join("font.json")).unwrap();
+    assert!(
+        meta.contains("\"format_version\": 19") || meta.contains("\"formatVersion\": 19"),
+        "{}",
+        &meta[..meta.len().min(200)]
+    );
+    let again = kernest_core::package::open(&pkg).unwrap();
+    assert_eq!(node(&again), before);
+
+    let glyphs = dir.path().join("G2.glyphs");
+    kernest_import::write_glyphs(&src, &glyphs).unwrap();
+    let back = node(&import(&glyphs).unwrap().font);
+    assert!(back.smooth && !back.g2);
+    assert!((back.x - before.x).abs() < 0.01 && (back.y - before.y).abs() < 0.01);
+}

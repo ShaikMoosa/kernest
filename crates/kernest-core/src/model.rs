@@ -1008,14 +1008,18 @@ pub struct Path {
     pub mask: bool,
 }
 
-/// A point on an outline. Serialised compactly as `"x y kind [smooth]"`,
-/// e.g. `"120 0 line"` or `"300 700 curve smooth"`, to keep files readable.
+/// A point on an outline. Serialised compactly as `"x y kind [smooth [g2]]"`,
+/// e.g. `"120 0 line"`, `"300 700 curve smooth"` or `"300 700 curve smooth g2"`, to
+/// keep files readable.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Node {
     pub x: f64,
     pub y: f64,
     pub kind: NodeKind,
     pub smooth: bool,
+    /// Super-smooth (G2): the node is kept where the curvature on both sides is the
+    /// same (see `harmonize`). Always smooth too.
+    pub g2: bool,
 }
 
 impl Node {
@@ -1025,6 +1029,7 @@ impl Node {
             y,
             kind,
             smooth: false,
+            g2: false,
         }
     }
     pub fn on_curve(&self) -> bool {
@@ -1069,8 +1074,11 @@ impl fmt::Display for Node {
             fmt_num(self.y),
             self.kind.as_str()
         )?;
-        if self.smooth {
+        if self.smooth || self.g2 {
             f.write_str(" smooth")?;
+        }
+        if self.g2 {
+            f.write_str(" g2")?;
         }
         Ok(())
     }
@@ -1096,12 +1104,21 @@ impl FromStr for Node {
             Some("offcurve") => NodeKind::OffCurve,
             other => return Err(format!("node \"{s}\" has unknown kind {other:?}")),
         };
-        let smooth = match rest.next() {
-            None => false,
-            Some("smooth") => true,
-            Some(other) => return Err(format!("node \"{s}\" has unknown flag \"{other}\"")),
-        };
-        Ok(Node { x, y, kind, smooth })
+        let (mut smooth, mut g2) = (false, false);
+        for flag in rest {
+            match flag {
+                "smooth" => smooth = true,
+                "g2" => g2 = true,
+                other => return Err(format!("node \"{s}\" has unknown flag \"{other}\"")),
+            }
+        }
+        Ok(Node {
+            x,
+            y,
+            kind,
+            smooth: smooth || g2,
+            g2,
+        })
     }
 }
 

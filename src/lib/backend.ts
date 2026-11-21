@@ -1273,7 +1273,9 @@ export type PathEditOperation =
   | "make-node-first"
   | "reverse-contours"
   | "tidy-up"
-  | "round-coordinates";
+  | "round-coordinates"
+  | "harmonize"
+  | "super-smooth";
 
 export interface PathEditResult {
   layer: LayerView;

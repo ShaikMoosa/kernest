@@ -704,6 +704,7 @@ fn layer(id: &str, g: &norad::Glyph, skipped: &mut usize) -> Layer {
                     PointType::OffCurve => NodeKind::OffCurve,
                 },
                 smooth: p.smooth,
+                g2: false,
             })
             .collect();
         l.shapes.push(Shape::Path(KPath {

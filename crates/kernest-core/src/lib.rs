@@ -25,6 +25,7 @@ pub mod filters;
 pub mod geometry;
 pub mod glyphdata;
 pub mod glyphset;
+pub mod harmonize;
 pub mod hinting;
 pub mod hoi;
 pub mod interpolate;

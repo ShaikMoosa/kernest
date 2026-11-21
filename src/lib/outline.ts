@@ -9,6 +9,8 @@ export interface EditNode {
   y: number;
   kind: NodeKind;
   smooth: boolean;
+  /** Super-smooth (G2): kept where the curvature matches on both sides. */
+  g2?: boolean;
 }
 
 /** A path drawn with a pen (see Rust `stroke::PathStroke`). */

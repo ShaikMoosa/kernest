@@ -356,6 +356,7 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .node-corner, .node-smooth { fill: var(--k-bg-surface); stroke-width: 1.5; }
 .node-corner { stroke: var(--k-editor-node-corner); }
 .node-smooth { stroke: var(--k-editor-node-smooth); }
+.node-g2 { stroke-linejoin: round; }
 .node-off { fill: var(--k-bg-surface); stroke: var(--k-editor-handle); stroke-width: 1.2; }
 .node-corner.is-selected, .node-off.is-selected { fill: var(--k-editor-selection); stroke: var(--k-editor-selection); }
 .node-smooth.is-selected { fill: var(--k-editor-node-smooth); }

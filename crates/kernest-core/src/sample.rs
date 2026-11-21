@@ -31,6 +31,7 @@ fn ellipse(cx: f64, cy: f64, rx: f64, ry: f64, clockwise: bool) -> Shape {
         y,
         kind: NodeKind::Curve,
         smooth: true,
+        g2: false,
     };
     let o = |x, y| Node::new(x, y, NodeKind::OffCurve);
     let mut nodes = vec![
