@@ -173,6 +173,56 @@ fn glyphs_instance_family_names() {
     assert_eq!(again.instances, f.instances);
 }
 
+/// The audit's two-master test font (SMO-17): rectangles whose stems are 100 units
+/// wide in Regular and 200 in Bold.
+fn square_glyphs() -> String {
+    let glyph = |name: &str, unicode: u32| {
+        format!(
+            "{{glyphname = \"{name}\";unicode = {unicode};layers = ({{layerId = m1;shapes = ({{closed = 1;nodes = ((50,0,l),(150,0,l),(150,700,l),(50,700,l));}});width = 500;}},{{layerId = m2;shapes = ({{closed = 1;nodes = ((50,0,l),(250,0,l),(250,700,l),(50,700,l));}});width = 600;}});}}"
+        )
+    };
+    let glyphs: Vec<String> = [("A", 65), ("B", 66), ("a", 97), ("b", 98)]
+        .iter()
+        .map(|(n, u)| glyph(n, *u))
+        .collect();
+    format!(
+        "{{\n.formatVersion = 3;\nfamilyName = \"Square Test\";\nunitsPerEm = 1000;\naxes = ({{name = Weight;tag = wght;}});\nfontMaster = ({{id = m1;name = Regular;axesValues = (400);metricValues = ({{pos = 700;}},{{pos = 500;}},{{}},{{pos = 0;}},{{pos = -200;}});}},{{id = m2;name = Bold;axesValues = (700);metricValues = ({{pos = 700;}},{{pos = 500;}},{{}},{{pos = 0;}},{{pos = -200;}});}});\nmetrics = ({{type = ascender;}},{{type = \"cap height\";}},{{type = \"x-height\";}},{{type = baseline;}},{{type = descender;}});\nglyphs = ({});\n}}",
+        glyphs.join(",")
+    )
+}
+
+#[test]
+fn hinted_variable_font_has_no_empty_cvar() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Square.glyphs");
+    fs::write(&path, square_glyphs()).unwrap();
+    let f = import(&path).unwrap().font;
+    let out = dir.path().join("out");
+    let mut opts = kernest_export::ExportOptions::ttf(true, false, &out);
+    opts.autohint = true;
+    let r = kernest_export::export(&f, &opts).unwrap();
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    // The autohinter's variation with no deltas was dropped, and said so.
+    assert!(
+        r.warnings
+            .iter()
+            .any(|w| w.contains("cvar: dropped 1 empty variation")),
+        "{:?}",
+        r.warnings
+    );
+    let vf = fs::read(&r.files[0].path).unwrap();
+    // The table tags in the font's table directory.
+    let tags: Vec<&[u8]> = (0..usize::from(u16::from_be_bytes([vf[4], vf[5]])))
+        .map(|i| &vf[12 + 16 * i..16 + 16 * i])
+        .collect();
+    for t in [b"fpgm", b"prep", b"cvt "] {
+        assert!(tags.contains(&&t[..]), "still hinted: {t:?}");
+    }
+    // Whatever cvar is left decodes in full.
+    let (_, repair) = kernest_export::cvar::repair(&vf).unwrap();
+    assert_eq!(repair, kernest_export::cvar::Repair::Unchanged);
+}
+
 #[test]
 fn designspace_instance_family_name() {
     let mut src = two_masters();
