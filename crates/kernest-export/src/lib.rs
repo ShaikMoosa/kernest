@@ -1332,6 +1332,67 @@ pub(crate) mod tests {
             .is_ok_and(|g| g.item_var_store().is_some()));
     }
 
+    /// For each lookup a feature uses, its lookup type; and how many lookups GSUB has.
+    fn gsub_feature_lookups(bytes: &[u8], tag: &[u8; 4]) -> (Vec<u16>, usize) {
+        let font = FontRef::new(bytes).unwrap();
+        let gsub = font.gsub().unwrap();
+        let lookups = gsub.lookup_list().unwrap();
+        let types: Vec<u16> = lookups
+            .lookups()
+            .iter()
+            .map(|l| l.unwrap().lookup_type())
+            .collect();
+        let features = gsub.feature_list().unwrap();
+        let rec = features
+            .feature_records()
+            .iter()
+            .find(|r| r.feature_tag() == write_fonts::types::Tag::new(tag))
+            .expect("the feature is there");
+        let feature = rec.feature(features.offset_data()).unwrap();
+        let used = feature
+            .lookup_list_indices()
+            .iter()
+            .map(|i| types[usize::from(i.get())])
+            .collect();
+        (used, types.len())
+    }
+
+    #[test]
+    fn standalone_lookups_and_optional_closing_names_compile() {
+        let mut f = sample_font();
+        f.features = "feature ccmp {\n  lookupflag IgnoreMarks;\n  standalone lookup demo {\n    sub B by H;\n  } ;\n  sub A B' lookup demo;\n} ccmp;\n\nlookup TEST {\n  sub x by y;\n} ;\nfeature calt {\n  sub period x' lookup TEST;\n} calt;\n".into();
+        assert!(
+            kernest_core::features::check(&f).is_empty(),
+            "{:?}",
+            kernest_core::features::check(&f)
+        );
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        // ccmp only runs the contextual lookup (type 6); the standalone one (type 1)
+        // exists but isn't part of the feature.
+        let (ccmp, total) = gsub_feature_lookups(&bytes, b"ccmp");
+        assert_eq!(ccmp, vec![6]);
+        let (calt, _) = gsub_feature_lookups(&bytes, b"calt");
+        assert_eq!(calt, vec![6]);
+        assert_eq!(
+            total, 4,
+            "two single substitutions and two contextual lookups"
+        );
+
+        // A typo inside a standalone lookup is reported on its own line.
+        f.features =
+            "feature ccmp {\n  standalone lookup demo {\n    sub B by;\n  } demo;\n} ccmp;\n"
+                .into();
+        let d = kernest_core::features::check(&f);
+        assert!(
+            d.iter()
+                .any(|d| d.line == 3 && d.message.contains("Expected glyph")),
+            "{d:?}"
+        );
+    }
+
     #[test]
     fn preset_exports_only_selected_instances_and_honours_destination() {
         let mut f = two_masters();
