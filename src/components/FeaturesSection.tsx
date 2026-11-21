@@ -160,6 +160,7 @@ export function FeaturesSection({ version, onChanged, onError }: Props) {
         <summary className="k-caption">{t("Tokens and conditions (Alt+click a token to see what it stands for)")}</summary>
         <dl className="fea-cheat-list">
           <dt><code>{"$padding"}</code> <code>{"${padding*2}"}</code></dt><dd>{t("A number value from Font Info › Masters; it varies in variable fonts.")}</dd>
+          <dt><code>{"${period:LSB}"}</code> <code>{"${b:anchors.top.x}"}</code></dt><dd>{t("A glyph's width, LSB, RSB or anchor position, per master; works in expressions such as ${period:LSB*2}.")}</dd>
           <dt><code>{"[$[case == smallCaps]]"}</code></dt><dd>{t("The glyphs that match: name, category, subCategory, case, script, direction, unicode, tags, export, leftKerningGroup, rightKerningGroup, layer.width, layer.anchors.top.y. Compare with == != < > <= >= BEGINSWITH ENDSWITH CONTAINS LIKE IN, and combine with AND, OR, NOT and brackets.")}</dd>
           <dt><code>{"#ifdef VARIABLE"}</code> … <code>{"#endif"}</code></dt><dd>{t("Code only for variable fonts (#ifndef for static ones; #else for the other kind).")}</dd>
           <dt><code>{"condition 600 < wght < 900;"}</code></dt><dd>{t("Inside a feature: the rules after it apply only there (a feature variation in variable fonts). Values are axis values as in Font Info › Axes.")}</dd>
