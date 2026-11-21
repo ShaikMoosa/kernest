@@ -493,6 +493,8 @@ And what happens before building:
 
 Kerning and kerning groups are compiled into GPOS, and your feature code — generated and hand-written (see [Features](#features)) — is included. Glyphs that aren't set to export are left out. Line spacing values brought in from a Glyphs or UFO source are written to the OS/2, hhea and post tables; named instances in a variable font get PostScript names; hinted fonts are marked to round sizes to whole pixels.
 
+Exporting the same source twice gives the same tables. To get byte-identical files, also set the `SOURCE_DATE_EPOCH` environment variable (seconds since 1970) before starting Kernest or `kernest-cli`; the creation and modification dates in the `head` table then use it instead of the current time.
+
 When the export finishes, the window lists anything that went wrong (a format that couldn't be built, or a font exported without hinting or colour) and, separately, things worth a look in fonts that were built: metrics keys that couldn't be applied, and glyphs that may not interpolate cleanly.
 
 ### Trying fonts in other apps
