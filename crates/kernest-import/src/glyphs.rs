@@ -1836,7 +1836,13 @@ fn shape_v3(d: &glyphs_reader::Plist) -> Option<Shape> {
                 "qs" => (NodeKind::QCurve, true),
                 _ => (NodeKind::OffCurve, false),
             };
-            Some(Node { x, y, kind, smooth })
+            Some(Node {
+                x,
+                y,
+                kind,
+                smooth,
+                g2: false,
+            })
         })
         .collect();
     Some(Shape::Path(KPath {
@@ -1871,6 +1877,7 @@ fn shapes_v2(d: &glyphs_reader::Plist) -> Vec<Shape> {
                     y,
                     kind,
                     smooth: it.next() == Some("SMOOTH"),
+                    g2: false,
                 })
             })
             .collect();
@@ -2286,6 +2293,7 @@ fn layer(id: &str, l: &glyphs_reader::Layer) -> Layer {
                             y: n.pt.y,
                             kind,
                             smooth,
+                            g2: false,
                         }
                     })
                     .collect();

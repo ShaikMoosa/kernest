@@ -130,6 +130,8 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
   - Enter switches the selected nodes between smooth and corner;
   - Delete removes them.
 - **Selecting:** Ctrl+A selects everything, and double-clicking a node selects its whole path.
+- **Super-smooth nodes:** press Alt+Shift+Enter, or Shift+double-click a node, to make the selected nodes super-smooth (G2) or turn them back into smooth nodes. A super-smooth node has a star marker. Kernest keeps it on the line between its handles at the point where the curvature is the same on both sides, so the curve flows through it with no jump in curvature. It moves there whenever its handles change, after the edit is made. Only nodes between two curves can be super-smooth. In a .glyphs file they are saved as smooth nodes at that position.
+- **Harmonize** (Path menu, Ctrl+Shift+H) moves the selected smooth nodes, or every smooth node when none are selected, to that same point once. Nodes next to a straight line, at an inflection (where the curve changes direction) or on a flat side are left as they are.
 - **Lasso selection:** to select along a free-form shape, hold the Select tool (or right-click it) and choose **Lasso Select**, or press Shift+V; the toolbar icon shows which one is on. Draw around the nodes, anchors and components you want. Where the lasso crosses itself, the parts it loops over twice are left out.
 - **Adding and removing:** with either shape, Shift+drag adds to the selection and Ctrl+drag takes away from it. Alt+drag uses the other shape for that one drag.
 - **Zoom:** Ctrl+= and Ctrl+- zoom in and out, and Ctrl+0 fits the glyph to the window.
@@ -555,7 +557,7 @@ On export the switches are custom parameters (Font Info › Custom parameters �
 - **SBIX to SVG** — a pixel size: glyphs without an SVG drawing get one made from their bitmap at that size (or the next larger one).
 - **Color Layers to SVG** — `1` also writes SVG documents drawn from the colour layers, for apps that read SVG but not COLR.
 
-Glyphs files keep bitmaps as `iColor` layers and SVG drawings as `svg` layers, in both directions. A font with bitmaps, SVG drawings or number values saves at format version 15; a font whose instances have family names of their own saves at version 16, one with vertical metrics or writing directions at version 17, and one with instance naming overrides or variable font family names at version 18.
+Glyphs files keep bitmaps as `iColor` layers and SVG drawings as `svg` layers, in both directions. A font with bitmaps, SVG drawings or number values saves at format version 15; a font whose instances have family names of their own saves at version 16, one with vertical metrics or writing directions at version 17, one with instance naming overrides or variable font family names at version 18, and one with super-smooth nodes at version 19.
 
 ## Import
 
@@ -703,6 +705,7 @@ Every command is in the menu bar: File, Edit, Glyph, Path, Filter, View, Script,
 | Repeat Last Filter | Ctrl+Shift+F |
 | Knife / Ellipse tool | E / Shift+E |
 | Select / Lasso Select tool | V / Shift+V |
+| Harmonize / Super-smooth nodes | Ctrl+Shift+H / Alt+Shift+Enter |
 | Show Metrics | Ctrl+Shift+M |
 | Show Guides / Show Background | Ctrl+Shift+L / Ctrl+Shift+B |
 | Show Bounding Box | Ctrl+Alt+Shift+B |

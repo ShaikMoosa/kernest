@@ -2514,4 +2514,7 @@ export const ar: Dict = {
   "Lasso Select": "التحديد الحر",
   "{tool} · hold or right-click to choose rectangle or lasso": "{tool} · اضغط مطولًا أو انقر بزر الفأرة الأيمن لاختيار مستطيل أو تحديد حر",
   "Selection shape": "شكل التحديد",
+  "Harmonize": "تنسيق الانحناء",
+  "Super-smooth Nodes": "نقاط فائقة النعومة",
+  "Super-smooth nodes need a curve on both sides.": "تحتاج النقاط فائقة النعومة إلى منحنى على الجانبين.",
 };

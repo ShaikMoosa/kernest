@@ -55,7 +55,9 @@ class Node:
         return _parse_node(self._nodes[self._i])
 
     def _write(self, x, y, kind, smooth):
-        self._nodes[self._i] = _fmt_node(x, y, kind, smooth)
+        # A super-smooth (G2) node stays one while it is smooth.
+        g2 = smooth and "g2" in self._nodes[self._i].split()[3:]
+        self._nodes[self._i] = _fmt_node(x, y, kind, smooth) + (" g2" if g2 else "")
 
     @property
     def x(self):
@@ -92,6 +94,11 @@ class Node:
     def smooth(self, v):
         x, y, k, _ = self._read()
         self._write(x, y, k, bool(v))
+
+    @property
+    def super_smooth(self):
+        """Whether the node is super-smooth (G2); set it in the editor."""
+        return "g2" in self._nodes[self._i].split()[3:]
 
     @property
     def on_curve(self):

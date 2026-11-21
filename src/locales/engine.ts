@@ -9,6 +9,7 @@
  * the dictionaries (npm run check:i18n lists what's missing).
  */
 export const ENGINE_MESSAGES = [
+  "Super-smooth nodes need a curve on both sides.",
   "\"{text}\" needs a semicolon between the name ID and the text, like \"0; © 2026 Me\".",
   "\"{text}\" has no text after the semicolon.",
   "\"{value}\" isn't a number from 0 to 65535.",

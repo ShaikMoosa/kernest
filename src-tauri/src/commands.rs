@@ -244,6 +244,9 @@ pub struct NodeDto {
     kind: NodeKindDto,
     #[serde(default)]
     smooth: bool,
+    /// Super-smooth (G2): kept where the curvature matches on both sides.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    g2: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -644,6 +647,7 @@ fn outline_views(
                         y: n.y,
                         kind: n.kind.into(),
                         smooth: n.smooth,
+                        g2: n.g2,
                     })
                     .collect(),
             }),
@@ -721,7 +725,8 @@ pub(crate) fn to_path(p: &PathDto) -> CmdResult<KPath> {
                 x: d.x,
                 y: d.y,
                 kind: d.kind.into(),
-                smooth: d.smooth && d.kind != NodeKindDto::Offcurve,
+                smooth: (d.smooth || d.g2) && d.kind != NodeKindDto::Offcurve,
+                g2: d.g2 && d.kind != NodeKindDto::Offcurve,
             })
             .collect(),
     })
@@ -925,6 +930,8 @@ pub fn update_layer(
         .map(|p| to_path(p).map(Shape::Path))
         .collect::<CmdResult<Vec<_>>>()?;
     next.shapes.extend(components);
+    // Super-smooth nodes follow their handles (SMO-39).
+    kernest_core::harmonize::apply_layer(&mut next);
     if doc
         .history
         .apply(&mut doc.font, &glyph, &master_id, next)
@@ -1131,6 +1138,14 @@ fn apply_path_edit(
         "reverse-contours" => Ok(pathops::reverse_contours(layer, only) > 0),
         "tidy-up" => Ok(pathops::tidy_up(layer, only) > 0),
         "round-coordinates" => Ok(pathops::round_coordinates(layer, only)),
+        // Picked nodes, or every smooth node when none are picked.
+        "harmonize" => Ok(kernest_core::harmonize::harmonize(layer, nodes) > 0),
+        "super-smooth" => {
+            if nodes.is_empty() {
+                return Err("Pick a node.".into());
+            }
+            Ok(kernest_core::harmonize::toggle_super_smooth(layer, nodes)? > 0)
+        }
         other => Err(format!("Unknown path operation \"{other}\"")),
     }
 }
@@ -2285,6 +2300,7 @@ mod tests {
             y,
             kind,
             smooth: false,
+            g2: false,
         }
     }
 
@@ -2481,6 +2497,47 @@ mod path_edit_tests {
         assert!(r.layer.status.can_undo && r.layer.status.dirty);
         doc.history.undo(&mut doc.font);
         assert_eq!(doc.font, original);
+    }
+
+    #[test]
+    fn super_smooth_and_harmonize_are_path_edits() {
+        let mut doc = Document::new(sample::sample_font(), None);
+        let original = doc.font.clone();
+        let v = layer_view_of(&doc, "O", "m01").unwrap();
+        // A smooth node between two curves.
+        let ni = v.paths[0]
+            .nodes
+            .iter()
+            .enumerate()
+            .position(|(i, n)| {
+                n.smooth && n.kind == NodeKindDto::Curve && {
+                    let p = to_path(&v.paths[0]).unwrap();
+                    kernest_core::harmonize::g2_position(&p, i).is_some()
+                }
+            })
+            .expect("a smooth curve node in O");
+        let r = path_edit_in(&mut doc, "O", "m01", "super-smooth", None, &[[0, ni]], &[]).unwrap();
+        assert!(r.layer.paths[0].nodes[ni].g2);
+        // Every master gets the flag, so the glyph still interpolates.
+        for m in &doc.font.masters {
+            let l = layer_view_of(&doc, "O", &m.id).unwrap();
+            assert!(l.paths[0].nodes[ni].g2, "{}", m.id);
+        }
+        doc.history.undo(&mut doc.font);
+        assert_eq!(doc.font, original);
+        // A handle can't be super-smooth; Harmonize with no picks takes every smooth node.
+        assert!(path_edit_in(
+            &mut doc,
+            "O",
+            "m01",
+            "super-smooth",
+            None,
+            &[[0, ni + 1]],
+            &[]
+        )
+        .is_err());
+        assert!(path_edit_in(&mut doc, "O", "m01", "super-smooth", None, &[], &[]).is_err());
+        path_edit_in(&mut doc, "O", "m01", "harmonize", None, &[], &[]).unwrap();
     }
 
     #[test]

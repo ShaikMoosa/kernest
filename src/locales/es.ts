@@ -2303,4 +2303,7 @@ export const es: Dict = {
   "Lasso Select": "Selección con lazo",
   "{tool} · hold or right-click to choose rectangle or lasso": "{tool} · mantén pulsado o haz clic derecho para elegir rectángulo o lazo",
   "Selection shape": "Forma de selección",
+  "Harmonize": "Armonizar",
+  "Super-smooth Nodes": "Nodos superlisos",
+  "Super-smooth nodes need a curve on both sides.": "Los nodos superlisos necesitan una curva a cada lado.",
 };

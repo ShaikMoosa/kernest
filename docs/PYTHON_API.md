@@ -153,6 +153,7 @@ A point on an outline. Writing a property writes straight back into the path.
 | `node.y` | number | Read/write. |
 | `node.kind` | str | `"line"`, `"curve"`, `"qcurve"` or `"offcurve"`. Read/write. |
 | `node.smooth` | bool | Read/write. |
+| `node.super_smooth` | bool | Super-smooth (G2), set in the editor (read-only). Kept when the node moves; setting `smooth` to `False` clears it. |
 | `node.on_curve` | bool | `True` unless `kind` is `"offcurve"` (read-only). |
 
 ### Component
