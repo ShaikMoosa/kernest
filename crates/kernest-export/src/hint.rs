@@ -106,14 +106,24 @@ pub fn autohint(
         }
     };
     // A hinted font rounds sizes to whole pixels (head flags bit 3), as hinting assumes.
+    // tilvisan also stamps head.modified with the current time; the compiled font's
+    // date is kept instead, which follows SOURCE_DATE_EPOCH, so exports can be
+    // reproduced byte for byte (SMO-84).
     let hinted = match FontRef::new(&hinted)
         .ok()
         .and_then(|f| f.table_data(Tag::new(b"head")))
     {
-        Some(head) if head.len() >= 18 => {
+        Some(head) if head.len() >= 36 => {
             let mut head = head.as_bytes().to_vec();
             let flags = u16::from_be_bytes([head[16], head[17]]) | (1 << 3);
             head[16..18].copy_from_slice(&flags.to_be_bytes());
+            if let Some(original) = FontRef::new(ttf)
+                .ok()
+                .and_then(|f| f.table_data(Tag::new(b"head")))
+                .filter(|h| h.len() >= 36)
+            {
+                head[28..36].copy_from_slice(&original.as_bytes()[28..36]);
+            }
             replace_table(&hinted, b"head", &head)?
         }
         _ => hinted,
@@ -492,6 +502,66 @@ mod tests {
             let (_, repair) = crate::cvar::repair_table(cvar.as_bytes(), cvt, 1).unwrap();
             assert_eq!(repair, crate::cvar::Repair::Unchanged);
         }
+
+        // SMO-84: a second export gives the same tables. head only differs in its
+        // dates (and so its checksum) when they come from the clock.
+        let again_dir = tempfile::tempdir().unwrap();
+        let again = export(
+            &f,
+            &ExportOptions {
+                out_dir: again_dir.path().to_path_buf(),
+                ..opts.clone()
+            },
+        )
+        .unwrap();
+        let again = std::fs::read(&again.files[0].path).unwrap();
+        let other = FontRef::new(&again).unwrap();
+        let tags: Vec<Tag> = font
+            .table_directory
+            .table_records()
+            .iter()
+            .map(|r| r.tag())
+            .collect();
+        assert_eq!(
+            tags,
+            other
+                .table_directory
+                .table_records()
+                .iter()
+                .map(|r| r.tag())
+                .collect::<Vec<_>>()
+        );
+        for tag in tags {
+            let mut x = font.table_data(tag).unwrap().as_bytes().to_vec();
+            let mut y = other.table_data(tag).unwrap().as_bytes().to_vec();
+            if tag == Tag::new(b"head") {
+                for h in [&mut x, &mut y] {
+                    h[8..12].fill(0);
+                    h[20..36].fill(0);
+                }
+            }
+            assert_eq!(x, y, "{tag} differs between two exports");
+        }
+    }
+
+    #[test]
+    fn hinting_keeps_the_compiled_modified_date() {
+        let out = tempfile::tempdir().unwrap();
+        let f = sample_font();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let plain = std::fs::read(&r.files[0].path).unwrap();
+        // An old date, as SOURCE_DATE_EPOCH would give.
+        let head = FontRef::new(&plain)
+            .unwrap()
+            .table_data(Tag::new(b"head"))
+            .unwrap();
+        let mut head = head.as_bytes().to_vec();
+        head[28..36].copy_from_slice(&1_000_000i64.to_be_bytes());
+        let plain = replace_table(&plain, b"head", &head).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let hinted = autohint(&plain, &Hinting::default(), &f, None, tmp.path(), "d").unwrap();
+        let h = FontRef::new(&hinted).unwrap().head().unwrap();
+        assert_eq!(h.modified().as_secs(), 1_000_000);
     }
 
     #[test]

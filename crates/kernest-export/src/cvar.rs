@@ -3,8 +3,12 @@
 //! When a font's hinting doesn't vary between masters, tilvisan can write a tuple
 //! that says "all CVT entries" and then has no deltas for them, which fontTools and
 //! strict parsers (OTS in browsers) reject. Tuples whose deltas are missing or all
-//! zero change nothing, so they are dropped; with none left the table is removed. A
-//! valid table is returned byte for byte.
+//! zero change nothing, so they are dropped; with none left the table is removed.
+//!
+//! tilvisan also writes the variations in an order that changes from run to run
+//! (SMO-84), so the kept ones are sorted by region: peak, then peak-only before
+//! intermediate regions, then the intermediate bounds. Exporting twice then gives the
+//! same table. A valid table that is already in order is returned byte for byte.
 //!
 //! Format: <https://learn.microsoft.com/en-us/typography/opentype/spec/cvar> and
 //! <https://learn.microsoft.com/en-us/typography/opentype/spec/otvarcommonformats>.
@@ -29,6 +33,8 @@ pub enum Repair {
     Dropped { malformed: usize, zero: usize },
     /// Every tuple was dropped, so the table was removed.
     Removed { malformed: usize, zero: usize },
+    /// Nothing was dropped, but the tuples were put in their stable order.
+    Sorted,
 }
 
 impl Repair {
@@ -144,6 +150,7 @@ pub fn repair_table(
 
     // Tuple headers, kept as raw bytes with their data sizes.
     let mut headers: Vec<(&[u8], usize, bool)> = Vec::with_capacity(count);
+    let mut keys: Vec<Vec<i32>> = Vec::with_capacity(count);
     for _ in 0..count {
         let start = r.pos;
         let size = usize::from(r.u16()?);
@@ -155,7 +162,28 @@ pub fn repair_table(
         if index & INTERMEDIATE_REGION != 0 {
             coords += 2 * axis_count;
         }
-        r.skip(coords * 2)?;
+        // The sort key: peak coordinates, then whether there's an intermediate
+        // region (peak-only first), then its start and end coordinates. cvar always
+        // embeds its peaks; a shared-tuple index (not allowed here) sorts last by number.
+        let mut values = Vec::with_capacity(coords);
+        for _ in 0..coords {
+            values.push(i32::from(r.u16()? as i16));
+        }
+        let peak_len = if index & EMBEDDED_PEAK_TUPLE != 0 {
+            axis_count
+        } else {
+            0
+        };
+        let mut key = Vec::with_capacity(coords + 2);
+        if peak_len == 0 {
+            key.push(1 + i32::from(index & 0x0FFF));
+        } else {
+            key.push(0);
+        }
+        key.extend_from_slice(&values[..peak_len]);
+        key.push(i32::from(index & INTERMEDIATE_REGION != 0));
+        key.extend_from_slice(&values[peak_len..]);
+        keys.push(key);
         headers.push((
             &cvar_data[start..r.pos],
             size,
@@ -207,14 +235,21 @@ pub fn repair_table(
         .filter(|v| matches!(v, Tuple::Malformed))
         .count();
     let zero = verdicts.iter().filter(|v| matches!(v, Tuple::Zero)).count();
-    if malformed == 0 && zero == 0 {
-        return Some((Some(cvar_data.to_vec()), Repair::Unchanged));
-    }
-    let kept: Vec<usize> = (0..count)
+    let mut kept: Vec<usize> = (0..count)
         .filter(|&i| matches!(verdicts[i], Tuple::Keep))
         .collect();
     if kept.is_empty() {
         return Some((None, Repair::Removed { malformed, zero }));
+    }
+    // Stable order; equal regions (not expected) keep their data order.
+    kept.sort_by(|&a, &b| {
+        keys[a]
+            .cmp(&keys[b])
+            .then_with(|| tuple_data[a].cmp(tuple_data[b]))
+    });
+    let in_order = kept.windows(2).all(|w| w[0] < w[1]);
+    if malformed == 0 && zero == 0 && in_order {
+        return Some((Some(cvar_data.to_vec()), Repair::Unchanged));
     }
 
     let header_len: usize = kept.iter().map(|&i| headers[i].0.len()).sum();
@@ -231,7 +266,12 @@ pub fn repair_table(
     for &i in &kept {
         out.extend_from_slice(tuple_data[i]);
     }
-    Some((Some(out), Repair::Dropped { malformed, zero }))
+    let repair = if malformed == 0 && zero == 0 {
+        Repair::Sorted
+    } else {
+        Repair::Dropped { malformed, zero }
+    };
+    Some((Some(out), repair))
 }
 
 /// Repairs the `cvar` table of a compiled font. A font without `cvar` comes back as is.
@@ -356,6 +396,75 @@ mod tests {
             }
         );
         assert_eq!(r.warning(), None);
+    }
+
+    /// Like `tuple`, with an intermediate region from `start` to `end`.
+    fn intermediate(peak: u16, start: u16, end: u16, deltas: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let (mut header, data) = tuple(peak, deltas);
+        header[2..4].copy_from_slice(&0xE000u16.to_be_bytes());
+        header.extend_from_slice(&start.to_be_bytes());
+        header.extend_from_slice(&end.to_be_bytes());
+        (header, data)
+    }
+
+    #[test]
+    fn tuples_are_put_in_a_stable_order() {
+        // Deltas 1, 2, 3 (one byte run).
+        let d = [0x02, 0x01, 0x02, 0x03];
+        let neg = tuple(0xC000, &d); // peak -1.0
+        let half = tuple(0x2000, &d); // peak 0.5
+        let full = tuple(0x4000, &d); // peak 1.0
+        let mid = intermediate(0x4000, 0x2000, 0x4000, &d); // peak 1.0 from 0.5
+        let sorted = table(&[neg.clone(), half.clone(), full.clone(), mid.clone()]);
+        // Already in order: returned as is.
+        let (out, r) = repair_table(&sorted, 3, 1).unwrap();
+        assert_eq!(r, Repair::Unchanged);
+        assert_eq!(out.unwrap(), sorted);
+        // Any other order comes out the same, with no warning.
+        for shuffled in [
+            table(&[mid.clone(), full.clone(), half.clone(), neg.clone()]),
+            table(&[full.clone(), neg.clone(), mid.clone(), half.clone()]),
+        ] {
+            let (out, r) = repair_table(&shuffled, 3, 1).unwrap();
+            assert_eq!(r, Repair::Sorted);
+            assert_eq!(r.warning(), None);
+            assert_eq!(out.unwrap(), sorted);
+        }
+        // Dropping and sorting together.
+        let zero = tuple(0x1000, &[0x82]);
+        let (out, r) = repair_table(&table(&[full, zero, neg.clone(), mid, half]), 3, 1).unwrap();
+        assert_eq!(
+            r,
+            Repair::Dropped {
+                malformed: 0,
+                zero: 1
+            }
+        );
+        assert_eq!(out.unwrap(), sorted);
+    }
+
+    #[test]
+    fn shared_point_numbers_stay_first_when_sorting() {
+        // Shared "all points"; each tuple has just its deltas.
+        let entry = |peak: u16, delta: u8| {
+            let data = vec![0x00, delta];
+            let mut header = (data.len() as u16).to_be_bytes().to_vec();
+            header.extend_from_slice(&0x8000u16.to_be_bytes());
+            header.extend_from_slice(&peak.to_be_bytes());
+            (header, data)
+        };
+        let build = |tuples: &[(Vec<u8>, Vec<u8>)]| {
+            let mut t = table(tuples);
+            let header_end = 8 + tuples.iter().map(|t| t.0.len()).sum::<usize>();
+            t[4] |= 0x80; // shared point numbers
+            t.insert(header_end, 0x00); // all points
+            t
+        };
+        let a = entry(0xC000, 4);
+        let b = entry(0x4000, 9);
+        let (out, r) = repair_table(&build(&[b.clone(), a.clone()]), 1, 1).unwrap();
+        assert_eq!(r, Repair::Sorted);
+        assert_eq!(out.unwrap(), build(&[a, b]));
     }
 
     #[test]
