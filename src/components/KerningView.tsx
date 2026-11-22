@@ -64,10 +64,12 @@ interface Props {
   fontSelection?: string[];
   /** Opens a text tab, where Alt+←/→ kerns at the cursor. */
   onOpenText?: () => void;
+  /** A pair to select, from a click on a kerning bar in a text tab; `seq` changes on each click. */
+  focus?: { left: string; right: string; seq: number } | null;
 }
 
 /** S07 · Kerning window: every pair in the current master. */
-export function KerningView({ masterId, masterName, version, onChanged, onError, fontSelection = [], onOpenText }: Props) {
+export function KerningView({ masterId, masterName, version, onChanged, onError, fontSelection = [], onOpenText, focus }: Props) {
   const [data, setData] = useState<KerningList | null>(null);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState({ left: "", right: "", value: "" });
@@ -78,6 +80,17 @@ export function KerningView({ masterId, masterName, version, onChanged, onError,
   const [options, setOptions] = useState<SearchOptions>(DEFAULT_OPTIONS);
   const [selected, setSelected] = useState<string | null>(null);
   const [menu, setMenu] = useState(false);
+  const tableRef = useRef<HTMLTableElement>(null);
+  // Select the pair a text tab asked for, clearing any search that would hide it.
+  useEffect(() => {
+    if (!focus) return;
+    setQuery("");
+    setOptions(DEFAULT_OPTIONS);
+    setSelected(`${focus.left}|${focus.right}`);
+  }, [focus]);
+  useEffect(() => {
+    tableRef.current?.querySelector("tr.is-selected")?.scrollIntoView({ block: "nearest" });
+  }, [selected, data]);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -187,7 +200,7 @@ export function KerningView({ masterId, masterName, version, onChanged, onError,
       <div className="kern-body">
         <div className="kern-main">
           <div className="kern-table-wrap">
-            <table className="kern-table">
+            <table className="kern-table" ref={tableRef}>
               <thead>
                 <tr><th>{t("Left")}</th><th className="num">{t("Value")}</th><th>{t("Right")}</th><th>{t("Type")}</th><th aria-label={t("Actions")} /></tr>
               </thead>

@@ -2382,4 +2382,13 @@ export const es: Dict = {
   "There is already a glyph named \"{name}\".": "Ya hay un glifo llamado «{name}».",
   "A selected path is locked. Unlock it first.": "Un trazado seleccionado está bloqueado. Desbloquéalo primero.",
   "\"{glyph}\" doesn't have the same paths in every master, so its selection can't become one component. Make the masters compatible first.": "«{glyph}» no tiene los mismos trazados en todos los másteres, así que su selección no puede convertirse en un componente. Haz compatibles los másteres primero.",
+  "Kerning preview": "Vista del kerning",
+  "No kerning sets the text without kerning and turns the kerning shortcuts off. Locked keeps the spacing fixed so only kerning changes.": "Sin kerning compone el texto sin kerning y desactiva los atajos de kerning. Bloqueado mantiene fijo el espaciado para que solo cambie el kerning.",
+  "Exception kerning {value} ({pair}) · click to open it in the Kerning window": "Kerning de excepción {value} ({pair}) · haz clic para abrirlo en la ventana Kerning",
+  "Group kerning {value} ({pair}) · click to open it in the Kerning window": "Kerning de grupo {value} ({pair}) · haz clic para abrirlo en la ventana Kerning",
+  "Kerning preview off · kerning shortcuts are off": "Vista del kerning desactivada · los atajos de kerning están desactivados",
+  "Spacing locked": "Espaciado bloqueado",
+  "No kerning": "Sin kerning",
+  "Show kerning": "Mostrar kerning",
+  "Kerning, spacing locked": "Kerning, espaciado bloqueado",
 };

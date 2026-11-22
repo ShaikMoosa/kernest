@@ -2593,4 +2593,13 @@ export const ar: Dict = {
   "There is already a glyph named \"{name}\".": "يوجد حرف باسم «{name}» بالفعل.",
   "A selected path is locked. Unlock it first.": "أحد المسارات المحددة مقفل. افتحه أولًا.",
   "\"{glyph}\" doesn't have the same paths in every master, so its selection can't become one component. Make the masters compatible first.": "لا يحتوي «{glyph}» على المسارات نفسها في كل الأساسيات، لذا لا يمكن أن يصبح تحديده مكوّنًا واحدًا. اجعل الأساسيات متوافقة أولًا.",
+  "Kerning preview": "معاينة التقنين",
+  "No kerning sets the text without kerning and turns the kerning shortcuts off. Locked keeps the spacing fixed so only kerning changes.": "«دون تقنين» يصفّ النص دون تقنين ويوقف اختصارات التقنين. «مقفل» يُبقي التباعد ثابتًا فلا يتغير إلا التقنين.",
+  "Exception kerning {value} ({pair}) · click to open it in the Kerning window": "تقنين استثناء {value} ({pair}) · انقر لفتحه في نافذة التقنين",
+  "Group kerning {value} ({pair}) · click to open it in the Kerning window": "تقنين مجموعة {value} ({pair}) · انقر لفتحه في نافذة التقنين",
+  "Kerning preview off · kerning shortcuts are off": "معاينة التقنين متوقفة · اختصارات التقنين متوقفة",
+  "Spacing locked": "التباعد مقفل",
+  "No kerning": "دون تقنين",
+  "Show kerning": "إظهار التقنين",
+  "Kerning, spacing locked": "التقنين، والتباعد مقفل",
 };

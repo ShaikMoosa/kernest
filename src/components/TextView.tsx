@@ -5,6 +5,7 @@ import { ColorGlyph } from "./ColorGlyph";
 import { wrapRows } from "../lib/onboarding";
 import { loadSamples, onSamplesChanged } from "../lib/samples";
 import { firstStrongRtl, visualOrder } from "../lib/bidi";
+import { kernBar, loadKerningPreview, saveKerningPreview, withKerning, type KerningPreview } from "../lib/kerningPreview";
 
 const PRESETS = loadSamples();
 const MISSING_WIDTH = 500;
@@ -13,6 +14,11 @@ const MODES: { id: KernMode; label: string; title: string }[] = [
   { id: "leftException", label: "Left exception", title: "Kern this left glyph against the right group" },
   { id: "rightException", label: "Right exception", title: "Kern the left group against this right glyph" },
   { id: "exception", label: "Exception", title: "Kern exactly these two glyphs" },
+];
+const PREVIEWS: { id: KerningPreview; label: string }[] = [
+  { id: "off", label: "No kerning" },
+  { id: "on", label: "Show kerning" },
+  { id: "locked", label: "Kerning, spacing locked" },
 ];
 const DIRECTIONS: { id: TextDirection; label: string; title: string; icon: string }[] = [
   { id: "ltr", label: "Left to right", title: "Left to right (Ctrl+Alt+Shift+←)", icon: "M3 6h11M3 11h7M3 16h11M15 11h6M18 8l3 3-3 3" },
@@ -136,6 +142,8 @@ interface Props {
   onChanged: (status: DocStatus) => void;
   onError: (e: unknown) => void;
   onOpenGlyph: (name: string) => void;
+  /** Opens the Kerning window with this pair selected (a click on a kerning bar). */
+  onOpenKerning?: (left: string, right: string) => void;
   textWidth?: number;
   /** Follow the writing direction of the text's first letter (Appearance setting). */
   autoDirection?: boolean;
@@ -145,7 +153,7 @@ interface Props {
 }
 
 /** S06 · Text view for spacing and kerning. */
-export function TextView({ masterId, version, active, onChanged, onError, onOpenGlyph, textWidth = 16000, autoDirection = true, onMilestone, onTitle }: Props) {
+export function TextView({ masterId, version, active, onChanged, onError, onOpenGlyph, onOpenKerning, textWidth = 16000, autoDirection = true, onMilestone, onTitle }: Props) {
   const [text, setText] = useState(PRESETS[0]);
   const [samples, setSamples] = useState(loadSamples);
   useEffect(() => onSamplesChanged(() => setSamples(loadSamples())), []);
@@ -162,24 +170,30 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   }, [text, autoDirection]);
   const [info, setInfo] = useState<FontInfo | null>(null);
   const [rawLayout, setLayout] = useState<TextLayout | null>(null);
+  // Kerning preview: off sets the text without kerning; locked keeps spacing fixed.
+  const [kernPreview, setKernPreview] = useState<KerningPreview>(loadKerningPreview);
+  useEffect(() => saveKerningPreview(kernPreview), [kernPreview]);
+  const kernOff = kernPreview === "off";
+  const spacingLocked = kernPreview === "locked";
   // The setting is in 1/1000 em; advances are in font units, so scale by the UPM.
   const wrapWidth = textWidth / 1000 * (info?.unitsPerEm ?? 1000);
   const layout = useMemo(() => {
     if (!rawLayout) return null;
     const em = rawLayout.metrics.ascender - rawLayout.metrics.descender;
+    const lines = kernOff ? rawLayout.lines.map((l) => l.map((it) => (it.type === "glyph" ? { ...it, kern: 0 } : it))) : rawLayout.lines;
     const advance = vertical
       ? (item: TextItem) => (item.type === "glyph" ? item.vAdvance : em)
       : (item: TextItem) => (item.type === "glyph" ? item.width + item.kern : MISSING_WIDTH);
-    return { ...rawLayout, lines: wrapRows(rawLayout.lines, wrapWidth, advance) };
-  }, [rawLayout, wrapWidth, vertical]);
+    return { ...rawLayout, lines: wrapRows(lines, wrapWidth, advance) };
+  }, [rawLayout, wrapWidth, vertical, kernOff]);
   const [size, setSize] = useState(140);
   const [mode, setMode] = useState<KernMode>("group");
   const [cursor, setCursor] = useState<Cursor>({ line: 0, pos: 1 });
   const [showMetrics, setShowMetrics] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
   const chain = useRef(Promise.resolve());
-  const latest = useRef({ layout, cursor, mode, direction, previewing: false, shapeOn: false });
-  latest.current = { layout, cursor, mode, direction, previewing: latest.current?.previewing ?? false, shapeOn: latest.current?.shapeOn ?? false };
+  const latest = useRef({ layout, cursor, mode, direction, kernOff, previewing: false, shapeOn: false });
+  latest.current = { layout, cursor, mode, direction, kernOff, previewing: latest.current?.previewing ?? false, shapeOn: latest.current?.shapeOn ?? false };
 
   // "" = the current master; "i:<name>" = an instance; "custom" = the sliders below.
   const [preview, setPreview] = useState("");
@@ -245,7 +259,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   // aalt only lists alternates for glyph palettes; text never applies it unasked.
   const featChecked = (tag: string) => overrides[tag] ?? (tag !== "aalt" && (featView?.automatic.includes(tag) || featView?.handwritten.includes(tag) || false));
   // Explicit on/off per tag so default-on features like liga can be switched off too.
-  const featSettings = useMemo(() => featTags.map((tag) => `${tag}=${featChecked(tag) ? 1 : 0}`), [featTags, overrides, featView]);
+  const featSettings = useMemo(() => withKerning(featTags.map((tag) => `${tag}=${featChecked(tag) ? 1 : 0}`), kernPreview), [featTags, overrides, featView, kernPreview]);
 
   const reload = useCallback(() => backend.textLayout(text, masterId, location, direction).then(result => { setLayout(result); if (preview.startsWith("i:")) onMilestone?.("instance"); }, onError), [text, masterId, location, direction, preview, onMilestone, onError]);
   const reloadShaped = useCallback(() => backend.shapeText(text, masterId, location, featSettings, direction).then(result => { setShaped(result); if (preview.startsWith("i:")) onMilestone?.("instance"); }, onError), [text, masterId, location, featSettings, direction, preview, onMilestone, onError]);
@@ -393,7 +407,8 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
       if (e.altKey && !e.ctrlKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         const left = line[cursor.pos - 1], right = line[cursor.pos];
         // Kerning is horizontal; in right-to-left text the next glyph is on the left.
-        if (dir !== "vertical" && left?.type === "glyph" && right?.type === "glyph") {
+        // With the kerning preview off, the kerning shortcuts are off too.
+        if (dir !== "vertical" && !latest.current.kernOff && left?.type === "glyph" && right?.type === "glyph") {
           const step = (e.shiftKey ? 1 : 10) * (e.key === "ArrowLeft" ? -1 : 1) * (dir === "rtl" ? -1 : 1);
           kern(left, right, (v) => v + step);
         }
@@ -460,6 +475,10 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
             <button key={m.id} role="radio" aria-checked={mode === m.id} title={t(m.title)} className={`segment${mode === m.id ? " is-selected" : ""}`} onClick={() => setMode(m.id)}>{t(m.label)}</button>
           ))}
         </div>
+        <select className="select" aria-label={t("Kerning preview")} value={kernPreview} onChange={(e) => setKernPreview(e.target.value as KerningPreview)}
+          title={t("No kerning sets the text without kerning and turns the kerning shortcuts off. Locked keeps the spacing fixed so only kerning changes.")}>
+          {PREVIEWS.map((p) => <option key={p.id} value={p.id}>{t(p.label)}</option>)}
+        </select>
         <span className="toolbar-sep" />
         <div className="location-picker">
           <select className="select" aria-label={t("Preview location")} value={preview} onChange={(e) => {
@@ -552,9 +571,28 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
                       </>) : (
                         <text x={b.x + b.w / 2} y={cell.oy} className="text-placeholder" fontSize={size * 0.7}>{it.unicode ? String.fromCodePoint(parseInt(it.unicode, 16)) : "?"}</text>
                       )}
-                      {!vertical && it.kern !== 0 && (
-                        <text x={it.rtl ? b.x - it.kern * scale : b.x + (it.width + it.kern) * scale} y={by + 18} className={`kern-mark ${it.kern < 0 ? "neg" : "pos"}`}>{it.kern > 0 ? `+${it.kern}` : it.kern}</text>
-                      )}
+                      {!vertical && it.kern !== 0 && (() => {
+                        // A bar over the gap or overlap the kerning makes; exceptions get a marker too.
+                        const bar = kernBar(b.x, it.width, it.kern, it.rtl, scale);
+                        const exception = it.kernKind === "exception";
+                        const value = it.kern > 0 ? `+${it.kern}` : String(it.kern);
+                        const pair = it.kernLeft && it.kernRight ? `${it.kernLeft} | ${it.kernRight}` : `${it.name} | ?`;
+                        const tip = exception
+                          ? t("Exception kerning {value} ({pair}) · click to open it in the Kerning window", { value, pair })
+                          : t("Group kerning {value} ({pair}) · click to open it in the Kerning window", { value, pair });
+                        const cx = bar.x + bar.w / 2;
+                        return (
+                          <g className={`kern-bar-group${exception ? " is-exception" : ""}`} role="button" aria-label={tip}
+                            onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
+                            onClick={() => it.kernLeft && it.kernRight && onOpenKerning?.(it.kernLeft, it.kernRight)}>
+                            <title>{tip}</title>
+                            <rect x={cx - Math.max(bar.w, 16) / 2} y={by + 2} width={Math.max(bar.w, 16)} height={exception ? 36 : 28} className="kern-hit" />
+                            <rect x={bar.x} y={by + 4} width={Math.max(bar.w, 2)} height={6} className={`kern-bar ${it.kern < 0 ? "neg" : "pos"}`} />
+                            {exception && <path d={`M${cx} ${by + 12}l4 4-4 4-4-4z`} className="kern-exception-mark" />}
+                            <text x={cx} y={by + (exception ? 32 : 24)} className={`kern-mark ${it.kern < 0 ? "neg" : "pos"}`}>{value}</text>
+                          </g>
+                        );
+                      })()}
                     </g>
                   ) : (
                     <g key={i}>
@@ -568,7 +606,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
                 {caret && (
                   <>
                     <line x1={caret.x1} x2={caret.x2} y1={caret.y1} y2={caret.y2} className="text-cursor" />
-                    {pairKern && ln[cursor.pos]?.type === "glyph" && (
+                    {pairKern && !kernOff && ln[cursor.pos]?.type === "glyph" && (
                       <g transform={`translate(${caret.x1} ${by - desc * scale + 22})`}>
                         {(() => {
                           const value = pairKern.kern === 0 ? "0" : pairKern.kern > 0 ? `+${pairKern.kern}` : String(pairKern.kern);
@@ -617,18 +655,18 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
             <span className="k-body-strong">{current.name}</span>
             <span className="k-code muted">{current.unicode ? `U+${current.unicode}` : ""}</span>
           </div>
-          <NumField label={prevLabel} value={prev && !vertical ? prev.kern : null} disabled={!prev || previewing || vertical} title={prev ? pairLabel(prev) : undefined}
+          <NumField label={prevLabel} value={prev && !vertical && !kernOff ? prev.kern : null} disabled={!prev || previewing || vertical || kernOff} title={prev ? pairLabel(prev) : undefined}
             onCommit={(v) => prev && kern(prev, current, () => v)} />
           {vertical ? (<>
-            <NumField label={t("TSB")} value={current.tsb} disabled={current.tsb === null || previewing} onCommit={(v) => setVertical(current.name, "tsb", v)} />
-            <NumField label={t("Height")} value={current.vAdvance} disabled={previewing} onCommit={(v) => setVertical(current.name, "advance", v)} />
-            <NumField label={t("BSB")} value={current.bsb} disabled={current.bsb === null || previewing} onCommit={(v) => setVertical(current.name, "bsb", v)} />
+            <NumField label={t("TSB")} value={current.tsb} disabled={current.tsb === null || previewing || spacingLocked} onCommit={(v) => setVertical(current.name, "tsb", v)} />
+            <NumField label={t("Height")} value={current.vAdvance} disabled={previewing || spacingLocked} onCommit={(v) => setVertical(current.name, "advance", v)} />
+            <NumField label={t("BSB")} value={current.bsb} disabled={current.bsb === null || previewing || spacingLocked} onCommit={(v) => setVertical(current.name, "bsb", v)} />
           </>) : (<>
-            <NumField label={t("LSB")} value={current.lsb} disabled={current.lsb === null || previewing} onCommit={(v) => setMetric(current.name, "lsb", v)} />
-            <NumField label={t("Width")} value={current.width} disabled={previewing} onCommit={(v) => setMetric(current.name, "width", v)} />
-            <NumField label={t("RSB")} value={current.rsb} disabled={current.rsb === null || previewing} onCommit={(v) => setMetric(current.name, "rsb", v)} />
+            <NumField label={t("LSB")} value={current.lsb} disabled={current.lsb === null || previewing || spacingLocked} onCommit={(v) => setMetric(current.name, "lsb", v)} />
+            <NumField label={t("Width")} value={current.width} disabled={previewing || spacingLocked} onCommit={(v) => setMetric(current.name, "width", v)} />
+            <NumField label={t("RSB")} value={current.rsb} disabled={current.rsb === null || previewing || spacingLocked} onCommit={(v) => setMetric(current.name, "rsb", v)} />
           </>)}
-          <NumField label={nextLabel} value={next && !vertical ? current.kern : null} disabled={!next || previewing || vertical} title={next ? pairLabel(current) : undefined}
+          <NumField label={nextLabel} value={next && !vertical && !kernOff ? current.kern : null} disabled={!next || previewing || vertical || kernOff} title={next ? pairLabel(current) : undefined}
             onCommit={(v) => next && kern(current, next, () => v)} />
           <span className="info-sep" />
           <GroupField label={t("Left group")} value={current.leftGroup} disabled={previewing} onCommit={(v) => setGroups(current.name, v, current.rightGroup)} />
@@ -663,7 +701,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
               const items = lines.flatMap((ln, li) => {
                 const out = visualOrder(ln.map((it) => it.rtl), paraRtl).map((i) => {
                   const it = ln[i];
-                  const kernPx = it.type === "glyph" ? it.kern * sc : 0;
+                  const kernPx = it.type === "glyph" && !kernOff ? it.kern * sc : 0;
                   if (it.rtl) x += kernPx;
                   const at = x;
                   x += (it.type === "glyph" ? it.width : MISSING_WIDTH) * sc;
@@ -687,8 +725,9 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
         <span>{shapeOn ? t("Feature preview · spacing edits are paused: turn off Shape preview to edit") : previewing ? t("Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit")
           : before?.type === "glyph" && after?.type === "glyph" ? t("Text mode · cursor between {left} | {right}", { left: before.name, right: after.name }) : t("Text mode")}</span>
         <span className="spacer" />
-        {!shapeOn && !previewing && !vertical && before?.type === "glyph" && after?.type === "glyph" && (
-          <span>{before.kernLeft ? t("Kerning {value} ({pair}) · Alt+←/→", { value: before.kern, pair: `${before.kernLeft} | ${before.kernRight}` }) : t("No kerning · Alt+←/→ to kern")}</span>
+        {!shapeOn && !previewing && !vertical && kernOff && <span>{t("Kerning preview off · kerning shortcuts are off")}</span>}
+        {!shapeOn && !previewing && !vertical && !kernOff && before?.type === "glyph" && after?.type === "glyph" && (
+          <span>{spacingLocked ? `${t("Spacing locked")} · ` : ""}{before.kernLeft ? t("Kerning {value} ({pair}) · Alt+←/→", { value: before.kern, pair: `${before.kernLeft} | ${before.kernRight}` }) : t("No kerning · Alt+←/→ to kern")}</span>
         )}
       </footer>
     </div>
