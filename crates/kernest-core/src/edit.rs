@@ -43,6 +43,9 @@ pub enum MetricEdit {
     Rsb(f64),
     /// Advance width: keeps outlines in place.
     Width(f64),
+    /// Moves the outlines sideways by this much inside the same width, so the
+    /// left sidebearing grows as the right one shrinks (SMO-35).
+    Shift(f64),
 }
 
 /// Returns the edited copy of the layer; the caller stores it (and records history).
@@ -84,6 +87,15 @@ pub fn with_metric(font: &Font, glyph: &str, master_id: &str, edit: MetricEdit) 
                 ))
             })?;
             out.width = (b.max_x + v).max(0.0);
+        }
+        MetricEdit::Shift(dx) => {
+            let dx = finite(dx)?;
+            if bounds(font, layer).is_none() {
+                return Err(Error::Invalid(format!(
+                    "\"{glyph}\" has no outlines to move"
+                )));
+            }
+            translate_x(&mut out, dx);
         }
     }
     Ok(out)
@@ -390,6 +402,19 @@ mod tests {
         assert_eq!(sb(&f, "H"), (80.0, 700.0, 100.0));
         assert!(with_metric(&f, "H", "m01", MetricEdit::Width(-1.0)).is_err());
         assert!(with_metric(&f, "space", "m01", MetricEdit::Lsb(10.0)).is_err());
+    }
+
+    #[test]
+    fn shift_moves_outlines_inside_the_width() {
+        let mut f = sample_font();
+        let mut h = History::default();
+        let l = with_metric(&f, "H", "m01", MetricEdit::Shift(10.0)).unwrap();
+        h.apply(&mut f, "H", "m01", l).unwrap();
+        assert_eq!(sb(&f, "H"), (90.0, 680.0, 70.0));
+        let l = with_metric(&f, "H", "m01", MetricEdit::Shift(-20.0)).unwrap();
+        h.apply(&mut f, "H", "m01", l).unwrap();
+        assert_eq!(sb(&f, "H"), (70.0, 680.0, 90.0));
+        assert!(with_metric(&f, "space", "m01", MetricEdit::Shift(10.0)).is_err());
     }
 
     #[test]

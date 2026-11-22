@@ -7,8 +7,11 @@ export interface ShortcutAction {
   /** English label, passed through t() in the UI. */
   label: string;
   default: string;
-  /** "global" always; "font" needs an open font; "glyph" needs an open glyph tab. */
-  scope: "global" | "font" | "glyph";
+  /**
+   * "global" always; "font" needs an open font; "glyph" needs an open glyph tab;
+   * "text" is handled by the text tab itself (see `findTextShortcut`).
+   */
+  scope: "global" | "font" | "glyph" | "text";
   /** Fire while typing in a text field (default true). */
   allowInField?: boolean;
   /** Needs a glyph selection or open glyph tab. */
@@ -47,6 +50,19 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: "show-bounding-box", label: "Show Bounding Box", default: "Ctrl+Alt+Shift+B", scope: "global" },
   { id: "macro-panel", label: "Macro Panel", default: "Ctrl+Shift+P", scope: "global" },
   { id: "settings", label: "Settings", default: "Ctrl+,", scope: "global" },
+  // Text tabs (SMO-35). Holding Shift as well takes steps of 10 units.
+  { id: "text-kern-decrease", label: "Decrease Kerning", default: "Alt+Left", scope: "text", allowInField: false },
+  { id: "text-kern-increase", label: "Increase Kerning", default: "Alt+Right", scope: "text", allowInField: false },
+  { id: "text-lsb-increase", label: "Increase Left Sidebearing", default: "Ctrl+Alt+Left", scope: "text", allowInField: false },
+  { id: "text-lsb-decrease", label: "Decrease Left Sidebearing", default: "Ctrl+Alt+Right", scope: "text", allowInField: false },
+  { id: "text-rsb-increase", label: "Increase Right Sidebearing", default: "Ctrl+Right", scope: "text", allowInField: false },
+  { id: "text-rsb-decrease", label: "Decrease Right Sidebearing", default: "Ctrl+Left", scope: "text", allowInField: false },
+  { id: "text-shift-right", label: "Move Outline Right", default: "Ctrl+Alt+Up", scope: "text", allowInField: false },
+  { id: "text-shift-left", label: "Move Outline Left", default: "Ctrl+Alt+Down", scope: "text", allowInField: false },
+  { id: "text-kern-exception", label: "Make or Remove Kerning Exception", default: "Ctrl+Alt+E", scope: "text", allowInField: false },
+  { id: "text-ltr", label: "Left to Right Text", default: "Ctrl+Alt+Shift+L", scope: "text" },
+  { id: "text-rtl", label: "Right to Left Text", default: "Ctrl+Alt+Shift+R", scope: "text" },
+  { id: "text-vertical", label: "Vertical Text", default: "Ctrl+Alt+Shift+V", scope: "text" },
 ];
 
 export interface ParsedShortcut {
@@ -65,6 +81,10 @@ const KEY_ALIASES: Record<string, string> = {
   period: ".",
   plus: "+",
   minus: "-",
+  left: "arrowleft",
+  right: "arrowright",
+  up: "arrowup",
+  down: "arrowdown",
 };
 
 /** Parses "Ctrl+Shift+T" into modifiers and a key; null if it has no key. */
@@ -87,6 +107,27 @@ export function parseShortcut(text: string): ParsedShortcut | null {
 /** True when a key event matches a parsed shortcut (Cmd is never used on Windows). */
 export function matchShortcut(e: KeyboardEvent, s: ParsedShortcut): boolean {
   return e.ctrlKey === s.ctrl && e.shiftKey === s.shift && e.altKey === s.alt && !e.metaKey && e.key.toLowerCase() === s.key;
+}
+
+/** The key parts of a key event that shortcut matching reads. */
+export type KeyLike = Pick<KeyboardEvent, "ctrlKey" | "altKey" | "shiftKey" | "metaKey" | "key">;
+
+/**
+ * The text-tab action a key press triggers, and its step: 1 unit, or 10 with
+ * Shift held as well. A binding that itself uses Shift always steps by 1.
+ */
+export function findTextShortcut(e: KeyLike, overrides: Record<string, string>): { id: string; step: number } | null {
+  for (const a of SHORTCUT_ACTIONS) {
+    if (a.scope !== "text") continue;
+    const s = parseShortcut(effectiveShortcut(a, overrides));
+    if (!s || e.ctrlKey !== s.ctrl || e.altKey !== s.alt || e.metaKey || e.key.toLowerCase() !== s.key) continue;
+    if (s.shift) {
+      if (e.shiftKey) return { id: a.id, step: 1 };
+      continue;
+    }
+    return { id: a.id, step: e.shiftKey ? 10 : 1 };
+  }
+  return null;
 }
 
 /** The shortcut text for an action, honouring a stored override. */

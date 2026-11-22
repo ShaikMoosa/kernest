@@ -426,7 +426,17 @@ An anchor is a named point that tells other glyphs where to sit: a mark above a 
 
 - **Text tabs** (Window › New Text Tab, Ctrl+T): type sample text to see your glyphs together.
   - Click between two glyphs to place the cursor.
-  - **Alt+Left** and **Alt+Right** change the kerning there by 10 units, or by 1 unit with Shift held too.
+  - **Spacing and kerning from the keyboard:** hold Shift as well for steps of 10 units. The status bar shows the new value for a moment, and each key press is one undo step.
+
+    | Keys | Does |
+    |---|---|
+    | Alt+← / Alt+→ | Kern the pair at the cursor 1 unit tighter / looser |
+    | Ctrl+← / Ctrl+→ | Right sidebearing 1 unit smaller / larger |
+    | Ctrl+Alt+← / Ctrl+Alt+→ | Left sidebearing 1 unit larger / smaller |
+    | Ctrl+Alt+↑ / Ctrl+Alt+↓ | Move the outline 1 unit right / left inside the same width (both sidebearings at once, for monospaced designs) |
+    | Ctrl+Alt+E | Make the pair at the cursor an exception with its current value, or remove its exception |
+
+    The sidebearing keys act on the glyph after the cursor (or before it, at the end of a line). A sidebearing linked by a metrics key is left alone, and the status bar says so. With **No kerning** chosen in the Kerning preview menu the kerning keys are off, and with **Kerning, spacing locked** the spacing keys are. Change any of these keys in **Settings › Shortcuts**.
   - **Kerning bars:** each kerned pair shows a bar under the baseline, as wide as the kerning: red where the glyphs move closer, green where they move apart, with the value below it. Exceptions have a dashed bar and a diamond marker. Hover a bar to see the pair it comes from (for example `@A | @V`); click it to open the **Kerning window** with that pair selected.
   - **Kerning preview** (the menu next to the kerning mode) has three settings, remembered between sessions:
     - **No kerning** sets the text without kerning, also in Shape preview and the Preview strip, and turns the kerning shortcuts and fields off. Use it to judge the spacing alone.
@@ -435,7 +445,7 @@ An anchor is a named point that tells other glyphs where to sit: a mark above a 
   - The **Features** button previews OpenType features on the sample text (see [Features](#features)).
   - The **Preview** strip at the bottom shows the text in every master at once; the status bar names the pair at the cursor and its kerning. The tab is named after its text.
   - The **Samples** menu lists the strings from **Settings › Sample strings**, where you can add, edit and remove them.
-  - **Writing direction:** the three buttons in the toolbar set the tab to **left to right**, **right to left** or **vertical** (Ctrl+Alt+Shift+←, → or ↓). Each tab keeps its own direction.
+  - **Writing direction:** the three buttons in the toolbar set the tab to **left to right**, **right to left** or **vertical** (Ctrl+Alt+Shift+L, R or V). Each tab keeps its own direction.
     - Right to left, lines start at the right edge. The arrow keys follow the text, so ← moves to the next glyph, and Alt+→ tightens the pair at the cursor. Latin words and numbers inside right-to-left text keep their own order (a simplified bidi algorithm). Glyphs take their direction from their **Writing direction** property, else from their Unicode value or name. Kerning between glyphs of different directions isn't applied.
     - Vertical text runs top to bottom in columns from right to left. It uses each glyph's vertical metrics (see [Glyph properties](#font-view)), and the spacing fields become **TSB**, **Height** and **BSB**. Kerning is horizontal only, so it can't be edited here.
     - With **Shape preview** on, the text is shaped in its direction, run by run, so Arabic joins and reads right to left. Vertical text uses the font's vertical metrics and `vert` features.
@@ -781,6 +791,11 @@ Every command is in the menu bar: File, Edit, Glyph, Path, Filter, View, Script,
 | Edit Background | Ctrl+B |
 | Selection to Background / Add to Background | Ctrl+J / Ctrl+Shift+J |
 | New Text Tab / Kerning | Ctrl+T / Ctrl+Shift+K |
+| Text tab: kern the pair at the cursor | Alt+← / Alt+→ (Shift: 10 units) |
+| Text tab: right / left sidebearing | Ctrl+←/→ / Ctrl+Alt+←/→ (Shift: 10 units) |
+| Text tab: move the outline inside its width | Ctrl+Alt+↑ / Ctrl+Alt+↓ |
+| Text tab: make or remove a kerning exception | Ctrl+Alt+E |
+| Text tab: left to right / right to left / vertical | Ctrl+Alt+Shift+L / R / V |
 | Font Info / Export | Ctrl+I / Ctrl+E |
 | Macro Panel / Settings | Ctrl+Shift+P / Ctrl+, |
 | Handbook | F1 |

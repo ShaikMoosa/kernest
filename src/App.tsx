@@ -983,6 +983,8 @@ export default function App() {
       for (const a of SHORTCUT_ACTIONS) {
         const s = parseShortcut(effectiveShortcut(a, settings.shortcuts));
         if (!s || !matchShortcut(e, s)) continue;
+        // Text-tab shortcuts are handled by the text tab.
+        if (a.scope === "text") continue;
         if (a.scope === "font" && !font) continue;
         if (a.scope === "glyph" && !inGlyph) continue;
         if (a.needsTargets && glyphTargets.length === 0) continue;
@@ -1343,7 +1345,7 @@ export default function App() {
               ) : id === "kerning" ? (
                 <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={s => { onCommitted(s); recordMilestone("kerned"); }} onError={fail} fontSelection={fontSelection} onOpenText={newTextTab} focus={kerningFocus} />
               ) : (
-                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} onOpenKerning={openKerningPair} textWidth={settings.appearance.textWidth} autoDirection={settings.appearance.autoDirection} onMilestone={recordMilestone} onTitle={textTitleSetter(id)} />
+                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} onOpenKerning={openKerningPair} shortcuts={settings.shortcuts} textWidth={settings.appearance.textWidth} autoDirection={settings.appearance.autoDirection} onMilestone={recordMilestone} onTitle={textTitleSetter(id)} />
               )}
             </div>
           ))}

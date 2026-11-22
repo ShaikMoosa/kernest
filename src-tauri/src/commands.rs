@@ -967,7 +967,8 @@ pub fn update_layer(
     layer_view_of(doc, &glyph, &master_id)
 }
 
-/// Sets the left sidebearing, right sidebearing or advance width ("lsb" | "rsb" | "width").
+/// Sets the left sidebearing, right sidebearing or advance width ("lsb" | "rsb" | "width"),
+/// or moves the outlines sideways inside the width by `value` ("shift").
 #[tauri::command]
 pub fn set_metric(
     state: State<AppState>,
@@ -983,6 +984,7 @@ pub fn set_metric(
         "lsb" => MetricEdit::Lsb(value),
         "rsb" => MetricEdit::Rsb(value),
         "width" => MetricEdit::Width(value),
+        "shift" => MetricEdit::Shift(value),
         other => return Err(format!("Unknown metric \"{other}\"")),
     };
     let next = with_metric(&doc.font, &glyph, &master_id, edit).map_err(|e| e.to_string())?;

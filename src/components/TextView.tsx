@@ -6,6 +6,7 @@ import { wrapRows } from "../lib/onboarding";
 import { loadSamples, onSamplesChanged } from "../lib/samples";
 import { firstStrongRtl, visualOrder } from "../lib/bidi";
 import { kernBar, loadKerningPreview, saveKerningPreview, withKerning, type KerningPreview } from "../lib/kerningPreview";
+import { SHORTCUT_ACTIONS, effectiveShortcut, findTextShortcut } from "../lib/shortcuts";
 
 const PRESETS = loadSamples();
 const MISSING_WIDTH = 500;
@@ -20,10 +21,10 @@ const PREVIEWS: { id: KerningPreview; label: string }[] = [
   { id: "on", label: "Show kerning" },
   { id: "locked", label: "Kerning, spacing locked" },
 ];
-const DIRECTIONS: { id: TextDirection; label: string; title: string; icon: string }[] = [
-  { id: "ltr", label: "Left to right", title: "Left to right (Ctrl+Alt+Shift+←)", icon: "M3 6h11M3 11h7M3 16h11M15 11h6M18 8l3 3-3 3" },
-  { id: "rtl", label: "Right to left", title: "Right to left (Ctrl+Alt+Shift+→)", icon: "M10 6h11M14 11h7M10 16h11M3 11h6M6 8l-3 3 3 3" },
-  { id: "vertical", label: "Vertical", title: "Vertical, top to bottom (Ctrl+Alt+Shift+↓)", icon: "M18 3v11M13 3v7M8 3v11M13 15v6M10 18l3 3 3-3" },
+const DIRECTIONS: { id: TextDirection; label: string; title: string; shortcut: string; icon: string }[] = [
+  { id: "ltr", label: "Left to right", title: "Left to right", shortcut: "text-ltr", icon: "M3 6h11M3 11h7M3 16h11M15 11h6M18 8l3 3-3 3" },
+  { id: "rtl", label: "Right to left", title: "Right to left", shortcut: "text-rtl", icon: "M10 6h11M14 11h7M10 16h11M3 11h6M6 8l-3 3 3 3" },
+  { id: "vertical", label: "Vertical", title: "Vertical, top to bottom", shortcut: "text-vertical", icon: "M18 3v11M13 3v7M8 3v11M13 15v6M10 18l3 3 3-3" },
 ];
 
 type Glyph = Extract<TextItem, { type: "glyph" }>;
@@ -150,10 +151,14 @@ interface Props {
   onMilestone?: (milestone: Milestone) => void;
   /** The tab's title follows the sample text. */
   onTitle?: (title: string) => void;
+  /** Rebound shortcuts from Settings › Shortcuts (action id → keys). */
+  shortcuts?: Record<string, string>;
 }
 
+const NO_OVERRIDES: Record<string, string> = {};
+
 /** S06 · Text view for spacing and kerning. */
-export function TextView({ masterId, version, active, onChanged, onError, onOpenGlyph, onOpenKerning, textWidth = 16000, autoDirection = true, onMilestone, onTitle }: Props) {
+export function TextView({ masterId, version, active, onChanged, onError, onOpenGlyph, onOpenKerning, textWidth = 16000, autoDirection = true, onMilestone, onTitle, shortcuts = NO_OVERRIDES }: Props) {
   const [text, setText] = useState(PRESETS[0]);
   const [samples, setSamples] = useState(loadSamples);
   useEffect(() => onSamplesChanged(() => setSamples(loadSamples())), []);
@@ -192,8 +197,21 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   const [showMetrics, setShowMetrics] = useState(true);
   const svgRef = useRef<SVGSVGElement>(null);
   const chain = useRef(Promise.resolve());
-  const latest = useRef({ layout, cursor, mode, direction, kernOff, previewing: false, shapeOn: false });
-  latest.current = { layout, cursor, mode, direction, kernOff, previewing: latest.current?.previewing ?? false, shapeOn: latest.current?.shapeOn ?? false };
+  const latest = useRef({ layout, cursor, mode, direction, kernOff, shortcuts, previewing: false, shapeOn: false });
+  latest.current = { layout, cursor, mode, direction, kernOff, shortcuts, previewing: latest.current?.previewing ?? false, shapeOn: latest.current?.shapeOn ?? false };
+  // A short note in the status bar after a keyboard edit (the new value, or why nothing changed).
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const showFlash = useCallback((msg: string) => {
+    setFlash(msg);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), 2500);
+  }, []);
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  const keysOf = (id: string) => {
+    const a = SHORTCUT_ACTIONS.find((x) => x.id === id);
+    return a ? effectiveShortcut(a, shortcuts) : "";
+  };
 
   // "" = the current master; "i:<name>" = an instance; "custom" = the sliders below.
   const [preview, setPreview] = useState("");
@@ -390,29 +408,76 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
 
   // ---------- Keyboard ----------
 
+  /** Runs a text-tab shortcut (SMO-35): kerning, sidebearings or an exception at the cursor. */
+  const textAction = useRef<(id: string, step: number, line: TextItem[], cursor: Cursor, dir: TextDirection) => void>(() => {});
+  textAction.current = (id, step, line, cursor, dir) => {
+    const before = line[cursor.pos - 1], after = line[cursor.pos];
+    const left = before?.type === "glyph" ? before : undefined;
+    const right = after?.type === "glyph" ? after : undefined;
+    const pairText = (g: Glyph) => (g.kernLeft ? `${g.kernLeft} | ${g.kernRight}` : `${g.name} | ${right?.name ?? "?"}`);
+    if (id === "text-kern-decrease" || id === "text-kern-increase" || id === "text-kern-exception") {
+      if (kernOff) return showFlash(t("Kerning preview off · kerning shortcuts are off"));
+      if (dir === "vertical") return showFlash(t("Kerning is horizontal only."));
+      if (!left || !right) return showFlash(t("Place the cursor between two glyphs to kern them."));
+      if (id === "text-kern-exception") {
+        if (left.kernKind === "exception" && left.kernLeft && left.kernRight) {
+          const [l, r] = [left.kernLeft, left.kernRight];
+          run(() => backend.setKerningPair(masterId, l, r, 0), "kerned");
+          return showFlash(t("Exception removed: {pair}", { pair: `${l} | ${r}` }));
+        }
+        if (left.kern === 0) return showFlash(t("There is no kerning here to make an exception of."));
+        run(async () => (await backend.setGlyphKerning(masterId, left.name, right.name, "exception", left.kern)).status, "kerned");
+        return showFlash(t("Exception {pair}: {value}", { pair: `${left.name} | ${right.name}`, value: left.kern }));
+      }
+      // In right-to-left text the next glyph is on the left, so the keys turn around.
+      const d = step * (id === "text-kern-increase" ? 1 : -1) * (dir === "rtl" ? -1 : 1);
+      kern(left, right, (v) => v + d);
+      return showFlash(t("Kerning {pair}: {value}", { pair: pairText(left), value: left.kern + d }));
+    }
+    // Spacing: the glyph after the cursor, else the one before it.
+    const g = right ?? left;
+    if (spacingLocked) return showFlash(t("Spacing is locked. Choose Show kerning in the Kerning preview menu to space."));
+    if (dir === "vertical") return showFlash(t("The spacing shortcuts work in horizontal text."));
+    if (!g) return showFlash(t("Place the cursor next to a glyph to space it."));
+    if (g.lsb === null || g.rsb === null) return showFlash(t("{glyph} has no outlines to space.", { glyph: g.name }));
+    const keys = g.metricsKeys ?? {};
+    const linked = id.startsWith("text-lsb") ? keys.left ?? keys.width : id.startsWith("text-rsb") ? keys.right ?? keys.width : keys.left ?? keys.right;
+    if (linked) return showFlash(t("{glyph} is linked to “{key}” by a metrics key. Change or remove the key in the glyph's info to space it here.", { glyph: g.name, key: linked }));
+    if (id === "text-lsb-increase" || id === "text-lsb-decrease") {
+      const v = g.lsb + (id === "text-lsb-increase" ? step : -step);
+      run(async () => (await backend.setMetric(g.name, masterId, "lsb", v)).status, "spaced");
+      return showFlash(t("{glyph} LSB: {value}", { glyph: g.name, value: v }));
+    }
+    if (id === "text-rsb-increase" || id === "text-rsb-decrease") {
+      const v = g.rsb + (id === "text-rsb-increase" ? step : -step);
+      run(async () => (await backend.setMetric(g.name, masterId, "rsb", v)).status, "spaced");
+      return showFlash(t("{glyph} RSB: {value}", { glyph: g.name, value: v }));
+    }
+    if (id === "text-shift-right" || id === "text-shift-left") {
+      const dx = id === "text-shift-right" ? step : -step;
+      run(async () => (await backend.setMetric(g.name, masterId, "shift", dx)).status, "spaced");
+      return showFlash(t("{glyph} LSB: {lsb} · RSB: {rsb}", { glyph: g.name, lsb: g.lsb + dx, rsb: g.rsb - dx }));
+    }
+  };
+
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
-      // Ctrl+Alt+Shift+←/→/↓ sets the writing direction, also while typing.
-      if (e.ctrlKey && e.altKey && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowDown")) {
-        setDirection(e.key === "ArrowLeft" ? "ltr" : e.key === "ArrowRight" ? "rtl" : "vertical");
+      const hit = findTextShortcut(e, latest.current.shortcuts);
+      // The writing direction can be set also while typing.
+      if (hit && (hit.id === "text-ltr" || hit.id === "text-rtl" || hit.id === "text-vertical")) {
+        setDirection(hit.id === "text-ltr" ? "ltr" : hit.id === "text-rtl" ? "rtl" : "vertical");
         e.preventDefault();
         return;
       }
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
       if (latest.current.shapeOn) return;
       const { layout, cursor, direction: dir } = latest.current;
       if (!layout) return;
       const line = layout.lines[cursor.line] ?? [];
-      if (e.altKey && !e.ctrlKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
-        const left = line[cursor.pos - 1], right = line[cursor.pos];
-        // Kerning is horizontal; in right-to-left text the next glyph is on the left.
-        // With the kerning preview off, the kerning shortcuts are off too.
-        if (dir !== "vertical" && !latest.current.kernOff && left?.type === "glyph" && right?.type === "glyph") {
-          const step = (e.shiftKey ? 1 : 10) * (e.key === "ArrowLeft" ? -1 : 1) * (dir === "rtl" ? -1 : 1);
-          kern(left, right, (v) => v + step);
-        }
+      if (hit) {
         e.preventDefault();
+        textAction.current(hit.id, hit.step, line, cursor, dir);
         return;
       }
       if (e.ctrlKey || e.altKey) return;
@@ -437,7 +502,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, kern]);
+  }, [active]);
 
   // ---------- Render ----------
 
@@ -464,7 +529,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
         <span className="toolbar-sep" />
         <div className="segmented dir-seg" role="radiogroup" aria-label={t("Writing direction")}>
           {DIRECTIONS.map((d) => (
-            <button key={d.id} role="radio" aria-checked={direction === d.id} aria-label={t(d.label)} title={t(d.title)} className={`segment${direction === d.id ? " is-selected" : ""}`} onClick={() => setDirection(d.id)}>
+            <button key={d.id} role="radio" aria-checked={direction === d.id} aria-label={t(d.label)} title={`${t(d.title)} (${keysOf(d.shortcut)})`} className={`segment${direction === d.id ? " is-selected" : ""}`} onClick={() => setDirection(d.id)}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d.icon} /></svg>
             </button>
           ))}
@@ -721,8 +786,9 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
           </div>
         )}
       </section>
-      <footer className="statusbar k-caption text-status" title={t("Click to place the cursor · arrow keys move · Alt+←/→ kerns ±10 (Alt+Shift ±1) · Ctrl+Alt+Shift+←/→/↓ sets the writing direction · double-click a glyph to edit it")}>
-        <span>{shapeOn ? t("Feature preview · spacing edits are paused: turn off Shape preview to edit") : previewing ? t("Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit")
+      <footer className="statusbar k-caption text-status" title={t("Click to place the cursor · arrow keys move · {kern} kerns · {rsb} and {lsb} space (Shift for 10) · double-click a glyph to edit it · Settings › Shortcuts lists all keys", {
+        kern: `${keysOf("text-kern-decrease")} / ${keysOf("text-kern-increase")}`, rsb: `${keysOf("text-rsb-decrease")} / ${keysOf("text-rsb-increase")}`, lsb: `${keysOf("text-lsb-increase")} / ${keysOf("text-lsb-decrease")}` })}>
+        <span role="status">{flash ? flash : shapeOn ? t("Feature preview · spacing edits are paused: turn off Shape preview to edit") : previewing ? t("Previewing an interpolated location · spacing edits are paused: choose “Current master” to edit")
           : before?.type === "glyph" && after?.type === "glyph" ? t("Text mode · cursor between {left} | {right}", { left: before.name, right: after.name }) : t("Text mode")}</span>
         <span className="spacer" />
         {!shapeOn && !previewing && !vertical && kernOff && <span>{t("Kerning preview off · kerning shortcuts are off")}</span>}
