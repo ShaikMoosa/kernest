@@ -1,33 +1,63 @@
 <p align="center">
-  <img src="docs/images/logo.svg" alt="Kernest logo: a purple falcon" width="140">
+  <img src="docs/images/logo.svg" alt="Kernest logo: a purple falcon" width="120">
 </p>
 
 <h1 align="center">Kernest</h1>
 
 <p align="center">
-  An open-source font editor for Windows. Draw glyphs, space and kern, interpolate masters and export TTF, OTF, WOFF2 and variable fonts (TrueType and CFF2) — offline, no account.
+  <b>An open-source font editor for Windows.</b><br>
+  Draw glyphs, space and kern, interpolate masters and export TTF, OTF, WOFF2 and variable fonts. Offline, no account.
 </p>
 
 <p align="center">
-  <a href="https://github.com/ShaikMoosa/kernest/releases">Download</a> ·
+  <a href="https://github.com/ShaikMoosa/kernest/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ShaikMoosa/kernest?label=release&color=6D4AFF"></a>
+  <img alt="Platform: Windows 10 and 11, x64 and ARM64" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4">
+  <a href="LICENSE"><img alt="Licence: Apache 2.0" src="https://img.shields.io/badge/licence-Apache%202.0-blue"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/ShaikMoosa/kernest/releases/latest"><b>Download</b></a> ·
   <a href="docs/HANDBOOK.md">Handbook</a> ·
+  <a href="docs/PYTHON_API.md">Python API</a> ·
   <a href="#roadmap">Roadmap</a>
 </p>
 
-![Font View: every glyph of the font in a grid, with categories and the selected glyph's metrics](docs/images/font-view.png)
+<p align="center">
+  <img src="docs/images/font-view.png" alt="Kernest Font View: every glyph of the font in a grid, with categories on the left and the selected glyph's metrics below" width="900">
+</p>
 
-> **Status: 1.0.** You can create a font from glyph sets, browse, add and remove glyphs in Font View, draw and edit glyphs in Edit View (pen, rectangle, ellipse, point editing, components, copy/paste, sidebearings and metrics keys, path clean-up, intermediate and alternate layers, smart components, undo/redo), space and kern in text tabs and the kerning window (with kerning groups and exceptions), set up axes, masters and instances in Font Info with live interpolation previews and compatibility checks, export variable and static fonts as TTF, OTF and WOFF2 (with overlap removal), import Glyphs (`.glyphs`, `.glyphspackage`), UFO and designspace sources, and save/open `.kernest` fonts.
+## Features
 
-See the [Handbook](docs/HANDBOOK.md) for how to use Kernest.
+- **Draw:** pen, rectangle, ellipse, knife, lasso and point editing; components, smart components and corner/cap components; anchors and composites from recipes; guides, background layer, transform panel and measure tool; path filters such as Round Corners, Offset Curve and Remove Overlap.
+- **Space and kern:** text tabs, the kerning window, kerning groups and exceptions, metrics keys, right-to-left and vertical text.
+- **Design families:** axes, masters and instances with live interpolation previews, brace and bracket layers, avar and STAT, compatibility checks and one-click fixes for interpolation problems.
+- **Export:** static and variable fonts as TTF, OTF (CFF and CFF2) and WOFF2, colour fonts (COLRv1, sbix, SVG), TrueType autohinting and PostScript hints, generated OpenType features with a features editor.
+- **Open your sources:** import Glyphs (`.glyphs`, `.glyphspackage`), UFO, designspace and compiled fonts; export UFO and save as `.glyphs`.
+- **Automate:** Python scripting, filter and reporter plug-ins, and a command line.
+- **Made for Windows:** dark theme, ARM64 builds, Explorer integration, and an interface in English, Spanish and Arabic.
+
+See the [Handbook](docs/HANDBOOK.md) for how to use each feature.
 
 ## Screenshots
 
-| | |
-|---|---|
-| ![Edit View: drawing the letter O, with on-curve points, handles and metric lines](docs/images/edit-view.png) | ![Text tab: sample text set in the font, with metric lines for spacing and kerning](docs/images/text-view.png) |
-| **Edit View:** draw and edit outlines, components, sidebearings and metrics keys, intermediate and alternate layers. | **Text tabs:** set sample text to space and kern, with kerning groups and exceptions. |
-| ![Font Info: the Weight axis, Regular and Bold masters with their metrics, and instances](docs/images/font-info.png) | ![Export dialog: variable and static fonts as TTF, OTF and WOFF2, with overlap removal and metrics keys](docs/images/export.png) |
-| **Font Info:** axes, masters and instances, with live interpolation previews. | **Export:** variable and static fonts as TTF, OTF (CFF/CFF2) and WOFF2. |
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/edit-view.png" alt="Edit View: drawing the letter O, with on-curve points, handles and metric lines"></td>
+    <td width="50%"><img src="docs/images/text-view.png" alt="Text tab: sample text set in the font, with metric lines for spacing and kerning"></td>
+  </tr>
+  <tr>
+    <td><b>Edit View:</b> draw and edit outlines, components, sidebearings and metrics keys, intermediate and alternate layers.</td>
+    <td><b>Text tabs:</b> set sample text to space and kern, with kerning groups and exceptions.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/font-info.png" alt="Font Info: the Weight axis, Regular and Bold masters with their metrics, and instances"></td>
+    <td><img src="docs/images/export.png" alt="Export dialog: variable and static fonts as TTF, OTF and WOFF2, with overlap removal and metrics keys"></td>
+  </tr>
+  <tr>
+    <td><b>Font Info:</b> axes, masters and instances, with live interpolation previews.</td>
+    <td><b>Export:</b> variable and static fonts as TTF, OTF (CFF/CFF2) and WOFF2.</td>
+  </tr>
+</table>
 
 ## Install
 
@@ -80,7 +110,12 @@ Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens liv
 
 ## Roadmap
 
-### v1: the core editor (done)
+Kernest is at **2.15**. The 1.0 core editor and every planned phase after it have shipped; work now follows smaller tickets, one release at a time. Still unscheduled: manual TrueType instructions.
+
+<details>
+<summary>Release history by milestone</summary>
+
+#### v1: the core editor (done)
 
 | # | Milestone | Status |
 |---|---|---|
@@ -91,7 +126,7 @@ Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens liv
 | 5 | Export TTF and variable fonts (via [fontc](https://github.com/googlefonts/fontc)) | ✅ v0.5 |
 | 6 | Import `.glyphs`, `.glyphspackage`, UFO and designspace | ✅ v0.6 |
 
-### 1.0: ready for real fonts (done)
+#### 1.0: ready for real fonts (done)
 
 | Milestone | Status |
 |---|---|
@@ -107,7 +142,7 @@ Wireframes, the design system (built on SegmentUI Kit 3.0) and hi-fi screens liv
 
 Kernest 1.0 is complete: every milestone above has shipped.
 
-### After 1.0
+#### After 1.0
 
 | Milestone | Status |
 |---|---|
@@ -121,7 +156,7 @@ Kernest 1.0 is complete: every milestone above has shipped.
 | Path tools and filters: knife, open corners, reconnect and tidy up paths, Round Corners / Offset Curve / Transformations, lock and focus | ✅ v1.8 |
 | Python scripting and plug-ins: out-of-process runner, Script menu and macro panel, filter and reporter plug-ins, Settings window | ✅ v2.0 |
 
-### Next: one release per phase
+#### Next: one release per phase
 
 The rest of the plan, in order. Each phase is built, tested, checked in the app, translated into Spanish and Arabic, then released.
 
@@ -139,7 +174,7 @@ The rest of the plan, in order. Each phase is built, tested, checked in the app,
 | 10 | 2.4 | Alignment zones and stems per master, PostScript hints in OTF exports (blue controls, automatic and manual glyph hints), TrueType control instructions, hinted vs unhinted pixel preview | ✅ v2.4 |
 | 11 | 2.5 | Welcome screen, new font wizard, guided tour, font quality check, command line | ✅ v2.5 |
 
-### After the roadmap
+#### After the roadmap
 
 | Release | What it adds | Status |
 |---|---|---|
@@ -150,9 +185,14 @@ The rest of the plan, in order. Each phase is built, tested, checked in the app,
 | 2.10 | sbix bitmaps and SVG colour layers (S63); feature-code tokens and conditions (S64) | ✅ v2.12 |
 | 2.11 | Test install, quick export destinations and web preview (S65); Explorer icon, tooltip and right-click actions, and update notice with Download & install (S70) | ✅ v2.12 |
 | 2.12 | Kerning compress and clean-up (S56); remaining menu items (S46, S47) | ✅ v2.12 |
+| 2.13 | Screens matched to the hi-fi designs: start window, wizard, font, edit, text and kerning views | ✅ v2.13 |
+| 2.14 | Export fixes, Arabic and Syriac positional features, Disable Masters, feature-code tokens that compile | ✅ v2.14 |
+| 2.15 | Path tools (lasso, G2 nodes and Harmonize, align and distribute, Union/Subtract/Intersect, magnetic snapping), right-to-left and vertical text, vertical metrics | ✅ v2.15 |
 
-Screen numbers refer to the [Figma design board](https://www.figma.com/design/bTAtzDRACL76IlFIgHefpF/Kernest?node-id=58-6432). Still unscheduled: manual TrueType instructions.
+Screen numbers refer to the [Figma design board](https://www.figma.com/design/bTAtzDRACL76IlFIgHefpF/Kernest?node-id=58-6432).
+
+</details>
 
 ## Licence
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).
