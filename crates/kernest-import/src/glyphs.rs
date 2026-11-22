@@ -735,6 +735,22 @@ fn read_extras(
         if let Some(dir) = d.get("direction").and_then(|v| v.as_str()) {
             g.direction = kernest_core::WritingDirection::parse(dir);
         }
+        // Properties the source sets itself (glyphs-reader fills in glyph data too, so
+        // read them from the file to tell overrides apart). Bad values are skipped.
+        for key in kernest_core::glyphprops::PROPERTIES {
+            let Some(v) = d.get(key).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if let Ok(Some(v)) = kernest_core::glyphprops::normalize(key, v) {
+                match *key {
+                    "category" => g.category_override = Some(v),
+                    "subCategory" => g.subcategory_override = Some(v),
+                    "case" => g.case_override = Some(v),
+                    "script" => g.script_override = Some(v),
+                    _ => g.sort_name = Some(v),
+                }
+            }
+        }
         for ld in d.get("layers").and_then(|l| l.as_array()).unwrap_or(&[]) {
             let lid = ld.get("layerId").and_then(|i| i.as_str()).unwrap_or("");
             // sbix ("iColor 128") and SVG layers carry a picture, not an outline.

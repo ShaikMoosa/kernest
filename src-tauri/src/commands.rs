@@ -113,8 +113,20 @@ pub struct GlyphSummary {
     unicodes: Vec<String>,
     character: Option<String>,
     category: &'static str,
-    subcategory: &'static str,
-    script: &'static str,
+    subcategory: String,
+    script: String,
+    /// The glyph's own category, subcategory, case, script and sort name, where set
+    /// (absent: taken from glyph data). Glyphs' terms, as stored.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subcategory_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    case_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    script_override: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sort_name: Option<String>,
     export: bool,
     width: f64,
     lsb: Option<f64>,
@@ -434,11 +446,13 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
                 unicodes: g.unicodes.iter().map(|c| c.to_string()).collect(),
                 character: cp.and_then(|c| c.char()).map(String::from),
                 category: g.category().label(),
-                subcategory: kernest_core::glyphdata::subcategory(
-                    g.unicodes.first().map(|c| c.0),
-                    &g.name,
-                ),
-                script: kernest_core::glyphdata::script_of(g),
+                subcategory: g.subcategory(),
+                script: g.script(),
+                category_override: g.category_override.clone(),
+                subcategory_override: g.subcategory_override.clone(),
+                case_override: g.case_override.clone(),
+                script_override: g.script_override.clone(),
+                sort_name: g.sort_name.clone(),
                 export: g.export,
                 width: layer.map_or(0.0, |l| l.width),
                 lsb: sb.map(|s| s.0),

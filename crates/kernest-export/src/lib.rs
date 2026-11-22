@@ -4267,6 +4267,52 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn glyph_property_overrides_reach_gdef_and_post() {
+        // SMO-54: category and subcategory overrides set the GDEF class; a custom
+        // production name is the name in the post table.
+        let f = with_anchor_marks(sample_font());
+        let mark = f
+            .glyphs
+            .iter()
+            .find(|g| g.unicodes.first().map(|c| c.0) == Some(0x301))
+            .unwrap()
+            .name
+            .clone();
+        let f =
+            kernest_core::glyphprops::set(&f, std::slice::from_ref(&mark), "category", "Symbol")
+                .unwrap();
+        let mut f =
+            kernest_core::glyphprops::set(&f, &["a".into()], "subCategory", "Ligature").unwrap();
+        f.glyph_mut("b").unwrap().production_name = Some("uni0062.test".into());
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(false, true, out.path());
+        opts.production_names = true;
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let classes = font.gdef().unwrap().glyph_class_def().unwrap().unwrap();
+        let cmap = font.cmap().unwrap();
+        assert_ne!(
+            classes.get(cmap.map_codepoint(0x301u32).unwrap()),
+            3,
+            "no longer a mark"
+        );
+        assert_eq!(
+            classes.get(cmap.map_codepoint('a').unwrap()),
+            2,
+            "a ligature"
+        );
+        let b = cmap.map_codepoint('b').unwrap();
+        assert_eq!(
+            font.post()
+                .unwrap()
+                .glyph_name(write_fonts::types::GlyphId16::new(b.to_u32() as u16)),
+            Some("uni0062.test")
+        );
+    }
+
+    #[test]
     fn anchors_export_mark_and_mkmk_positioning() {
         use write_fonts::read::tables::gpos::PositionLookup;
         let f = with_anchor_marks(sample_font());

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, errorMessage, type FontView, type GlyphFilter, type GlyphSummary, type LanguageCoverage, type MissingGlyph } from "../lib/backend";
+import { GlyphPropertiesFields } from "./GlyphPropertiesFields";
+import { backend, errorMessage, type FontView, type GlyphFilter, type GlyphProperty, type GlyphSummary, type LanguageCoverage, type MissingGlyph } from "../lib/backend";
 import { SearchIcon } from "./Icons";
 import { t, tn } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
@@ -105,7 +106,7 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen, drag, dragging, dr
 }
 
 /** S03 · Font View — grid of glyphs with category sidebar and glyph info. */
-export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetUnicodes, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing, onAddNamed, onSetDirection, onSetVertical }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetUnicodes?: (glyph: string, text: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void>; onAddNamed?: (name: string) => void; onSetDirection?: (glyph: string, direction: string) => Promise<void>; onSetVertical?: (glyph: string, which: "advance" | "tsb" | "bsb" | "reset", value: number | null) => Promise<void> }) {
+export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetUnicodes, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing, onAddNamed, onSetDirection, onSetVertical, onSetGlyphProperty }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetUnicodes?: (glyph: string, text: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void>; onAddNamed?: (name: string) => void; onSetDirection?: (glyph: string, direction: string) => Promise<void>; onSetVertical?: (glyph: string, which: "advance" | "tsb" | "bsb" | "reset", value: number | null) => Promise<void>; onSetGlyphProperty?: (names: string[], property: GlyphProperty, value: string) => Promise<void> }) {
   const [category, setCategory] = useState<string>("All");
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -461,6 +462,7 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
           <span className="k-caption">{selectedGlyphs.length > 1 ? t("Export these glyphs") : t("Export this glyph")}</span>
         </label>
       )}
+      {selectedGlyphs.length > 0 && onSetGlyphProperty && <GlyphPropertiesFields glyphs={selectedGlyphs} onSet={onSetGlyphProperty} />}
     </section>
   );
 

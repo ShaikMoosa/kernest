@@ -26,6 +26,7 @@ pub mod featuretokens;
 pub mod filters;
 pub mod geometry;
 pub mod glyphdata;
+pub mod glyphprops;
 pub mod glyphset;
 pub mod harmonize;
 pub mod hinting;

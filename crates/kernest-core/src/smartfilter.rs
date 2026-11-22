@@ -9,7 +9,6 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::glyphdata::{self, script_of};
 use crate::interpolate::check_glyph;
 use crate::model::{Font, Glyph, Shape};
 
@@ -202,11 +201,9 @@ impl<'a> Context<'a> {
     fn rule(&self, g: &Glyph, rule: &Rule) -> bool {
         match rule {
             Rule::Category { value } => g.category().label() == value,
-            Rule::Subcategory { value } => {
-                glyphdata::subcategory(g.unicodes.first().map(|c| c.0), &g.name) == value
-            }
+            Rule::Subcategory { value } => g.subcategory() == *value,
             Rule::Case { value } => g.category().label() == value,
-            Rule::Script { value } => script_of(g) == value,
+            Rule::Script { value } => g.script() == *value,
             Rule::HasComponents { value } => {
                 g.layers.iter().any(|l| {
                     l.shapes

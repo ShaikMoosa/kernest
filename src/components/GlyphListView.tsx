@@ -48,7 +48,8 @@ function sortValue(g: GlyphSummary, key: ColumnKey): string | number {
     case "unicode": return g.unicode ?? "";
     case "leftGroup": return g.leftGroup ?? "";
     case "rightGroup": return g.rightGroup ?? "";
-    case "glyph": return g.name;
+    case "glyph": return g.sortName ?? g.name;
+    case "name": return g.sortName ?? g.name;
     default: return g[key];
   }
 }

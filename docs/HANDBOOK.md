@@ -97,6 +97,12 @@ The **Font** tab shows every glyph as a cell. Switch between **Grid** and **List
 - **Writing direction** (Glyph Properties) sets a glyph as left to right, right to left or both; **Automatic** takes it from the glyph's script.
 - **Vertical metrics** (Glyph Properties) are for vertical typesetting, as in CJK text: **TSB** and **BSB** are the space above and below the drawing, and **Height** is the vertical advance. Changing TSB moves the vertical origin and keeps BSB; changing BSB changes the height. Until a glyph has its own values, it uses the master's typo ascender as its top and typo ascender − typo descender as its height (**Use the default vertical metrics** goes back to those). Once any glyph has vertical metrics, exported fonts get vhea and vmtx tables (VVAR in variable fonts) and OTF files a VORG table. Glyphs files keep them as `vertWidth` and `vertOrigin`, and the vhea values as the vheaVert… parameters. Feature code can use them as `${H:TSB}` and `${H:BSB}`.
 - **Production name** (info box) is the name the glyph gets in compiled fonts when you tick **Use production names** in the Export dialog; the working name stays as it is. UFO sources always carry the mapping.
+- **Category, Case, Subcategory and Script** (Glyph Properties) are worked out from each glyph's Unicode value and name. Set one to give a glyph your own value, for one glyph or for every selected one at once; **Automatic** goes back to the worked-out value.
+  - The values steer Font View's categories and filters, feature code (`${name:category}` and friends) and the automatic features.
+  - They also set export's GDEF classes: a glyph with the category **Mark** is a mark, and one with the subcategory **Ligature** is a ligature.
+  - **Case** splits letters into upper and lower case; small caps, minor and other count as letters without case.
+- **Sort name** (Glyph Properties) is the name the list view sorts the Name column by, for example to keep `f_i` next to `f`.
+- Glyphs files keep these as `category`, `subCategory`, `case`, `script` and `sortName`, and UFOs in the glyph lib under the keys glyphsLib uses. A font with any of them saves at format version 20.
 
 ### Rename and batch commands
 

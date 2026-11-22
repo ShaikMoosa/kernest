@@ -444,6 +444,20 @@ impl Default for Metrics {
     }
 }
 
+/// The categories a glyph can be given (Glyphs' names).
+pub const GLYPH_CATEGORIES: &[&str] = &[
+    "Letter",
+    "Number",
+    "Punctuation",
+    "Symbol",
+    "Separator",
+    "Mark",
+    "Other",
+];
+
+/// The cases a glyph can be given (Glyphs' names).
+pub const GLYPH_CASES: &[&str] = &["noCase", "upper", "lower", "smallCaps", "minor", "other"];
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Glyph {
@@ -466,6 +480,26 @@ pub struct Glyph {
     /// Writing direction set for this glyph; `None` takes it from glyph data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direction: Option<WritingDirection>,
+    /// Glyph property overrides (SMO-54), in Glyphs' terms; `None` takes the value from
+    /// glyph data. Category: one of [`GLYPH_CATEGORIES`].
+    #[serde(default, rename = "category", skip_serializing_if = "Option::is_none")]
+    pub category_override: Option<String>,
+    /// Subcategory such as Nonspacing, Ligature or Fraction.
+    #[serde(
+        default,
+        rename = "subCategory",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subcategory_override: Option<String>,
+    /// Case: one of [`GLYPH_CASES`].
+    #[serde(default, rename = "case", skip_serializing_if = "Option::is_none")]
+    pub case_override: Option<String>,
+    /// Script in Glyphs' lowercase form, such as `latin` or `arabic`.
+    #[serde(default, rename = "script", skip_serializing_if = "Option::is_none")]
+    pub script_override: Option<String>,
+    /// The name glyphs sort by in Font View instead of their own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort_name: Option<String>,
     /// A locked glyph refuses every edit until it is unlocked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locked: bool,
@@ -563,6 +597,11 @@ impl Glyph {
             note: None,
             production_name: None,
             direction: None,
+            category_override: None,
+            subcategory_override: None,
+            case_override: None,
+            script_override: None,
+            sort_name: None,
             locked: false,
             smart_axes: Vec::new(),
             layers: Vec::new(),
@@ -620,11 +659,61 @@ impl Glyph {
             .expect("an unused id")
     }
 
-    /// Category derived from the first code point (or the name suffix for unencoded glyphs).
-    pub fn category(&self) -> Category {
+    /// The category from glyph data: the first code point, or the name for unencoded
+    /// glyphs. [`Glyph::category`] applies the overrides on top.
+    pub fn auto_category(&self) -> Category {
         match self.unicodes.first() {
             Some(cp) => glyphdata::category(cp.0),
             None => glyphdata::category_for_name(&self.name),
+        }
+    }
+
+    /// The glyph's category: the category and case overrides if set, else glyph data.
+    /// Letters split into Uppercase, Lowercase and other Letter by their case.
+    pub fn category(&self) -> Category {
+        let auto = self.auto_category();
+        let base = match self.category_override.as_deref() {
+            Some("Mark") => Category::Mark,
+            Some("Number") => Category::Number,
+            Some("Punctuation") => Category::Punctuation,
+            Some("Symbol") => Category::Symbol,
+            Some("Separator") => Category::Separator,
+            Some("Other") => Category::Other,
+            Some("Letter") if !auto.is_letter() => Category::Letter,
+            _ => auto,
+        };
+        if !base.is_letter() {
+            return base;
+        }
+        match self.case_override.as_deref() {
+            Some("upper") => Category::Uppercase,
+            Some("lower") => Category::Lowercase,
+            Some(_) => Category::Letter,
+            None => base,
+        }
+    }
+
+    /// The subcategory: the override if set, else glyph data (empty when none).
+    pub fn subcategory(&self) -> String {
+        match &self.subcategory_override {
+            Some(s) => s.clone(),
+            None => {
+                glyphdata::subcategory(self.unicodes.first().map(|c| c.0), &self.name).to_string()
+            }
+        }
+    }
+
+    /// The script as Font View shows it ("Latin", "Arabic"): the override if set, else
+    /// glyph data.
+    pub fn script(&self) -> String {
+        match &self.script_override {
+            Some(s) => {
+                let mut c = s.chars();
+                c.next()
+                    .map(|f| f.to_uppercase().chain(c).collect())
+                    .unwrap_or_default()
+            }
+            None => glyphdata::script_of(self).to_string(),
         }
     }
 }

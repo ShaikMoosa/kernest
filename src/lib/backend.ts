@@ -53,6 +53,12 @@ export interface GlyphSummary {
   tags: string[];
   /** The name this glyph exports under when production names are used. */
   productionName?: string;
+  /** Overrides set on the glyph itself (Glyphs' terms); absent means glyph data. */
+  categoryOverride?: string;
+  subcategoryOverride?: string;
+  caseOverride?: string;
+  scriptOverride?: string;
+  sortName?: string;
   /** Writing direction set on the glyph; absent means automatic (from glyph data). */
   direction?: "LTR" | "RTL" | "BIDI";
   /** Vertical metrics in this master: advance, origin and sidebearings. */
@@ -1143,6 +1149,8 @@ export interface Backend {
   setGlyphUnicodes(glyph: string, unicodes: string, take: boolean): Promise<DocStatus>;
   /** Sets a glyph's production name (empty clears it). One undoable step. */
   setProductionName(glyph: string, name: string): Promise<DocStatus>;
+  /** Sets category, subCategory, case, script or sortName on glyphs; "" is automatic. */
+  setGlyphProperty(glyphs: string[], property: GlyphProperty, value: string): Promise<DocStatus>;
   setWritingDirection(glyph: string, direction: string): Promise<DocStatus>;
   setVerticalMetric(glyph: string, masterId: string, which: "advance" | "tsb" | "bsb" | "reset", value: number | null): Promise<DocStatus>;
   /** Replaces the saved smart and list filters. One undoable step. */
@@ -1269,6 +1277,8 @@ export interface ClipGlyph {
 }
 
 export type AlignOp = "left" | "h-center" | "right" | "top" | "v-center" | "bottom" | "distribute-h" | "distribute-v" | "points";
+
+export type GlyphProperty = "category" | "subCategory" | "case" | "script" | "sortName";
 
 export type PathEditOperation =
   | "knife"
@@ -1627,6 +1637,7 @@ const tauriBackend: Backend = {
   setGlyphTags: (glyph, tags) => invoke("set_glyph_tags", { glyph, tags }),
   setGlyphUnicodes: (glyph, unicodes, take) => invoke("set_glyph_unicodes", { glyph, unicodes, take }),
   setProductionName: (glyph, name) => invoke("set_production_name", { glyph, name }),
+  setGlyphProperty: (glyphs, property, value) => invoke("set_glyph_property", { glyphs, property, value }),
   setWritingDirection: (glyph, direction) => invoke("set_writing_direction", { glyph, direction }),
   setVerticalMetric: (glyph, masterId, which, value) => invoke("set_vertical_metric", { glyph, masterId, which, value }),
   setFilters: (filters) => invoke("set_filters", { filters }),
@@ -2395,6 +2406,9 @@ const mockBackend: Backend = {
   },
   async setVerticalMetric() {
     throw "Vertical metrics need the desktop app (npm run tauri dev).";
+  },
+  async setGlyphProperty() {
+    throw "Glyph properties need the desktop app (npm run tauri dev).";
   },
   async setProductionName() {
     throw "Production names need the desktop app (npm run tauri dev).";

@@ -20,6 +20,14 @@ pub enum Category {
 }
 
 impl Category {
+    /// Letters of any case.
+    pub fn is_letter(self) -> bool {
+        matches!(
+            self,
+            Category::Uppercase | Category::Lowercase | Category::Letter
+        )
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Category::Uppercase => "Uppercase",
