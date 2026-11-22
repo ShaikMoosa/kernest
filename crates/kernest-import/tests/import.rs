@@ -2613,3 +2613,55 @@ fn glyph_property_overrides_round_trip() {
     // Glyphs without overrides stay automatic.
     assert!(back.glyph("b").unwrap().category_override.is_none());
 }
+
+/// SMO-52: colour labels on glyphs and layers survive .kernest (format 21) and .glyphs.
+#[test]
+fn colour_labels_round_trip() {
+    use kernest_core::ColorLabel;
+    let mut f = sample_font();
+    f = kernest_core::glyphprops::set_color_label(
+        &f,
+        &["a".into(), "b".into()],
+        None,
+        Some(ColorLabel::Index(4)),
+    )
+    .unwrap();
+    let master = f.masters[0].id.clone();
+    f = kernest_core::glyphprops::set_color_label(
+        &f,
+        &["a".into()],
+        Some(&master),
+        Some(ColorLabel::Rgba([10, 20, 30, 255])),
+    )
+    .unwrap();
+    let check = |g: &kernest_core::Font| {
+        let a = g.glyph("a").unwrap();
+        assert_eq!(a.color_label, Some(ColorLabel::Index(4)));
+        assert_eq!(
+            a.layer(&master).unwrap().color_label,
+            Some(ColorLabel::Rgba([10, 20, 30, 255]))
+        );
+        assert_eq!(
+            g.glyph("b").unwrap().color_label,
+            Some(ColorLabel::Index(4))
+        );
+        assert_eq!(g.glyph("c").unwrap().color_label, None);
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let pkg = dir.path().join("Labels.kernest");
+    kernest_core::package::save(&f, &pkg).unwrap();
+    assert!(
+        fs::read_to_string(pkg.join("font.json"))
+            .unwrap()
+            .contains("21"),
+        "format 21"
+    );
+    check(&kernest_core::package::open(&pkg).unwrap());
+
+    let glyphs = dir.path().join("Labels.glyphs");
+    kernest_import::write_glyphs(&f, &glyphs).unwrap();
+    let text = fs::read_to_string(&glyphs).unwrap();
+    assert!(text.contains("color = 4;"));
+    assert!(text.contains("color = (10,20,30,255);"));
+    check(&import(&glyphs).unwrap().font);
+}

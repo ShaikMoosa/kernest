@@ -550,6 +550,22 @@ fn build(
             g.export = !skip.contains(n);
             g.note = src.note.clone().filter(|s| !s.is_empty());
             g.production_name = ps_names.get(n).cloned();
+            // UFO's mark colour ("r,g,b,a", 0–1) is the glyph's colour label.
+            if let Some(mark) = src.lib.get("public.markColor").and_then(|v| v.as_string()) {
+                let parts: Vec<f64> = mark
+                    .split(',')
+                    .filter_map(|p| p.trim().parse().ok())
+                    .collect();
+                if let [r, gr, b, a] = parts[..] {
+                    let byte = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+                    g.color_label = Some(kernest_core::ColorLabel::from_rgba([
+                        byte(r),
+                        byte(gr),
+                        byte(b),
+                        byte(a),
+                    ]));
+                }
+            }
             // Property overrides glyphsLib (and Kernest) keep in the glyph lib.
             for key in ["category", "subCategory", "case", "script"] {
                 if let Some(v) = src

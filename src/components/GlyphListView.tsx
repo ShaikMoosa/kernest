@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { labelCss, labelName } from "../lib/colorLabels";
 import type { GlyphSummary } from "../lib/backend";
 import { t } from "../lib/i18n";
 
@@ -15,11 +16,12 @@ export type DragHandlers = React.HTMLAttributes<HTMLElement>;
 
 type ColumnKey =
   | "glyph" | "name" | "script" | "unicode" | "category" | "subcategory" | "lsb" | "rsb" | "width"
-  | "leftGroup" | "rightGroup" | "export" | "tags";
+  | "leftGroup" | "rightGroup" | "export" | "tags" | "colorLabel";
 
 const COLUMNS: { key: ColumnKey; label: string; w: string; edit?: "number" | "text" | "tags" | "name" | "unicodes" }[] = [
   { key: "glyph", label: "Glyph", w: "52px" },
   { key: "name", label: "Name", w: "150px", edit: "name" },
+  { key: "colorLabel", label: "Colour", w: "56px" },
   { key: "unicode", label: "Unicode", w: "90px", edit: "unicodes" },
   { key: "category", label: "Category", w: "96px" },
   { key: "subcategory", label: "Subcategory", w: "96px" },
@@ -44,6 +46,7 @@ function sortValue(g: GlyphSummary, key: ColumnKey): string | number {
     case "rsb": return g.rsb ?? Number.MAX_SAFE_INTEGER;
     case "width": return g.width;
     case "export": return g.export ? 1 : 0;
+    case "colorLabel": return g.colorLabel === undefined ? 99 : typeof g.colorLabel === "number" ? g.colorLabel : 50;
     case "tags": return g.tags.join(", ");
     case "unicode": return g.unicode ?? "";
     case "leftGroup": return g.leftGroup ?? "";
@@ -239,6 +242,11 @@ export function GlyphListView({ glyphs, metrics, selection, onSelect, onOpen, on
                       />
                     ) : c.key === "glyph" ? (
                       <ListGlyph glyph={g} metrics={metrics} />
+                    ) : c.key === "colorLabel" ? (
+                      <span className="list-color-labels">
+                        {g.colorLabel !== undefined && <span className="color-swatch" style={{ background: labelCss(g.colorLabel) }} title={t(labelName(g.colorLabel))} role="img" aria-label={t(labelName(g.colorLabel))} />}
+                        {g.layerColorLabel !== undefined && <span className="color-swatch is-layer" style={{ background: labelCss(g.layerColorLabel) }} title={t("layer: {colour}", { colour: t(labelName(g.layerColorLabel)) })} role="img" aria-label={t("layer: {colour}", { colour: t(labelName(g.layerColorLabel)) })} />}
+                      </span>
                     ) : c.key === "export" ? (
                       <input
                         type="checkbox"

@@ -434,6 +434,7 @@ mod tests {
             width: 500.0,
             vert_width: None,
             vert_origin: None,
+            color_label: None,
             shapes: vec![rect(0.0, 0.0, 10.0, 10.0)],
             anchors: Vec::new(),
             metrics_keys: Default::default(),

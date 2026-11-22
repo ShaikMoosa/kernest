@@ -85,6 +85,39 @@ pub fn set(font: &Font, glyphs: &[String], property: &str, value: &str) -> Resul
     Ok(next)
 }
 
+/// `font` with the colour label of every glyph in `glyphs` set (`None` clears it).
+/// With `layer` (a master id or layer key), the glyphs' layer there gets the label
+/// instead of the glyph.
+pub fn set_color_label(
+    font: &Font,
+    glyphs: &[String],
+    layer: Option<&str>,
+    label: Option<crate::model::ColorLabel>,
+) -> Result<Font, String> {
+    if label.is_some_and(|l| !l.is_valid()) {
+        return Err("Colour labels are numbered 0 to 11.".into());
+    }
+    if glyphs.is_empty() {
+        return Err("Select glyphs first.".into());
+    }
+    let mut next = font.clone();
+    for name in glyphs {
+        let g = next
+            .glyph_mut(name)
+            .ok_or_else(|| format!("There is no glyph named \"{name}\"."))?;
+        match layer {
+            None => g.color_label = label,
+            Some(key) => {
+                let l = g
+                    .layer_mut(key)
+                    .ok_or_else(|| format!("\"{name}\" has no layer \"{key}\"."))?;
+                l.color_label = label;
+            }
+        }
+    }
+    Ok(next)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +162,59 @@ mod tests {
         assert_eq!(f.glyph("A").unwrap().script(), "Latin");
         let f = set(&f, &["f_i".into()], "sortName", "f.lig").unwrap();
         assert_eq!(f.glyph("f_i").unwrap().sort_name.as_deref(), Some("f.lig"));
+    }
+
+    #[test]
+    fn colour_labels_on_glyphs_and_layers() {
+        use crate::model::{ColorLabel, Layer};
+        let mut f = font();
+        for g in &mut f.glyphs {
+            g.layers = vec![Layer::new("m01", 500.0)];
+        }
+        let names = ["A".to_string(), "f_i".to_string()];
+        let f = set_color_label(&f, &names, None, Some(ColorLabel::Index(4))).unwrap();
+        assert_eq!(
+            f.glyph("A").unwrap().color_label,
+            Some(ColorLabel::Index(4))
+        );
+        assert_eq!(f.glyph("dotcomb").unwrap().color_label, None);
+        let f = set_color_label(
+            &f,
+            &names[..1],
+            Some("m01"),
+            Some(ColorLabel::Rgba([1, 2, 3, 255])),
+        )
+        .unwrap();
+        let a = f.glyph("A").unwrap();
+        assert_eq!(
+            a.layers[0].color_label,
+            Some(ColorLabel::Rgba([1, 2, 3, 255]))
+        );
+        assert_eq!(
+            a.color_label,
+            Some(ColorLabel::Index(4)),
+            "the glyph keeps its own"
+        );
+        let f = set_color_label(&f, &names, None, None).unwrap();
+        assert_eq!(f.glyph("f_i").unwrap().color_label, None);
+        assert!(set_color_label(&f, &names, None, Some(ColorLabel::Index(12))).is_err());
+        assert!(set_color_label(&f, &names, Some("m09"), None).is_err());
+        // Named colours map to their index and back.
+        assert_eq!(ColorLabel::Index(4).rgba(), [140, 214, 87, 255]);
+        assert_eq!(
+            ColorLabel::from_rgba([140, 214, 87, 255]),
+            ColorLabel::Index(4)
+        );
+        assert_eq!(
+            ColorLabel::from_rgba([140, 214, 87, 128]),
+            ColorLabel::Rgba([140, 214, 87, 128])
+        );
+        // Saved as a number or an array.
+        assert_eq!(serde_json::to_string(&ColorLabel::Index(4)).unwrap(), "4");
+        assert_eq!(
+            serde_json::from_str::<ColorLabel>("[1,2,3,4]").unwrap(),
+            ColorLabel::Rgba([1, 2, 3, 4])
+        );
     }
 
     #[test]

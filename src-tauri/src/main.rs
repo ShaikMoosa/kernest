@@ -120,6 +120,7 @@ fn main() {
             glyphs::set_glyph_unicodes,
             glyphs::set_production_name,
             glyphs::set_glyph_property,
+            glyphs::set_color_label,
             glyphs::set_writing_direction,
             glyphs::set_vertical_metric,
             glyphs::set_filters,

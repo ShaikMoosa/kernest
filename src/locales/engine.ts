@@ -9,6 +9,7 @@
  * the dictionaries (npm run check:i18n lists what's missing).
  */
 export const ENGINE_MESSAGES = [
+  "Colour labels are numbered 0 to 11.",
   "\"{value}\" isn't a category; use one of {list}.",
   "\"{value}\" isn't a case; use one of {list}.",
   "\"{value}\" can't be used as a subcategory: use letters and spaces, at most 40.",

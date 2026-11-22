@@ -6,6 +6,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { type PathStroke, clonePaths, pathsToSvg, pointBounds, rectPath, transformPaths, type EditPath } from "./outline";
 import { translateMessage } from "./i18n";
+import type { ColorLabel } from "./colorLabels";
+export type { ColorLabel } from "./colorLabels";
 import { designBounds } from "./axisMap";
 
 export interface GlyphSetInfo {
@@ -53,6 +55,9 @@ export interface GlyphSummary {
   tags: string[];
   /** The name this glyph exports under when production names are used. */
   productionName?: string;
+  /** The glyph's colour label, and its layer's in the shown master (SMO-52). */
+  colorLabel?: ColorLabel;
+  layerColorLabel?: ColorLabel;
   /** Overrides set on the glyph itself (Glyphs' terms); absent means glyph data. */
   categoryOverride?: string;
   subcategoryOverride?: string;
@@ -322,6 +327,8 @@ export interface LayerInfo {
   label: string;
   /** A colour layer's paint. */
   paint?: Paint;
+  /** The layer's colour label as RGBA. */
+  labelColor?: [number, number, number, number];
   masterId: string;
   masterName: string;
   location?: Location;
@@ -1149,6 +1156,8 @@ export interface Backend {
   setGlyphUnicodes(glyph: string, unicodes: string, take: boolean): Promise<DocStatus>;
   /** Sets a glyph's production name (empty clears it). One undoable step. */
   setProductionName(glyph: string, name: string): Promise<DocStatus>;
+  /** Sets the colour label of glyphs, or of their layer `layer`; null clears it. */
+  setColorLabel(glyphs: string[], layer: string | null, label: ColorLabel | null): Promise<DocStatus>;
   /** Sets category, subCategory, case, script or sortName on glyphs; "" is automatic. */
   setGlyphProperty(glyphs: string[], property: GlyphProperty, value: string): Promise<DocStatus>;
   setWritingDirection(glyph: string, direction: string): Promise<DocStatus>;
@@ -1637,6 +1646,7 @@ const tauriBackend: Backend = {
   setGlyphTags: (glyph, tags) => invoke("set_glyph_tags", { glyph, tags }),
   setGlyphUnicodes: (glyph, unicodes, take) => invoke("set_glyph_unicodes", { glyph, unicodes, take }),
   setProductionName: (glyph, name) => invoke("set_production_name", { glyph, name }),
+  setColorLabel: (glyphs, layer, label) => invoke("set_color_label", { glyphs, layer, label }),
   setGlyphProperty: (glyphs, property, value) => invoke("set_glyph_property", { glyphs, property, value }),
   setWritingDirection: (glyph, direction) => invoke("set_writing_direction", { glyph, direction }),
   setVerticalMetric: (glyph, masterId, which, value) => invoke("set_vertical_metric", { glyph, masterId, which, value }),
@@ -2406,6 +2416,9 @@ const mockBackend: Backend = {
   },
   async setVerticalMetric() {
     throw "Vertical metrics need the desktop app (npm run tauri dev).";
+  },
+  async setColorLabel() {
+    throw "Colour labels need the desktop app (npm run tauri dev).";
   },
   async setGlyphProperty() {
     throw "Glyph properties need the desktop app (npm run tauri dev).";
