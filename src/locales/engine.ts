@@ -125,6 +125,7 @@ export const ENGINE_MESSAGES = [
   "enter a number",
   "width cannot be negative",
   "\"{glyph}\" has no outlines to set a sidebearing on",
+  "\"{glyph}\" has no outlines to move",
   "no master with id \"{id}\"",
   "group name \"{name}\" cannot contain spaces",
   "These aren't glyph names, characters or code points: {list}. Names use letters, digits, \".\", \"_\" and \"-\" and start with a letter.",

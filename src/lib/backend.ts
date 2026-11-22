@@ -836,6 +836,8 @@ export type TextItem =
       kernKind: "group" | "exception" | null;
       kernLeft: string | null;
       kernRight: string | null;
+      /** Metrics keys on the current master (absent when none). */
+      metricsKeys?: { left?: string; right?: string; width?: string };
       svg: string;
       /** Colour layers, bottom to top (colour glyphs only). */
       color?: ColorLayerView[];
@@ -1001,7 +1003,8 @@ export interface Backend {
   glyphLayer(glyph: string, masterId: string): Promise<LayerView>;
   /** Replaces outlines and width; components are replaced too when given. */
   updateLayer(glyph: string, masterId: string, width: number, paths: EditPath[], components?: ComponentEdit[]): Promise<LayerView>;
-  setMetric(glyph: string, masterId: string, metric: MetricName, value: number): Promise<LayerView>;
+  /** "shift" moves the outlines sideways by `value` inside the same width. */
+  setMetric(glyph: string, masterId: string, metric: MetricName | "shift", value: number): Promise<LayerView>;
   /** Replaces a layer's manual PostScript hints (empty restores the auto stems). */
   setGlyphHints(glyph: string, masterId: string, hints: Hint[]): Promise<LayerView>;
   undo(): Promise<UndoResult | null>;
@@ -2648,9 +2651,9 @@ const mockBackend: Backend = {
     else if (!b) throw `"${glyph}" has no outlines to set a sidebearing on`;
     else if (metric === "rsb") mockApply(d, g, { ...g, width: b.maxX + value });
     else {
-      const dx = value - b.minX;
+      const dx = metric === "shift" ? value : value - b.minX;
       mockApply(d, g, {
-        width: g.width + dx,
+        width: metric === "shift" ? g.width : g.width + dx,
         paths: transformPaths(g.paths, [1, 0, 0, 1, dx, 0]),
         components: g.components.map((c) => ({ base: c.base, transform: [c.transform[0], c.transform[1], c.transform[2], c.transform[3], c.transform[4] + dx, c.transform[5]] })),
       });

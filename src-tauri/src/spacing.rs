@@ -9,7 +9,7 @@ use kernest_core::interpolate::{default_master, Interpolator};
 use kernest_core::kerning::{edit_keys, pair_value, validate_side, with_pair, EditMode, PairKind};
 use kernest_core::text::{parse, Token};
 use kernest_core::vertical;
-use kernest_core::{Font, KernPair, Layer, Metrics, Shape};
+use kernest_core::{Font, KernPair, Layer, Metrics, MetricsKeys, Shape};
 use serde::Serialize;
 use tauri::State;
 
@@ -44,6 +44,10 @@ pub enum TextItem {
         /// The pair sides the kerning came from, e.g. "@T" and "o".
         kern_left: Option<String>,
         kern_right: Option<String>,
+        /// Metrics keys on the current master's layer: the keyboard spacing
+        /// shortcuts leave linked sidebearings alone.
+        #[serde(skip_serializing_if = "MetricsKeys::is_empty")]
+        metrics_keys: MetricsKeys,
         svg: String,
         /// Colour layers (from the master), bottom to top.
         #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -295,6 +299,10 @@ fn layout(
                             kern_kind: kern.as_ref().map(|k| k.1),
                             kern_left: kern.as_ref().map(|k| k.2.clone()),
                             kern_right: kern.as_ref().map(|k| k.3.clone()),
+                            metrics_keys: g
+                                .layer(master_id)
+                                .map(|l| l.metrics_keys.clone())
+                                .unwrap_or_default(),
                             svg: d.svg,
                             color: crate::commands::color_views(font, g, master_id),
                         }
