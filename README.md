@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/font-view.png" alt="Kernest Font View: every glyph of the font in a grid, with categories on the left and the selected glyph's metrics below" width="900">
+  <img src="docs/images/font-view.png" alt="Kernest Font View: the uppercase glyphs of Inter in a grid, with categories, languages and the selected glyph's metrics in the sidebar" width="900">
 </p>
 
 ## Features
@@ -42,22 +42,24 @@ See the [Handbook](docs/HANDBOOK.md) for how to use each feature.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/edit-view.png" alt="Edit View: drawing the letter O, with on-curve points, handles and metric lines"></td>
-    <td width="50%"><img src="docs/images/text-view.png" alt="Text tab: sample text set in the font, with metric lines for spacing and kerning"></td>
+    <td width="50%"><img src="docs/images/edit-view.png" alt="Edit View: the letter R with its nodes, handles and metric lines, and a variation preview of the weight and optical size axes"></td>
+    <td width="50%"><img src="docs/images/text-view.png" alt="Text tab: the word Kernest set in the font with metric lines, and a preview of it in each master"></td>
   </tr>
   <tr>
-    <td><b>Edit View:</b> draw and edit outlines, components, sidebearings and metrics keys, intermediate and alternate layers.</td>
-    <td><b>Text tabs:</b> set sample text to space and kern, with kerning groups and exceptions.</td>
+    <td><b>Edit View:</b> draw and edit outlines, with a live variation preview and every master's layer at hand.</td>
+    <td><b>Text tabs:</b> set text to space and kern, with kerning groups and exceptions and a preview in every master.</td>
   </tr>
   <tr>
-    <td><img src="docs/images/font-info.png" alt="Font Info: the Weight axis, Regular and Bold masters with their metrics, and instances"></td>
+    <td><img src="docs/images/font-info.png" alt="Font Info: the masters of a variable font on its optical size and weight axes, with their metrics"></td>
     <td><img src="docs/images/export.png" alt="Export dialog: variable and static fonts as TTF, OTF and WOFF2, with overlap removal and metrics keys"></td>
   </tr>
   <tr>
-    <td><b>Font Info:</b> axes, masters and instances, with live interpolation previews.</td>
+    <td><b>Font Info:</b> axes, masters and instances, with checks that keep masters compatible.</td>
     <td><b>Export:</b> variable and static fonts as TTF, OTF (CFF/CFF2) and WOFF2.</td>
   </tr>
 </table>
+
+<sub>Screenshots show <a href="https://github.com/rsms/inter">Inter</a> by Rasmus Andersson, imported from its variable font (SIL Open Font License).</sub>
 
 ## Install
 
