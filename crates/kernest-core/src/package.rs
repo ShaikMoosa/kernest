@@ -46,11 +46,12 @@ use crate::model::{
 /// curves, virtual masters and glyph swaps; version 15 adds sbix bitmaps, SVG
 /// drawings and number values for feature tokens; version 16 adds per-instance
 /// family names and disabled masters; version 17 adds vertical metrics (vertical
-/// widths and origins, vhea values) and glyph writing directions.
+/// widths and origins, vhea values) and glyph writing directions; version 22 adds
+/// measurement guides.
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 21;
+pub const FORMAT_VERSION: u32 = 22;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -312,11 +313,23 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
         .glyphs
         .iter()
         .any(|g| g.color_label.is_some() || g.layers.iter().any(|l| l.color_label.is_some()));
+    let has_v22 = font
+        .masters
+        .iter()
+        .flat_map(|m| &m.guides)
+        .chain(
+            font.glyphs
+                .iter()
+                .flat_map(|g| g.layers.iter().flat_map(|l| &l.guides)),
+        )
+        .any(|g| g.show_measurement);
     let has_vertical =
         font.info.use_typo_metrics || font.masters.iter().any(|m| !m.vertical.is_empty());
     let file = FontFile {
-        format_version: if has_v21 {
+        format_version: if has_v22 {
             FORMAT_VERSION
+        } else if has_v21 {
+            21
         } else if has_v20 {
             20
         } else if has_v19 {
@@ -723,6 +736,7 @@ mod tests {
             angle: 0.0,
             name: Some("bar".into()),
             locked: false,
+            show_measurement: false,
         });
         let layer = font.glyph_mut("H").unwrap().layer_mut("m01").unwrap();
         layer.guides.push(Guide {
@@ -731,6 +745,7 @@ mod tests {
             angle: 90.0,
             name: None,
             locked: true,
+            show_measurement: false,
         });
         layer.background = Some(Background {
             shapes: vec![Shape::Path(Path {
@@ -754,6 +769,38 @@ mod tests {
         save(&font, &path).unwrap();
         let fj = fs::read_to_string(path.join("font.json")).unwrap();
         assert!(fj.contains("\"formatVersion\": 5"), "{fj}");
+        assert_eq!(open(&path).unwrap(), font);
+    }
+
+    #[test]
+    fn measurement_guides_round_trip_and_gate_version() {
+        // SMO-37: a measurement guide is kept, and only it raises the format to 22.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        let guide = |show_measurement| crate::model::Guide {
+            x: 0.0,
+            y: 250.0,
+            angle: 0.0,
+            name: None,
+            locked: false,
+            show_measurement,
+        };
+        font.masters[0].guides.push(guide(false));
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(!fj.contains("\"formatVersion\": 22"), "{fj}");
+        assert!(!fj.contains("showMeasurement"), "{fj}");
+
+        font.glyph_mut("H")
+            .unwrap()
+            .layer_mut("m01")
+            .unwrap()
+            .guides
+            .push(guide(true));
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 22"), "{fj}");
         assert_eq!(open(&path).unwrap(), font);
     }
 

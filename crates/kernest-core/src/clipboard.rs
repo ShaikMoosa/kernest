@@ -195,6 +195,7 @@ mod tests {
                 angle: 0.0,
                 name: None,
                 locked: false,
+                show_measurement: false,
             });
         let out = paste_same_named(&f, &[clip]).unwrap();
         let l = out.glyph("H").unwrap().layer(&m).unwrap();

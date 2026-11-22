@@ -7,6 +7,7 @@ import { loadSamples, onSamplesChanged } from "../lib/samples";
 import { firstStrongRtl, visualOrder } from "../lib/bidi";
 import { kernBar, loadKerningPreview, saveKerningPreview, withKerning, type KerningPreview } from "../lib/kerningPreview";
 import { SHORTCUT_ACTIONS, effectiveShortcut, findTextShortcut } from "../lib/shortcuts";
+import { formatDistance, loadMeasureLine, measureSpans, saveMeasureLine } from "../lib/measureLine";
 
 const PRESETS = loadSamples();
 const MISSING_WIDTH = 500;
@@ -195,6 +196,10 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   const [mode, setMode] = useState<KernMode>("group");
   const [cursor, setCursor] = useState<Cursor>({ line: 0, pos: 1 });
   const [showMetrics, setShowMetrics] = useState(true);
+  // SMO-37 · The measurement line: distances to the outline at one height, across the text.
+  const [measureLn, setMeasureLn] = useState(loadMeasureLine);
+  useEffect(() => saveMeasureLine(measureLn.show, measureLn.height), [measureLn]);
+  const [crossings, setCrossings] = useState<Record<string, number[]>>({});
   const svgRef = useRef<SVGSVGElement>(null);
   const chain = useRef(Promise.resolve());
   const latest = useRef({ layout, cursor, mode, direction, kernOff, shortcuts, previewing: false, shapeOn: false });
@@ -341,6 +346,35 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
     return { adv: it.width, kern: vertical ? 0 : it.kern, rtl: it.rtl, vAdv: it.vAdvance, xOff: vertical ? -it.width / 2 : 0, yOff: vertical ? -it.vOrigin : 0 };
   })), { scale, pad, asc, desc, lineH, vertical, paraRtl, ordered: false, minLen }), [layout, scale, asc, desc, lineH, vertical, paraRtl, minLen]);
 
+  // The measurement line (SMO-37): crossings at its height for each glyph in the text,
+  // from the current master. It's off in vertical text, Shape preview and while
+  // previewing another location, where the master's numbers wouldn't match.
+  const measureY = measureLn.height ?? Math.round((metrics?.xHeight ?? 500) / 2);
+  const measuring = measureLn.show && !vertical && !shapeOn && !previewing;
+  useEffect(() => {
+    if (!measuring || !layout) { setCrossings({}); return; }
+    const names = [...new Set(layout.lines.flatMap((l) => l.flatMap((it) => (it.type === "glyph" ? [it.name] : []))))];
+    if (names.length === 0) { setCrossings({}); return; }
+    let live = true;
+    const id = setTimeout(() => {
+      backend.measureTextLine(names, masterId, measureY).then((rows) => {
+        if (live) setCrossings(Object.fromEntries(names.map((n, i) => [n, rows[i] ?? []])));
+      }, () => { if (live) setCrossings({}); });
+    }, 30);
+    return () => { live = false; clearTimeout(id); };
+  }, [measuring, layout, masterId, measureY, version]);
+  /** Drags the measurement line's height from its grip; `base` is that row's baseline. */
+  const startMeasureDrag = (e: React.MouseEvent, base: number) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const r = svgRef.current!.getBoundingClientRect();
+    const at = (clientY: number) => Math.round(Math.min(asc + 200, Math.max(desc - 200, (base - (clientY - r.top)) / scale)));
+    const move = (ev: MouseEvent) => setMeasureLn((m) => ({ ...m, height: at(ev.clientY) }));
+    const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
   // Shaped preview geometry: advances and offsets come from the shaper, not kerning.
   const showShaped = shapeOn && shaped !== null;
   const sMetrics = shaped?.metrics;
@@ -411,6 +445,7 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
   /** Runs a text-tab shortcut (SMO-35): kerning, sidebearings or an exception at the cursor. */
   const textAction = useRef<(id: string, step: number, line: TextItem[], cursor: Cursor, dir: TextDirection) => void>(() => {});
   textAction.current = (id, step, line, cursor, dir) => {
+    if (id === "text-measure") { setMeasureLn((m) => ({ ...m, show: !m.show })); return; }
     const before = line[cursor.pos - 1], after = line[cursor.pos];
     const left = before?.type === "glyph" ? before : undefined;
     const right = after?.type === "glyph" ? after : undefined;
@@ -590,6 +625,13 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
         </div>
         <span className="spacer" />
         <label className="check-row k-caption"><input type="checkbox" checked={showMetrics} onChange={(e) => setShowMetrics(e.target.checked)} /> {t("Metrics")}</label>
+        <label className="check-row k-caption" title={t("Measurement line: the distances from each glyph's edges to its outline, and between crossings, at one height ({keys})", { keys: keysOf("text-measure") })}>
+          <input type="checkbox" checked={measureLn.show} onChange={(e) => setMeasureLn((m) => ({ ...m, show: e.target.checked }))} /> {t("Measure")}
+        </label>
+        {measureLn.show && (
+          <input type="number" className="text-input measure-height" value={measureY} step={10} aria-label={t("Measurement line height")}
+            onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setMeasureLn((m) => ({ ...m, height: Math.round(v) })); }} />
+        )}
         <input type="range" min={24} max={320} value={size} onChange={(e) => setSize(Number(e.target.value))} aria-label={t("Text size")} className="size-slider" />
         <span className="k-caption muted zoom">{size} px</span>
       </div>
@@ -668,6 +710,32 @@ export function TextView({ masterId, version, active, onChanged, onError, onOpen
                     </g>
                   );
                 })}
+                {measuring && (() => {
+                  // The measurement line: from each glyph's edges to its outline, and between crossings.
+                  const ly = by - measureY * scale;
+                  return (
+                    <g className="text-measure">
+                      <line x1={0} x2={Math.max(width, 6000)} y1={ly} y2={ly} className="text-measure-line" pointerEvents="none" />
+                      {ln.map((it, i) => it.type !== "glyph" ? null : measureSpans(crossings[it.name] ?? [], it.width).map((s, k) => {
+                        const ox = row.cells[i].ox;
+                        const x0 = ox + s.x0 * scale, x1 = ox + s.x1 * scale;
+                        return (
+                          <g key={`${i}:${k}`} pointerEvents="none">
+                            <line x1={x0} x2={x0} y1={ly - 4} y2={ly + 4} className="text-measure-tick" />
+                            {/* Sidebearings below the line, stems and counters above, so neighbours don't collide. */}
+                            <text x={(x0 + x1) / 2} y={s.kind === "side" ? ly + 14 : ly - 5} className={`text-measure-label is-${s.kind}`}>{formatDistance(s.x1 - s.x0)}</text>
+                          </g>
+                        );
+                      }))}
+                      <g className="text-measure-grip" transform={`translate(${paraRtl ? Math.max(width, 0) - 14 : 14} ${ly})`}
+                        onMouseDown={(e) => startMeasureDrag(e, by)} role="slider" aria-label={t("Measurement line height")} aria-valuenow={measureY}>
+                        <title>{t("Drag to move the measurement line (height {y})", { y: measureY })}</title>
+                        <circle r={7} />
+                        <path d="M-3 -1.5h6M-3 1.5h6" />
+                      </g>
+                    </g>
+                  );
+                })()}
                 {caret && (
                   <>
                     <line x1={caret.x1} x2={caret.x2} y1={caret.y1} y2={caret.y2} className="text-cursor" />

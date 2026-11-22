@@ -246,6 +246,7 @@ export const DYNAMIC_KEYS = [
   "Left to Right Text",
   "Right to Left Text",
   "Vertical Text",
+  "Show Measurement Line",
   "Vertical, top to bottom",
   "Kerning",
   "Add Glyphs",

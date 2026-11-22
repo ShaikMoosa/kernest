@@ -62,6 +62,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: "text-shift-right", label: "Move Outline Right", default: "Ctrl+Alt+Up", scope: "text", allowInField: false },
   { id: "text-shift-left", label: "Move Outline Left", default: "Ctrl+Alt+Down", scope: "text", allowInField: false },
   { id: "text-kern-exception", label: "Make or Remove Kerning Exception", default: "Ctrl+Alt+E", scope: "text", allowInField: false },
+  { id: "text-measure", label: "Show Measurement Line", default: "Ctrl+Alt+M", scope: "text", allowInField: false },
   { id: "text-ltr", label: "Left to Right Text", default: "Ctrl+Alt+Shift+L", scope: "text" },
   { id: "text-rtl", label: "Right to Left Text", default: "Ctrl+Alt+Shift+R", scope: "text" },
   { id: "text-vertical", label: "Vertical Text", default: "Ctrl+Alt+Shift+V", scope: "text" },

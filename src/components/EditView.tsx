@@ -19,6 +19,7 @@ import { PaintDialog } from "./PaintDialog";
 import { PixelPreviewPanel } from "./PixelPreviewPanel";
 import { PreviewDock } from "./PreviewPane";
 import { defaultPreviewText } from "../lib/previewPane";
+import { formatDistance, guideSegment } from "../lib/measureLine";
 
 type Tool = "select" | "pen" | "rect" | "ellipse" | "knife" | "pixel" | "annotate" | "hoi" | "hand" | "measure";
 type AnnotSub = "select" | Annotation["kind"];
@@ -475,6 +476,22 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const [editingBackground, setEditingBackground] = useState(false);
   const [measureLine, setMeasureLine] = useState<{ p0: Pt; p1: Pt } | null>(null);
   const [measurement, setMeasurement] = useState<Measurement | null>(null);
+  // SMO-37: measurement guides show where they cross the outline while guides are shown.
+  const [guideMeasures, setGuideMeasures] = useState<Record<string, Measurement>>({});
+  useEffect(() => {
+    const todo = showGuides
+      ? [...globalGuides.map((g, i) => ({ g, key: `global:${i}` })), ...localGuides.map((g, i) => ({ g, key: `local:${i}` }))].filter(({ g }) => g.showMeasurement)
+      : [];
+    if (todo.length === 0) { setGuideMeasures({}); return; }
+    let live = true;
+    Promise.all(todo.map(({ g, key }) => {
+      const s = guideSegment(g);
+      return backend.measure(glyph, masterId, s.p0, s.p1, false).then((m) => [key, m] as const, () => null);
+    })).then((rows) => {
+      if (live) setGuideMeasures(Object.fromEntries(rows.filter((r): r is readonly [string, Measurement] => r !== null)));
+    });
+    return () => { live = false; };
+  }, [showGuides, globalGuides, localGuides, glyph, masterId, layerRev]);
   const [knifeLine, setKnifeLine] = useState<{ p0: Pt; p1: Pt } | null>(null);
   // Pixel tool: the cells painted (or erased) during the current drag.
   const [pixelDraft, setPixelDraft] = useState<{ on: boolean; cells: [number, number][] } | null>(null);
@@ -2395,6 +2412,24 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                     <path d="M8 11V7a4 4 0 0 1 8 0v4" />
                   </g>
                 )}
+                {index >= 0 && guideMeasures[`${scope}:${index}`] && (() => {
+                  // Measurement guide: square crossings and the distance between each pair.
+                  const m = guideMeasures[`${scope}:${index}`];
+                  return (
+                    <g className="guide-measure">
+                      {m.hits.map((h, i) => {
+                        const q = toScreen(h.x, h.y);
+                        return <rect key={`gh${i}`} x={q.x - 3} y={q.y - 3} width={6} height={6} className="measure-hit" />;
+                      })}
+                      {m.distances.map((d, i) => {
+                        const h0 = m.hits[i], h1 = m.hits[i + 1];
+                        if (!h0 || !h1) return null;
+                        const q = toScreen((h0.x + h1.x) / 2, (h0.y + h1.y) / 2);
+                        return <text key={`gd${i}`} x={q.x + 6} y={q.y - 6} className="measure-label">{formatDistance(d)}</text>;
+                      })}
+                    </g>
+                  );
+                })()}
               </g>
             );
           })}
@@ -2740,6 +2775,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                   {selGuide.locked ? <path d="M8 11V7a4 4 0 0 1 8 0v4" /> : <path d="M8 11V7a4 4 0 0 1 7.5-2" />}
                 </svg>
               </button>
+              <button type="button" className={`btn btn-secondary btn-sm${selGuide.showMeasurement ? " is-on" : ""}`} aria-pressed={selGuide.showMeasurement ?? false}
+                title={t("Measurement guide: show the distances where this guide crosses the outline")}
+                onClick={() => updateGuide(guideSel, { showMeasurement: !selGuide.showMeasurement })}>{t("Measure")}</button>
               <button type="button" className="btn btn-secondary btn-sm" onClick={() => switchGuideScope(guideSel)}
                 title={guideSel.scope === "local" ? t("Draw this guide in every glyph of this master") : t("Draw this guide only in this layer")}>
                 {guideSel.scope === "local" ? t("Make global") : t("Make local")}

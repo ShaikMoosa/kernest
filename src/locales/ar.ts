@@ -2644,4 +2644,10 @@ export const ar: Dict = {
   "Open a text tab or a glyph in the main window to preview it here.": "افتح علامة تبويب نص أو حرفًا في النافذة الرئيسية لمعاينته هنا.",
   "Keep this window in front of the main window": "إبقاء هذه النافذة أمام النافذة الرئيسية",
   "Keep on Top": "إبقاء في المقدمة",
+  "Measurement guide: show the distances where this guide crosses the outline": "دليل قياس: يعرض المسافات حيث يعبر هذا الدليل المخطط",
+  "Measure": "قياس",
+  "Measurement line: the distances from each glyph's edges to its outline, and between crossings, at one height ({keys})": "خط القياس: المسافات من حافتي كل حرف إلى مخططه، وبين نقاط العبور، عند ارتفاع واحد ({keys})",
+  "Measurement line height": "ارتفاع خط القياس",
+  "Drag to move the measurement line (height {y})": "اسحب لتحريك خط القياس (الارتفاع {y})",
+  "Show Measurement Line": "إظهار خط القياس",
 };

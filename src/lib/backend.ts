@@ -206,6 +206,8 @@ export interface Guide {
   angle: number;
   name?: string;
   locked?: boolean;
+  /** A measurement guide: distances to the outline are shown along it (SMO-37). */
+  showMeasurement?: boolean;
 }
 
 /** The edit view's snap grid; a spacing or subdivision of 0 turns it off. */
@@ -1070,6 +1072,8 @@ export interface Backend {
   updateBackground(glyph: string, masterId: string, paths: EditPath[], components: ComponentEdit[], anchors: { name: string; x: number; y: number }[]): Promise<LayerView>;
   /** Where the segment p0–p1 crosses the outline, and the gaps between crossings. */
   measure(glyph: string, masterId: string, p0: [number, number], p1: [number, number], onBackground?: boolean): Promise<Measurement>;
+  /** The text tab's measurement line: where height `y` crosses each glyph's outline, left to right. */
+  measureTextLine(glyphs: string[], masterId: string, y: number): Promise<number[][]>;
   /** Sets the colour palettes (#rrggbb or #rrggbbaa). */
   setPalettes(palettes: string[][]): Promise<FontInfo>;
   /** Sets or clears one master's palette override (null clears it). */
@@ -1604,6 +1608,7 @@ const tauriBackend: Backend = {
   backgroundEdit: (glyph, masterId, edit, selection) => invoke("background_edit", { glyph, masterId, edit, selection }),
   updateBackground: (glyph, masterId, paths, components, anchors) => invoke("update_background", { glyph, masterId, paths, components, anchors }),
   measure: (glyph, masterId, p0, p1, onBackground) => invoke("measure", { glyph, masterId, p0, p1, onBackground: onBackground ?? false }),
+  measureTextLine: (glyphs, masterId, y) => invoke("measure_text_line", { glyphs, masterId, y }),
   setPalettes: (palettes) => invoke("set_palettes", { palettes }),
   setMasterPalettes: (masterId, palettes) => invoke("set_master_palettes", { masterId, palettes }),
   addColorLayer: (glyph, masterId) => invoke("add_color_layer", { glyph, masterId }),
@@ -2222,6 +2227,9 @@ const mockBackend: Backend = {
     throw "The background layer needs the desktop app (npm run tauri dev).";
   },
   async measure() {
+    throw "Measuring needs the desktop app (npm run tauri dev).";
+  },
+  async measureTextLine() {
     throw "Measuring needs the desktop app (npm run tauri dev).";
   },
   async setAxes(axes) {

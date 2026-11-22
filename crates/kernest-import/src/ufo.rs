@@ -385,6 +385,7 @@ fn guides(list: &[norad::Guideline]) -> Vec<kernest_core::Guide> {
                 angle,
                 name: g.name.as_ref().map(|n| n.to_string()),
                 locked: false,
+                show_measurement: false,
             }
         })
         .collect()

@@ -501,6 +501,15 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .text-preview-row svg { fill: var(--k-bg-app); flex: none; }
 .text-preview-name { width: 72px; flex: none; color: var(--k-bg-subtle); opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .text-preview-row.is-current .text-preview-name { opacity: 1; font-weight: 600; }
+/* SMO-37 · Measurement line in text tabs. */
+.text-measure-line { stroke: var(--k-accent-default); stroke-width: 1; stroke-dasharray: 4 3; }
+.text-measure-tick { stroke: var(--k-accent-default); stroke-width: 1; }
+.text-measure-label { font: 500 10px var(--k-font-code); text-anchor: middle; fill: var(--k-accent-default); paint-order: stroke; stroke: var(--k-bg-app); stroke-width: 3px; }
+.text-measure-label.is-side { fill: var(--k-text-secondary); }
+.text-measure-grip { cursor: ns-resize; }
+.text-measure-grip circle { fill: var(--k-accent-default); }
+.text-measure-grip path { stroke: var(--k-text-on-accent); stroke-width: 1.2; }
+.measure-height { width: 72px; }
 /* SMO-36 · Preview pane under the Edit View, and the preview window. */
 .preview-dock { flex: none; display: flex; flex-direction: column; min-height: 80px; border-top: 1px solid var(--k-border-default); }
 .preview-resizer { flex: none; height: 6px; margin-top: -3px; cursor: row-resize; background: transparent; position: relative; z-index: 1; }

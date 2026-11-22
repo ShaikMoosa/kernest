@@ -331,6 +331,32 @@ pub fn measure(
     )
 }
 
+/// SMO-37 · The text tab's measurement line: for each glyph name, where a horizontal
+/// line at height `y` crosses its outline on `master_id`, left to right. Unknown
+/// glyphs and glyphs without a layer give an empty list.
+#[tauri::command]
+pub fn measure_text_line(
+    state: State<AppState>,
+    glyphs: Vec<String>,
+    master_id: String,
+    y: f64,
+) -> CmdResult<Vec<Vec<f64>>> {
+    let guard = lock(&state)?;
+    let doc = guard
+        .as_ref()
+        .ok_or_else(|| "No font is open.".to_string())?;
+    Ok(glyphs
+        .iter()
+        .map(|name| {
+            doc.font
+                .glyph(name)
+                .and_then(|g| g.layer(&master_id))
+                .map(|l| measure::crossings_at(&doc.font, l, y))
+                .unwrap_or_default()
+        })
+        .collect())
+}
+
 fn update_background_in(
     doc: &mut Document,
     glyph: &str,
@@ -395,6 +421,7 @@ mod tests {
             angle: 0.0,
             name: None,
             locked: false,
+            show_measurement: false,
         }
     }
 

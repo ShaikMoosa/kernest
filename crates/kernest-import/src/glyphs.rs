@@ -674,6 +674,10 @@ fn guide(d: &glyphs_reader::Plist) -> Option<kernest_core::Guide> {
         angle: d.get("angle").and_then(num).unwrap_or(0.0),
         name: d.get("name").and_then(|n| n.as_str()).map(String::from),
         locked: d.get("locked").and_then(num).is_some_and(|v| v != 0.0),
+        show_measurement: d
+            .get("showMeasurement")
+            .and_then(num)
+            .is_some_and(|v| v != 0.0),
     })
 }
 

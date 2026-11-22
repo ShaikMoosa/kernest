@@ -922,6 +922,10 @@ pub struct Guide {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locked: bool,
+    /// A measurement guide (SMO-37): the distances between its crossings with the
+    /// outline are shown whenever guides are (Glyphs `showMeasurement`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub show_measurement: bool,
 }
 
 /// The reference drawing behind a layer's outline: shapes and anchors kept aside so

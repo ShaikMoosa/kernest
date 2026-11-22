@@ -199,6 +199,7 @@ fn main() {
             tools::background_edit,
             tools::update_background,
             tools::measure,
+            tools::measure_text_line,
             settings::get_settings,
             settings::set_appearance,
             settings::set_onboarding,
