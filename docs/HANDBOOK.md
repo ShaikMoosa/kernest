@@ -427,6 +427,11 @@ An anchor is a named point that tells other glyphs where to sit: a mark above a 
 - **Text tabs** (Window › New Text Tab, Ctrl+T): type sample text to see your glyphs together.
   - Click between two glyphs to place the cursor.
   - **Alt+Left** and **Alt+Right** change the kerning there by 10 units, or by 1 unit with Shift held too.
+  - **Kerning bars:** each kerned pair shows a bar under the baseline, as wide as the kerning: red where the glyphs move closer, green where they move apart, with the value below it. Exceptions have a dashed bar and a diamond marker. Hover a bar to see the pair it comes from (for example `@A | @V`); click it to open the **Kerning window** with that pair selected.
+  - **Kerning preview** (the menu next to the kerning mode) has three settings, remembered between sessions:
+    - **No kerning** sets the text without kerning, also in Shape preview and the Preview strip, and turns the kerning shortcuts and fields off. Use it to judge the spacing alone.
+    - **Show kerning** (the default) shows and edits kerning as above.
+    - **Kerning, spacing locked** shows kerning but locks the LSB, width and RSB fields, so only kerning can change.
   - The **Features** button previews OpenType features on the sample text (see [Features](#features)).
   - The **Preview** strip at the bottom shows the text in every master at once; the status bar names the pair at the cursor and its kerning. The tab is named after its text.
   - The **Samples** menu lists the strings from **Settings › Sample strings**, where you can add, edit and remove them.

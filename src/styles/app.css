@@ -474,7 +474,15 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .missing-box { fill: var(--k-status-danger-subtle); stroke: var(--k-status-danger); stroke-dasharray: 4 3; }
 .missing-text { fill: var(--k-text-danger); text-anchor: middle; font: 500 12px var(--k-font-code); }
 .text-cursor { stroke: var(--k-editor-selection); stroke-width: 2; }
-.kern-mark { font: 500 10px var(--k-font-code); text-anchor: middle; }
+.kern-mark { font: 500 10px var(--k-font-code); text-anchor: middle; pointer-events: none; }
+.kern-bar-group { cursor: pointer; }
+.kern-hit { fill: transparent; }
+.kern-bar.neg { fill: var(--k-editor-kerning-negative, var(--k-text-danger)); }
+.kern-bar.pos { fill: var(--k-editor-kerning-positive, var(--k-text-success)); }
+.kern-bar-group.is-exception .kern-bar { fill-opacity: 0.35; stroke: currentColor; stroke-width: 1; stroke-dasharray: 2 2; }
+.kern-bar-group.is-exception { color: var(--k-status-warning); }
+.kern-exception-mark { fill: var(--k-status-warning); }
+.kern-bar-group:hover .kern-bar { fill-opacity: 1; filter: brightness(0.9); }
 .kern-mark.neg { fill: var(--k-editor-kerning-negative, var(--k-text-danger)); }
 .kern-mark.pos { fill: var(--k-editor-kerning-positive, var(--k-text-success)); }
 .kern-badge { fill: var(--k-accent-default); }

@@ -406,6 +406,12 @@ export default function App() {
   };
   const newTextTab = useCallback(() => openTab(`text:${++textCounter.current}`), [openTab]);
   const openKerning = useCallback(() => openTab("kerning"), [openTab]);
+  // A click on a kerning bar in a text tab opens the Kerning window on that pair.
+  const [kerningFocus, setKerningFocus] = useState<{ left: string; right: string; seq: number } | null>(null);
+  const openKerningPair = useCallback((left: string, right: string) => {
+    setKerningFocus((f) => ({ left, right, seq: (f?.seq ?? 0) + 1 }));
+    openTab("kerning");
+  }, [openTab]);
   const navigateTour = useCallback((step: number) => {
     if (!font) return;
     if (step !== 5) setExporting(false);
@@ -1335,9 +1341,9 @@ export default function App() {
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} onGenerateInstances={generateInstances} />
               ) : id === "kerning" ? (
-                <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={s => { onCommitted(s); recordMilestone("kerned"); }} onError={fail} fontSelection={fontSelection} onOpenText={newTextTab} />
+                <KerningView masterId={font.masterId} masterName={font.masters.find((m) => m.id === font.masterId)?.name ?? ""} version={docVersion} onChanged={s => { onCommitted(s); recordMilestone("kerned"); }} onError={fail} fontSelection={fontSelection} onOpenText={newTextTab} focus={kerningFocus} />
               ) : (
-                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} textWidth={settings.appearance.textWidth} autoDirection={settings.appearance.autoDirection} onMilestone={recordMilestone} onTitle={textTitleSetter(id)} />
+                <TextView masterId={font.masterId} version={docVersion} active={active === id} onChanged={onCommitted} onError={fail} onOpenGlyph={openGlyph} onOpenKerning={openKerningPair} textWidth={settings.appearance.textWidth} autoDirection={settings.appearance.autoDirection} onMilestone={recordMilestone} onTitle={textTitleSetter(id)} />
               )}
             </div>
           ))}
