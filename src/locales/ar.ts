@@ -1694,7 +1694,7 @@ export const ar: Dict = {
   "the font has an invalid units-per-em value.": "قيمة الوحدات لكل em في الخط غير صالحة.",
   "No outlines could be drawn from this font.": "تعذّر رسم مخططات من هذا الخط.",
   "Compiled fonts have no editable components or feature code; outlines were imported as paths and features were left out.": "لا تحتوي الخطوط المبنية على مكونات قابلة للتحرير أو شفرة خصائص؛ استُوردت المخططات كمسارات واستُبعدت الخصائص.",
-  "This is a variable font. Kernest drew {n} masters (the default and each axis extreme); intermediate masters and named instances beyond these are approximations.": "هذا خط متغير. رسم Kernest {n} نسخة رئيسية (الافتراضية وطرف كل محور)؛ والنسخ الرئيسية الوسيطة والأنماط المسماة الأخرى تقريبية.",
+  "This is a variable font. Kernest drew {n} masters (the default and each axis extreme that differs from it); intermediate masters and named instances beyond these are approximations.": "هذا خط متغير. رسم Kernest {n} نسخة رئيسية (الافتراضية وكل طرف محور يختلف عنها)؛ والنسخ الرئيسية الوسيطة والأنماط المسماة الأخرى تقريبية.",
   "Glyph categories (GDEF classes) are re-derived by Kernest from names and unicodes, not imported.": "يعيد Kernest اشتقاق فئات الحروف (فئات GDEF) من الأسماء والرموز Unicode؛ ولا تُستورد.",
   "{n} kerning value{s} used class 0 (no group) and {was} left out.": {
     zero: "استُبعدت {n} قيمة تقنين استخدمت الفئة 0 (بلا مجموعة).",

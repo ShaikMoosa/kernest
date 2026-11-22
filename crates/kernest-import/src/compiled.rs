@@ -173,7 +173,7 @@ fn build(font: &FontRef) -> Result<Imported, String> {
     );
     if variable {
         warnings.push(format!(
-            "This is a variable font. Kernest drew {} masters (the default and each axis extreme); intermediate masters and named instances beyond these are approximations.",
+            "This is a variable font. Kernest drew {} masters (the default and each axis extreme that differs from it); intermediate masters and named instances beyond these are approximations.",
             masters.len()
         ));
     }
@@ -204,7 +204,8 @@ fn build(font: &FontRef) -> Result<Imported, String> {
     })
 }
 
-/// The default location plus each axis at its minimum and maximum (2N+1 masters).
+/// The default location plus each axis at its minimum and maximum (up to 2N+1
+/// masters; an extreme that equals the default is left out).
 fn master_plans(
     font: &FontRef,
     axes: &skrifa::AxisCollection,
@@ -242,6 +243,11 @@ fn master_plans(
         for (suffix, value) in [("min", a.min_value()), ("max", a.max_value())] {
             let mut location = defaults();
             location.insert(tag.clone(), to_design(&tag, value as f64));
+            // An extreme that equals the default (e.g. opsz min = default) would be a
+            // second master at the same location, which breaks interpolation.
+            if plans.iter().any(|p| p.location == location) {
+                continue;
+            }
             plans.push(MasterPlan {
                 name: format!("{label} {suffix}"),
                 location,
