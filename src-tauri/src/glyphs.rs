@@ -270,6 +270,29 @@ pub fn set_glyph_property(
     Ok(status(doc))
 }
 
+/// Sets the colour label of the given glyphs, or of their layer `layer` (a master id
+/// or layer key); `None` clears it. One undoable step.
+#[tauri::command]
+pub fn set_color_label(
+    state: State<AppState>,
+    glyphs: Vec<String>,
+    layer: Option<String>,
+    label: Option<kernest_core::ColorLabel>,
+) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let next =
+        kernest_core::glyphprops::set_color_label(&doc.font, &glyphs, layer.as_deref(), label)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
 /// Sets a glyph's writing direction (`LTR`, `RTL`, `BIDI`; empty for automatic).
 /// One undoable step.
 #[tauri::command]

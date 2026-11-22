@@ -53,6 +53,15 @@ pub fn glyph(font: &Font, gname: &str, layer: &Layer) -> Result<Glyph, String> {
     out.guidelines = guidelines(&layer.guides);
     if let Some(g) = font.glyph(gname) {
         out.codepoints = Codepoints::new(g.unicodes.iter().filter_map(|c| c.char()));
+        // The colour label as UFO's mark colour ("r,g,b,a", 0–1).
+        if let Some(c) = g.color_label {
+            let [r, gr, b, a] = c.rgba().map(|v| f64::from(v) / 255.0);
+            let f = |v: f64| format!("{}", (v * 1000.0).round() / 1000.0);
+            out.lib.insert(
+                "public.markColor".into(),
+                plist::Value::String(format!("{},{},{},{}", f(r), f(gr), f(b), f(a))),
+            );
+        }
         // Glyph property overrides, under the keys glyphsLib uses.
         for (key, v) in [
             ("category", &g.category_override),

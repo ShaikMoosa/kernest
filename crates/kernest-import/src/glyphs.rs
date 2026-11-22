@@ -735,6 +735,7 @@ fn read_extras(
         if let Some(dir) = d.get("direction").and_then(|v| v.as_str()) {
             g.direction = kernest_core::WritingDirection::parse(dir);
         }
+        g.color_label = d.get("color").and_then(color_label);
         // Properties the source sets itself (glyphs-reader fills in glyph data too, so
         // read them from the file to tell overrides apart). Bad values are skipped.
         for key in kernest_core::glyphprops::PROPERTIES {
@@ -778,6 +779,7 @@ fn read_extras(
             let Some(l) = g.layer_mut(key) else {
                 continue;
             };
+            l.color_label = ld.get("color").and_then(color_label);
             skipped_parts += restore_corners(l, ld);
             restore_strokes(l, ld);
             restore_masks(l, ld);
@@ -1798,6 +1800,25 @@ fn read_glyph_dicts(path: &Path) -> Result<HashMap<String, glyphs_reader::Plist>
         }
     }
     Ok(out)
+}
+
+/// A colour label: an index 0–11, or an `(r, g, b, a)` array (0–255; Glyphs 2 may
+/// write the alpha as 0–1).
+fn color_label(p: &glyphs_reader::Plist) -> Option<kernest_core::ColorLabel> {
+    if let Some(i) = num(p) {
+        let label = kernest_core::ColorLabel::Index(i as u8);
+        return (i >= 0.0 && i.fract() == 0.0 && label.is_valid()).then_some(label);
+    }
+    let parts: Vec<f64> = p.as_array()?.iter().filter_map(num).collect();
+    let [r, g, b, a] = parts[..] else { return None };
+    let byte = |v: f64| v.round().clamp(0.0, 255.0) as u8;
+    let alpha = if a <= 1.0 { byte(a * 255.0) } else { byte(a) };
+    Some(kernest_core::ColorLabel::from_rgba([
+        byte(r),
+        byte(g),
+        byte(b),
+        alpha,
+    ]))
 }
 
 fn num(p: &glyphs_reader::Plist) -> Option<f64> {

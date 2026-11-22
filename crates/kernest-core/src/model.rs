@@ -444,6 +444,60 @@ impl Default for Metrics {
     }
 }
 
+/// A colour label on a glyph or layer, to organise work (Glyphs Handbook 5.3.5): one
+/// of Glyphs' twelve colours by index, or a colour of its own. Saved as a number or an
+/// `[r, g, b, a]` array.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ColorLabel {
+    Index(u8),
+    Rgba([u8; 4]),
+}
+
+/// Glyphs' twelve label colours, by index: name and RGB.
+pub const COLOR_LABELS: [(&str, [u8; 3]); 12] = [
+    ("Red", [247, 74, 74]),
+    ("Orange", [247, 151, 54]),
+    ("Brown", [168, 115, 66]),
+    ("Yellow", [247, 222, 54]),
+    ("Light Green", [140, 214, 87]),
+    ("Dark Green", [58, 156, 80]),
+    ("Cyan", [79, 201, 219]),
+    ("Blue", [51, 117, 230]),
+    ("Purple", [148, 87, 207]),
+    ("Pink", [237, 101, 170]),
+    ("Light Gray", [189, 189, 189]),
+    ("Dark Gray", [110, 110, 110]),
+];
+
+impl ColorLabel {
+    /// The label as RGBA, for drawing and for UFO's `public.markColor`.
+    pub fn rgba(self) -> [u8; 4] {
+        match self {
+            ColorLabel::Index(i) => {
+                let [r, g, b] = COLOR_LABELS
+                    .get(usize::from(i))
+                    .map_or([128, 128, 128], |c| c.1);
+                [r, g, b, 255]
+            }
+            ColorLabel::Rgba(c) => c,
+        }
+    }
+
+    /// One of the twelve when the colour matches it exactly, else the colour itself.
+    pub fn from_rgba(c: [u8; 4]) -> ColorLabel {
+        COLOR_LABELS
+            .iter()
+            .position(|(_, rgb)| *rgb == [c[0], c[1], c[2]] && c[3] == 255)
+            .map_or(ColorLabel::Rgba(c), |i| ColorLabel::Index(i as u8))
+    }
+
+    /// A valid label: an index 0–11, or any colour.
+    pub fn is_valid(self) -> bool {
+        !matches!(self, ColorLabel::Index(i) if usize::from(i) >= COLOR_LABELS.len())
+    }
+}
+
 /// The categories a glyph can be given (Glyphs' names).
 pub const GLYPH_CATEGORIES: &[&str] = &[
     "Letter",
@@ -500,6 +554,9 @@ pub struct Glyph {
     /// The name glyphs sort by in Font View instead of their own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_name: Option<String>,
+    /// The glyph's colour label (SMO-52).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_label: Option<ColorLabel>,
     /// A locked glyph refuses every edit until it is unlocked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub locked: bool,
@@ -602,6 +659,7 @@ impl Glyph {
             case_override: None,
             script_override: None,
             sort_name: None,
+            color_label: None,
             locked: false,
             smart_axes: Vec::new(),
             layers: Vec::new(),
@@ -753,6 +811,9 @@ pub struct Layer {
     /// `vertOrigin`). Unset: the origin is at the typo ascender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vert_origin: Option<f64>,
+    /// This layer's own colour label (SMO-52), drawn beside the glyph's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_label: Option<ColorLabel>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shapes: Vec<Shape>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -908,6 +969,7 @@ impl Layer {
             width,
             vert_width: None,
             vert_origin: None,
+            color_label: None,
             shapes: Vec::new(),
             anchors: Vec::new(),
             metrics_keys: MetricsKeys::default(),

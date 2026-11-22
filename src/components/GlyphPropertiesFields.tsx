@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { GlyphProperty, GlyphSummary } from "../lib/backend";
+import { COLOR_LABELS, labelCss, labelKey, labelName, type ColorLabel } from "../lib/colorLabels";
 import { t } from "../lib/i18n";
 
 const CATEGORIES = ["Letter", "Number", "Punctuation", "Symbol", "Separator", "Mark", "Other"];
@@ -72,5 +73,27 @@ function TextProp({ glyphs, p, caption: label, placeholder, onSet, reset }: { gl
         onBlur={() => { if (draft.trim() !== shown) onSet(p, draft.trim()).catch(() => setDraft(shown)); }}
         onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setDraft(shown); e.currentTarget.blur(); } }} />
     </label>
+  );
+}
+
+/** The twelve label colours and "none" as swatch buttons, for the selected glyphs'
+ *  (or their layers') colour label. */
+export function ColorLabelPicker({ caption, current, onPick }: { caption: string; current: (ColorLabel | undefined)[]; onPick: (label: ColorLabel | null) => Promise<void> }) {
+  const keys = new Set(current.map((c) => (c === undefined ? "" : labelKey(c))));
+  const only = keys.size === 1 ? [...keys][0] : null;
+  const custom = current.find((c) => c !== undefined && typeof c !== "number");
+  return (
+    <div className="field info-field color-label-picker" role="group" aria-label={t(caption)}>
+      <span className="k-caption muted">{t(caption)}{only === null ? ` · ${t("Mixed")}` : ""}</span>
+      <div className="color-swatches">
+        <button type="button" className={`color-swatch-btn is-none${only === "" ? " is-selected" : ""}`} aria-pressed={only === ""} title={t("No colour")} aria-label={t("No colour")} onClick={() => { onPick(null).catch(() => {}); }}>×</button>
+        {COLOR_LABELS.map(([name], i) => (
+          <button key={i} type="button" className={`color-swatch-btn${only === String(i) ? " is-selected" : ""}`} style={{ background: labelCss(i) }} aria-pressed={only === String(i)} title={t(name)} aria-label={t(name)} onClick={() => { onPick(i).catch(() => {}); }} />
+        ))}
+        {custom !== undefined && (
+          <span className={`color-swatch-btn is-custom${only === labelKey(custom) ? " is-selected" : ""}`} style={{ background: labelCss(custom) }} title={t(labelName(custom))} role="img" aria-label={t(labelName(custom))} />
+        )}
+      </div>
+    </div>
   );
 }

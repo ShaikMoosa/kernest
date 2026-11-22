@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { GlyphPropertiesFields } from "./GlyphPropertiesFields";
-import { backend, errorMessage, type FontView, type GlyphFilter, type GlyphProperty, type GlyphSummary, type LanguageCoverage, type MissingGlyph } from "../lib/backend";
+import { GlyphPropertiesFields, ColorLabelPicker } from "./GlyphPropertiesFields";
+import { labelCss, labelKey, labelName } from "../lib/colorLabels";
+import { backend, errorMessage, type FontView, type ColorLabel, type GlyphFilter, type GlyphProperty, type GlyphSummary, type LanguageCoverage, type MissingGlyph } from "../lib/backend";
 import { SearchIcon } from "./Icons";
 import { t, tn } from "../lib/i18n";
 import { ColorGlyph } from "./ColorGlyph";
@@ -75,8 +76,14 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen, drag, dragging, dr
   // Square view box centred on the advance width, so every glyph uses the same scale.
   const x0 = glyph.width / 2 - h / 2;
   const empty = !glyph.svg;
+  // Colour labels: the glyph's fills the cell, the layer's the right half (Glyphs' look).
+  const tint: React.CSSProperties = {};
+  const g = glyph.colorLabel !== undefined ? labelCss(glyph.colorLabel, 0.38) : null;
+  const l = glyph.layerColorLabel !== undefined ? labelCss(glyph.layerColorLabel, 0.38) : null;
+  if (g || l) tint.backgroundImage = `linear-gradient(to right, ${g ?? "transparent"} 50%, ${l ?? g} 50%)`;
+  const labels = [glyph.colorLabel !== undefined ? t(labelName(glyph.colorLabel)) : null, glyph.layerColorLabel !== undefined ? t("layer: {colour}", { colour: t(labelName(glyph.layerColorLabel)) }) : null].filter(Boolean).join(", ");
   return (
-    <button className={`glyph-cell${selected ? " is-selected" : ""}${empty ? " is-empty" : ""}${dragging ? " is-dragging" : ""}${drop ? " is-drop" : ""}`} {...drag} onClick={onSelect} onDoubleClick={onOpen} title={t("{name} — double-click to edit", { name: glyph.name })}>
+    <button className={`glyph-cell${selected ? " is-selected" : ""}${empty ? " is-empty" : ""}${dragging ? " is-dragging" : ""}${drop ? " is-drop" : ""}`} style={tint} {...drag} onClick={onSelect} onDoubleClick={onOpen} title={labels ? `${t("{name} — double-click to edit", { name: glyph.name })} (${labels})` : t("{name} — double-click to edit", { name: glyph.name })}>
       <span className="glyph-art">
         {empty ? (
           <span className="glyph-placeholder">{glyph.character?.trim() ? glyph.character : ""}</span>
@@ -106,8 +113,10 @@ function GlyphCell({ glyph, font, selected, onSelect, onOpen, drag, dragging, dr
 }
 
 /** S03 · Font View — grid of glyphs with category sidebar and glyph info. */
-export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetUnicodes, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing, onAddNamed, onSetDirection, onSetVertical, onSetGlyphProperty }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetUnicodes?: (glyph: string, text: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void>; onAddNamed?: (name: string) => void; onSetDirection?: (glyph: string, direction: string) => Promise<void>; onSetVertical?: (glyph: string, which: "advance" | "tsb" | "bsb" | "reset", value: number | null) => Promise<void>; onSetGlyphProperty?: (names: string[], property: GlyphProperty, value: string) => Promise<void> }) {
+export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyphs, onSetExport, onSetFilters, onSetTags, onSetProductionName, onSetUnicodes, onSetGroups, onRenameGlyphs, onBatch, onReorder, onSetMetric, onRenameGlyph, onAddMissing, onAddNamed, onSetDirection, onSetVertical, onSetGlyphProperty, onSetColorLabel }: { font: FontView; onOpenGlyph: (name: string) => void; onSelectionChange?: (names: string[]) => void; onAddGlyphs?: () => void; onSetExport?: (names: string[], exportGlyph: boolean) => void; onSetFilters?: (filters: GlyphFilter[]) => Promise<void>; onSetTags?: (glyph: string, tags: string[]) => Promise<void>; onSetProductionName?: (glyph: string, name: string) => Promise<void>; onSetUnicodes?: (glyph: string, text: string) => Promise<void>; onSetGroups?: (glyph: string, left: string | null, right: string | null) => Promise<void>; onRenameGlyphs?: () => void; onBatch?: (operation: string) => void; onReorder?: (order: string[]) => void; onSetMetric?: (glyph: string, metric: "lsb" | "rsb" | "width", value: number) => Promise<void>; onRenameGlyph?: (glyph: string, name: string) => void; onAddMissing?: (language: string) => Promise<void>; onAddNamed?: (name: string) => void; onSetDirection?: (glyph: string, direction: string) => Promise<void>; onSetVertical?: (glyph: string, which: "advance" | "tsb" | "bsb" | "reset", value: number | null) => Promise<void>; onSetGlyphProperty?: (names: string[], property: GlyphProperty, value: string) => Promise<void>; onSetColorLabel?: (names: string[], layer: string | null, label: ColorLabel | null) => Promise<void> }) {
   const [category, setCategory] = useState<string>("All");
+  // Sidebar › Colours: show only glyphs with this label (glyph or layer).
+  const [colorFilter, setColorFilter] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<"grid" | "list">(() => (localStorage.getItem("kernest.fontViewMode") === "list" ? "list" : "grid"));
@@ -173,13 +182,30 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
     const q = query.trim().toLowerCase();
     return font.glyphs.filter((g) => {
       if (filterMatch && !filterMatch.has(g.name)) return false;
+      if (colorFilter !== null && ![g.colorLabel, g.layerColorLabel].some((c) => c !== undefined && labelKey(c) === colorFilter)) return false;
       if (category === "Incompatible") { if (g.compatible) return false; }
       else if (category === "Interpolation warnings") { if (!g.compatible || !g.interpolationWarnings) return false; }
       else if (category !== "All" && g.category !== category) return false;
       if (!q) return true;
       return g.name.toLowerCase().includes(q) || g.unicode?.toLowerCase() === q.replace(/^u\+/, "") || g.character === query.trim();
     });
-  }, [font.glyphs, category, query, filterMatch]);
+  }, [font.glyphs, category, query, filterMatch, colorFilter]);
+  // The labels in use, for Sidebar › Colours: key, label, how many glyphs carry it.
+  const colorCounts = useMemo(() => {
+    const m = new Map<string, { label: ColorLabel; n: number }>();
+    for (const g of font.glyphs) {
+      const seen = new Set<string>();
+      for (const c of [g.colorLabel, g.layerColorLabel]) {
+        if (c === undefined) continue;
+        const k = labelKey(c);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const e = m.get(k);
+        if (e) e.n += 1; else m.set(k, { label: c, n: 1 });
+      }
+    }
+    return [...m.entries()].sort((a, b) => (typeof a[1].label === "number" ? a[1].label : 99) - (typeof b[1].label === "number" ? b[1].label : 99));
+  }, [font.glyphs]);
 
   const drawn = font.glyphs.filter((g) => g.svg).length;
   // "144 glyphs · Latin" when everything shown is in one script.
@@ -462,6 +488,10 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
           <span className="k-caption">{selectedGlyphs.length > 1 ? t("Export these glyphs") : t("Export this glyph")}</span>
         </label>
       )}
+      {selectedGlyphs.length > 0 && onSetColorLabel && <>
+        <ColorLabelPicker caption="Colour label" current={selectedGlyphs.map((g) => g.colorLabel)} onPick={(c) => onSetColorLabel(selectedGlyphs.map((g) => g.name), null, c)} />
+        <ColorLabelPicker caption="Layer colour" current={selectedGlyphs.map((g) => g.layerColorLabel)} onPick={(c) => onSetColorLabel(selectedGlyphs.map((g) => g.name), font.masterId, c)} />
+      </>}
       {selectedGlyphs.length > 0 && onSetGlyphProperty && <GlyphPropertiesFields glyphs={selectedGlyphs} onSet={onSetGlyphProperty} />}
     </section>
   );
@@ -484,6 +514,19 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
             </li>
           ))}
         </ul>
+        {colorCounts.length > 0 && <>
+          <p className="k-overline muted sidebar-heading">{t("Colours")}</p>
+          <ul className="list">
+            {colorCounts.map(([k, { label, n }]) => (
+              <li key={k}>
+                <button className={`list-item${colorFilter === k ? " is-selected" : ""}`} aria-pressed={colorFilter === k} onClick={() => setColorFilter(colorFilter === k ? null : k)}>
+                  <span className="color-label-name"><span className="color-swatch" style={{ background: labelCss(label) }} aria-hidden="true" />{t(labelName(label))}</span>
+                  <span className="list-meta">{n}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>}
         <p className="k-overline muted sidebar-heading">{t("Languages")}</p>
         <ul className="list">
           {languages.map((l) => (
@@ -591,11 +634,11 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
             <div className="empty">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="empty-icon" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2" /></svg>
               <p className="k-subtitle">{query.trim() ? t("No glyphs match “{query}”", { query }) : t("No glyphs here")}</p>
-              {(category !== "All" || activeFilter) && (
+              {(category !== "All" || activeFilter || colorFilter !== null) && (
                 <p className="k-caption muted">{t("Showing: {what}", { what: activeFilter ?? t(category) })}</p>
               )}
               <div className="row">
-                <button className="btn btn-primary" onClick={() => { setQuery(""); setCategory("All"); setActiveFilter(null); }}>{t("Clear search & filters")}</button>
+                <button className="btn btn-primary" onClick={() => { setQuery(""); setCategory("All"); setActiveFilter(null); setColorFilter(null); }}>{t("Clear search & filters")}</button>
                 {onAddNamed && /^[A-Za-z_.][A-Za-z0-9_.\-]*$/.test(query.trim()) && (
                   <button className="btn btn-secondary" onClick={() => { const name = query.trim(); setQuery(""); setCategory("All"); setActiveFilter(null); onAddNamed(name); }}>
                     {t("Add “{name}” as a new glyph", { name: query.trim() })}

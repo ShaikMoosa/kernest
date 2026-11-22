@@ -102,6 +102,15 @@ The **Font** tab shows every glyph as a cell. Switch between **Grid** and **List
   - They also set export's GDEF classes: a glyph with the category **Mark** is a mark, and one with the subcategory **Ligature** is a ligature.
   - **Case** splits letters into upper and lower case; small caps, minor and other count as letters without case.
 - **Sort name** (Glyph Properties) is the name the list view sorts the Name column by, for example to keep `f_i` next to `f`.
+- **Colour labels** help you track work and don't affect exported fonts. In Glyph Properties:
+  - **Colour label** gives the selected glyphs one of Glyphs' twelve colours; **×** removes it.
+  - **Layer colour** labels their layer in the shown master instead.
+- **Where labels show:**
+  - **Grid:** the glyph's colour tints the whole cell, and a layer colour tints the right half.
+  - **List:** the **Colour** column shows both.
+  - **Sidebar:** **Colours** lists the labels in use; click one to show only those glyphs.
+  - **Editor:** the Layers panel shows each layer's colour.
+- **Files:** Glyphs files keep labels as `color` on the glyph and the layer, including the RGBA colours Glyphs 3 allows, and UFOs as `public.markColor`. A font with labels saves at format version 21.
 - Glyphs files keep these as `category`, `subCategory`, `case`, `script` and `sortName`, and UFOs in the glyph lib under the keys glyphsLib uses. A font with any of them saves at format version 20.
 
 ### Rename and batch commands

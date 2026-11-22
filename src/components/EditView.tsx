@@ -2775,6 +2775,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
                         <button type="button" role="option" aria-selected={current} disabled={!switchable} className={`layer-row${current ? " is-selected" : ""}`}
                           title={switchable ? undefined : t("Switch masters with the master buttons at the top of the window")}
                           onClick={() => onPickLayer?.(l.key)}>
+                          {l.labelColor && <span className="color-swatch" style={{ background: `rgb(${l.labelColor[0]} ${l.labelColor[1]} ${l.labelColor[2]} / ${(l.labelColor[3] / 255).toFixed(3)})` }} role="img" aria-label={t("Layer colour")} title={t("Layer colour")} />}
                           <span className="layer-name">{l.kind === "brace" ? `{${l.label}}` : l.kind === "color" ? t("Colour {n}", { n: l.label }) : l.label}</span>
                           <span className="k-caption muted">{l.kind === "master" ? t("master") : l.kind === "brace" ? t("intermediate") : l.kind === "bracket" ? t("alternate") : l.kind === "smart" ? t("smart pole") : l.kind === "color" ? t("colour") : t("backup")}</span>
                         </button>

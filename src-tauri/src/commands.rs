@@ -127,6 +127,12 @@ pub struct GlyphSummary {
     script_override: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sort_name: Option<String>,
+    /// Colour labels (SMO-52): the glyph's, and its layer's in the shown master, as
+    /// the stored label (index or RGBA) plus RGBA for drawing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color_label: Option<kernest_core::ColorLabel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layer_color_label: Option<kernest_core::ColorLabel>,
     export: bool,
     width: f64,
     lsb: Option<f64>,
@@ -453,6 +459,8 @@ fn font_view_of(doc: &Document, master_id: Option<&str>) -> CmdResult<FontView> 
                 case_override: g.case_override.clone(),
                 script_override: g.script_override.clone(),
                 sort_name: g.sort_name.clone(),
+                color_label: g.color_label,
+                layer_color_label: layer.and_then(|l| l.color_label),
                 export: g.export,
                 width: layer.map_or(0.0, |l| l.width),
                 lsb: sb.map(|s| s.0),

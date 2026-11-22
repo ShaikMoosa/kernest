@@ -30,6 +30,9 @@ pub struct LayerInfo {
     /// A colour layer's paint.
     #[serde(skip_serializing_if = "Option::is_none")]
     paint: Option<Paint>,
+    /// The layer's colour label as RGBA (SMO-52).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label_color: Option<[u8; 4]>,
 }
 
 /// Every layer of a glyph: master layers in master order, then brace and bracket layers.
@@ -54,6 +57,7 @@ pub fn glyph_layers(state: State<AppState>, glyph: String) -> CmdResult<Vec<Laye
             location: None,
             bracket: Vec::new(),
             paint: None,
+            label_color: l.color_label.map(|c| c.rgba()),
         })
         .collect();
     out.extend(g.layers.iter().filter(|l| !l.is_master()).map(|l| {
@@ -84,6 +88,7 @@ pub fn glyph_layers(state: State<AppState>, glyph: String) -> CmdResult<Vec<Laye
             location: l.location.clone(),
             bracket: l.bracket.clone(),
             paint: l.color.as_ref().map(|c| c.paint.clone()),
+            label_color: l.color_label.map(|c| c.rgba()),
         }
     }));
     Ok(out)

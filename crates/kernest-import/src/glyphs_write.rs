@@ -309,7 +309,8 @@ fn layer_body(l: &Layer) -> String {
 
 fn layer_body_with(l: &Layer, attr: Option<&str>) -> String {
     format!(
-        "{}{}{}{}{}{}{}{}{}width = {};",
+        "{}{}{}{}{}{}{}{}{}{}width = {};",
+        color_label(l.color_label),
         annotations(l),
         background_image(l),
         metrics_keys(l),
@@ -321,6 +322,23 @@ fn layer_body_with(l: &Layer, attr: Option<&str>) -> String {
         vertical(l),
         num(l.width)
     )
+}
+
+/// A colour label as Glyphs writes it: `color = 4;` or `color = (r,g,b,a);`.
+fn color_label(c: Option<kernest_core::ColorLabel>) -> String {
+    match c {
+        None => String::new(),
+        Some(kernest_core::ColorLabel::Index(i)) => format!(
+            "color = {i};
+"
+        ),
+        Some(kernest_core::ColorLabel::Rgba([r, g, b, a])) => {
+            format!(
+                "color = ({r},{g},{b},{a});
+"
+            )
+        }
+    }
 }
 
 /// The layer's vertical origin and width (Glyphs' `vertOrigin`, `vertWidth`).
@@ -737,6 +755,7 @@ fn glyph(font: &Font, g: &Glyph) -> String {
     if let Some(d) = g.direction {
         let _ = writeln!(s, "direction = {};", d.as_str());
     }
+    s.push_str(&color_label(g.color_label));
     if g.locked {
         s.push_str("locked = 1;\n");
     }
