@@ -1082,6 +1082,8 @@ export interface Backend {
   setMasterPaint(glyph: string, key: string, masterId: string, paint: Paint): Promise<{ key: string; status: DocStatus }>;
   /** Reads one master's paint and effective palette for a colour layer. */
   masterColorPaint(glyph: string, key: string, masterId: string): Promise<{ paint: Paint; palette: string[] }>;
+  /** Opens (or brings forward) the separate preview window (SMO-36). */
+  openPreviewWindow(): Promise<void>;
   /** Moves a colour layer up or down the stack. */
   moveColorLayer(glyph: string, key: string, up: boolean): Promise<{ key: string; status: DocStatus }>;
   /** Adds a master copied from `copyFrom` (outlines, metrics, kerning). */
@@ -1608,6 +1610,7 @@ const tauriBackend: Backend = {
   setColorPaint: (glyph, key, paint) => invoke("set_color_paint", { glyph, key, paint }),
   setMasterPaint: (glyph, key, masterId, paint) => invoke("set_master_paint", { glyph, key, masterId, paint }),
   masterColorPaint: (glyph, key, masterId) => invoke("master_color_paint", { glyph, key, masterId }),
+  openPreviewWindow: () => invoke("open_preview_window"),
   moveColorLayer: (glyph, key, up) => invoke("move_color_layer", { glyph, key, up }),
   setAxes: (axes) => invoke("set_axes", { axes }),
   addMaster: (copyFrom, name, location) => invoke("add_master", { copyFrom, name, location }),
@@ -2592,6 +2595,9 @@ const mockBackend: Backend = {
   },
   async masterColorPaint() {
     throw "Colour fonts need the desktop app (npm run tauri dev).";
+  },
+  async openPreviewWindow() {
+    throw "The preview window needs the desktop app (npm run tauri dev).";
   },
   async moveColorLayer() {
     throw "Colour fonts need the desktop app (npm run tauri dev).";

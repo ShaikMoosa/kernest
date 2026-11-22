@@ -49,6 +49,8 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: "show-background", label: "Show Background", default: "Ctrl+Shift+B", scope: "global" },
   { id: "show-bounding-box", label: "Show Bounding Box", default: "Ctrl+Alt+Shift+B", scope: "global" },
   { id: "macro-panel", label: "Macro Panel", default: "Ctrl+Shift+P", scope: "global" },
+  { id: "show-preview", label: "Show Preview", default: "Ctrl+Alt+P", scope: "global" },
+  { id: "preview-window", label: "Preview Window", default: "Ctrl+Alt+Shift+P", scope: "font" },
   { id: "settings", label: "Settings", default: "Ctrl+,", scope: "global" },
   // Text tabs (SMO-35). Holding Shift as well takes steps of 10 units.
   { id: "text-kern-decrease", label: "Decrease Kerning", default: "Alt+Left", scope: "text", allowInField: false },

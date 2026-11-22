@@ -501,6 +501,19 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .text-preview-row svg { fill: var(--k-bg-app); flex: none; }
 .text-preview-name { width: 72px; flex: none; color: var(--k-bg-subtle); opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .text-preview-row.is-current .text-preview-name { opacity: 1; font-weight: 600; }
+/* SMO-36 · Preview pane under the Edit View, and the preview window. */
+.preview-dock { flex: none; display: flex; flex-direction: column; min-height: 80px; border-top: 1px solid var(--k-border-default); }
+.preview-resizer { flex: none; height: 6px; margin-top: -3px; cursor: row-resize; background: transparent; position: relative; z-index: 1; }
+.preview-resizer:hover, .preview-resizer:focus-visible { background: var(--k-accent-default); outline: none; }
+.preview-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--k-bg-app); color: var(--k-text-primary); }
+.preview-pane.is-inverted { background: #000; color: #fff; }
+.preview-pane-bar { flex: none; display: flex; align-items: center; gap: var(--k-space-8); padding: var(--k-space-6) var(--k-space-12); background: var(--k-bg-subtle); border-bottom: 1px solid var(--k-border-default); color: var(--k-text-primary); }
+.preview-pane-text { width: 240px; min-width: 120px; }
+.preview-pane-body { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: center; }
+.preview-pane-body svg { flex: none; fill: currentColor; }
+.preview-pane-empty { padding: var(--k-space-12) var(--k-space-16); }
+.preview-pane.is-inverted .preview-pane-empty { color: #bbb; }
+.preview-window { height: 100vh; display: flex; flex-direction: column; background: var(--k-bg-app); }
 .text-hint { padding: var(--k-space-6) var(--k-space-12); border-top: 1px solid var(--k-border-default); background: var(--k-bg-app); }
 .kern-search { width: 260px; }
 .kern-table-wrap { flex: 1; overflow: auto; background: var(--k-bg-surface); }
