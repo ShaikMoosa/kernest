@@ -401,7 +401,7 @@ export const ENGINE_MESSAGES = [
   "the font has an invalid units-per-em value.",
   "No outlines could be drawn from this font.",
   "Compiled fonts have no editable components or feature code; outlines were imported as paths and features were left out.",
-  "This is a variable font. Kernest drew {n} masters (the default and each axis extreme); intermediate masters and named instances beyond these are approximations.",
+  "This is a variable font. Kernest drew {n} masters (the default and each axis extreme that differs from it); intermediate masters and named instances beyond these are approximations.",
   "Glyph categories (GDEF classes) are re-derived by Kernest from names and unicodes, not imported.",
   "{n} kerning value{s} used class 0 (no group) and {was} left out.",
   "Mark anchors were imported from GPOS with generated names (mark0, mark1, …); rename them to match your anchor scheme.",

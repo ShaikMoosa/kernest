@@ -316,6 +316,32 @@ fn hinted_variable_font_has_no_empty_cvar() {
     assert_eq!(repair, kernest_export::cvar::Repair::Unchanged);
 }
 
+/// A variable font whose axis minimum equals its default (wght 400–700, default 400)
+/// imports as two masters, not a third "Weight min" on top of the default.
+#[test]
+fn compiled_variable_font_skips_extreme_at_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Square.glyphs");
+    fs::write(&path, square_glyphs()).unwrap();
+    let f = import(&path).unwrap().font;
+    let out = dir.path().join("out");
+    let r = kernest_export::export(&f, &kernest_export::ExportOptions::ttf(true, false, &out))
+        .unwrap();
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    let imp = import(Path::new(&r.files[0].path)).unwrap();
+    let names: Vec<&str> = imp.font.masters.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["Default", "Weight max"]);
+    let locs: Vec<_> = imp.font.masters.iter().map(|m| &m.location).collect();
+    assert_ne!(locs[0], locs[1]);
+    assert!(
+        imp.warnings.iter().any(|w| w.contains("Kernest drew 2 masters")),
+        "{:?}",
+        imp.warnings
+    );
+    // Every glyph has one layer per master.
+    assert!(imp.font.glyphs.iter().all(|g| g.layers.len() == 2));
+}
+
 #[test]
 fn glyphs_disable_masters_round_trip() {
     let mut src = two_masters();

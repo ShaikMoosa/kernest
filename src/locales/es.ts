@@ -1516,7 +1516,7 @@ export const es: Dict = {
   "the font has an invalid units-per-em value.": "la fuente tiene un valor de unidades por em no válido.",
   "No outlines could be drawn from this font.": "No se pudieron dibujar contornos a partir de esta fuente.",
   "Compiled fonts have no editable components or feature code; outlines were imported as paths and features were left out.": "Las fuentes compiladas no tienen componentes editables ni código de funciones; los contornos se importaron como trazados y las funciones se omitieron.",
-  "This is a variable font. Kernest drew {n} masters (the default and each axis extreme); intermediate masters and named instances beyond these are approximations.": "Esta es una fuente variable. Kernest dibujó {n} másteres (el predeterminado y cada extremo de eje); los másteres intermedios y las instancias con nombre más allá de estos son aproximaciones.",
+  "This is a variable font. Kernest drew {n} masters (the default and each axis extreme that differs from it); intermediate masters and named instances beyond these are approximations.": "Esta es una fuente variable. Kernest dibujó {n} másteres (el predeterminado y cada extremo de eje que difiere de él); los másteres intermedios y las instancias con nombre más allá de estos son aproximaciones.",
   "Glyph categories (GDEF classes) are re-derived by Kernest from names and unicodes, not imported.": "Kernest vuelve a deducir las categorías de glifos (clases GDEF) a partir de nombres y unicodes; no se importan.",
   "{n} kerning value{s} used class 0 (no group) and {was} left out.": {
     one: "{n} valor de kerning usaba la clase 0 (sin grupo) y se omitió.",
