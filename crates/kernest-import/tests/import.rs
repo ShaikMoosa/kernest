@@ -2552,3 +2552,64 @@ fn super_smooth_nodes_round_trip() {
     assert!(back.smooth && !back.g2);
     assert!((back.x - before.x).abs() < 0.01 && (back.y - before.y).abs() < 0.01);
 }
+
+/// SMO-54: glyph property overrides survive .kernest (format 20), .glyphs and UFO.
+#[test]
+fn glyph_property_overrides_round_trip() {
+    let src = sample_font();
+    let mut f = src.clone();
+    for (prop, value) in [
+        ("category", "Mark"),
+        ("subCategory", "Nonspacing"),
+        ("case", "smallCaps"),
+        ("script", "greek"),
+        ("sortName", "a.sort"),
+    ] {
+        f = kernest_core::glyphprops::set(&f, &["a".into()], prop, value).unwrap();
+    }
+    f.glyph_mut("a").unwrap().production_name = Some("uni0061.prod".into());
+    let want = f.glyph("a").unwrap().clone();
+    let check = |g: &kernest_core::Glyph, sort: bool, prod: bool| {
+        assert_eq!(g.category_override, want.category_override);
+        assert_eq!(g.subcategory_override, want.subcategory_override);
+        assert_eq!(g.case_override, want.case_override);
+        assert_eq!(g.script_override, want.script_override);
+        if sort {
+            assert_eq!(g.sort_name, want.sort_name);
+        }
+        if prod {
+            assert_eq!(g.production_name, want.production_name);
+        }
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let pkg = dir.path().join("Props.kernest");
+    kernest_core::package::save(&f, &pkg).unwrap();
+    let meta = fs::read_to_string(pkg.join("font.json")).unwrap();
+    assert!(meta.contains("20"), "format 20");
+    check(
+        kernest_core::package::open(&pkg)
+            .unwrap()
+            .glyph("a")
+            .unwrap(),
+        true,
+        true,
+    );
+
+    let glyphs = dir.path().join("Props.glyphs");
+    kernest_import::write_glyphs(&f, &glyphs).unwrap();
+    let text = fs::read_to_string(&glyphs).unwrap();
+    for key in [
+        "category = Mark;",
+        "subCategory = Nonspacing;",
+        "case = smallCaps;",
+        "script = greek;",
+        "sortName = a.sort;",
+        "production = uni0061.prod;",
+    ] {
+        assert!(text.contains(key), "{key}");
+    }
+    let back = import(&glyphs).unwrap().font;
+    check(back.glyph("a").unwrap(), true, true);
+    // Glyphs without overrides stay automatic.
+    assert!(back.glyph("b").unwrap().category_override.is_none());
+}

@@ -550,6 +550,23 @@ fn build(
             g.export = !skip.contains(n);
             g.note = src.note.clone().filter(|s| !s.is_empty());
             g.production_name = ps_names.get(n).cloned();
+            // Property overrides glyphsLib (and Kernest) keep in the glyph lib.
+            for key in ["category", "subCategory", "case", "script"] {
+                if let Some(v) = src
+                    .lib
+                    .get(&format!("com.schriftgestaltung.Glyphs.{key}"))
+                    .and_then(|v| v.as_string())
+                {
+                    if let Ok(Some(v)) = kernest_core::glyphprops::normalize(key, v) {
+                        match key {
+                            "category" => g.category_override = Some(v),
+                            "subCategory" => g.subcategory_override = Some(v),
+                            "case" => g.case_override = Some(v),
+                            _ => g.script_override = Some(v),
+                        }
+                    }
+                }
+            }
             for (k, &i) in order.iter().enumerate() {
                 if let Some(ug) = sources[i].2.get_glyph(n) {
                     let mut l = layer(&master_id(k), ug, &mut open_points);

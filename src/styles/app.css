@@ -1118,3 +1118,7 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .notes-preview p, .notes-preview ul { margin: 0 0 var(--k-space-6); }
 .notes-preview code { font-family: var(--k-font-code); background: var(--k-bg-subtle); padding: 0 4px; border-radius: var(--k-radius-sm); }
 .notes-preview a { color: var(--k-text-accent); }
+.glyph-overrides { border: 0; margin: var(--k-space-8) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--k-space-8); min-width: 0; }
+.glyph-overrides .row { display: flex; gap: var(--k-space-8); }
+.glyph-overrides .glyph-prop { flex: 1; min-width: 0; }
+.glyph-prop-reset { margin-inline-start: var(--k-space-4); }

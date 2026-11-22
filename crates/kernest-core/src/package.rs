@@ -50,7 +50,7 @@ use crate::model::{
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 19;
+pub const FORMAT_VERSION: u32 = 20;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -301,11 +301,20 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
                 .any(|s| matches!(s, crate::model::Shape::Path(p) if p.nodes.iter().any(|n| n.g2)))
         })
     });
+    let has_v20 = font.glyphs.iter().any(|g| {
+        g.category_override.is_some()
+            || g.subcategory_override.is_some()
+            || g.case_override.is_some()
+            || g.script_override.is_some()
+            || g.sort_name.is_some()
+    });
     let has_vertical =
         font.info.use_typo_metrics || font.masters.iter().any(|m| !m.vertical.is_empty());
     let file = FontFile {
-        format_version: if has_v19 {
+        format_version: if has_v20 {
             FORMAT_VERSION
+        } else if has_v19 {
+            19
         } else if has_v18 {
             18
         } else if has_v17 {

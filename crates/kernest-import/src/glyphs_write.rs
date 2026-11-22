@@ -721,7 +721,18 @@ fn glyph(font: &Font, g: &Glyph) -> String {
         let _ = writeln!(s, "kernRight = {};", q(k));
     }
     if let Some(p) = &g.production_name {
-        let _ = writeln!(s, "productionName = {};", q(p));
+        let _ = writeln!(s, "production = {};", q(p));
+    }
+    for (key, v) in [
+        ("category", &g.category_override),
+        ("subCategory", &g.subcategory_override),
+        ("case", &g.case_override),
+        ("script", &g.script_override),
+        ("sortName", &g.sort_name),
+    ] {
+        if let Some(v) = v {
+            let _ = writeln!(s, "{key} = {};", q(v));
+        }
     }
     if let Some(d) = g.direction {
         let _ = writeln!(s, "direction = {};", d.as_str());

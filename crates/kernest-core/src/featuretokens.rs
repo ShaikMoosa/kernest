@@ -552,9 +552,9 @@ fn attribute(font: &Font, g: &Glyph, key: &str) -> Option<Val> {
             c => c.label(),
         }),
         "subCategory" => {
-            let sub = glyphdata::subcategory(cp, &g.name);
+            let sub = g.subcategory();
             if !sub.is_empty() {
-                s(sub)
+                s(&sub)
             } else {
                 s(match cat {
                     Category::Uppercase => "Uppercase",
@@ -563,9 +563,9 @@ fn attribute(font: &Font, g: &Glyph, key: &str) -> Option<Val> {
                 })
             }
         }
-        "case" => s(case_of(g)),
-        "script" => s(&glyphdata::script_of(g).to_ascii_lowercase()),
-        "direction" => s(match glyphdata::script_of(g) {
+        "case" => s(g.case_override.as_deref().unwrap_or(case_of(g))),
+        "script" => s(&g.script().to_ascii_lowercase()),
+        "direction" => s(match g.script().as_str() {
             "Arabic" | "Hebrew" => "RTL",
             _ => "LTR",
         }),

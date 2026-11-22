@@ -53,6 +53,20 @@ pub fn glyph(font: &Font, gname: &str, layer: &Layer) -> Result<Glyph, String> {
     out.guidelines = guidelines(&layer.guides);
     if let Some(g) = font.glyph(gname) {
         out.codepoints = Codepoints::new(g.unicodes.iter().filter_map(|c| c.char()));
+        // Glyph property overrides, under the keys glyphsLib uses.
+        for (key, v) in [
+            ("category", &g.category_override),
+            ("subCategory", &g.subcategory_override),
+            ("case", &g.case_override),
+            ("script", &g.script_override),
+        ] {
+            if let Some(v) = v {
+                out.lib.insert(
+                    format!("com.schriftgestaltung.Glyphs.{key}"),
+                    plist::Value::String(v.clone()),
+                );
+            }
+        }
     }
     for s in &layer.shapes {
         match s {
@@ -232,6 +246,13 @@ fn open_type_category(font: &Font, gname: &str, layer: &Layer) -> Option<&'stati
         .is_some_and(|g| g.category() == Category::Mark)
     {
         return Some("mark");
+    }
+    // A glyph given the Ligature subcategory is a ligature whatever its name.
+    if font
+        .glyph(gname)
+        .is_some_and(|g| g.subcategory_override.as_deref() == Some("Ligature"))
+    {
+        return Some("ligature");
     }
     let base = gname.split('.').next().unwrap_or(gname);
     let caret = layer

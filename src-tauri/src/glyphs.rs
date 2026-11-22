@@ -248,6 +248,28 @@ pub fn set_production_name(
     Ok(status(doc))
 }
 
+/// Sets a glyph property override (category, subCategory, case, script or sortName)
+/// on the given glyphs; an empty value goes back to automatic. One undoable step.
+#[tauri::command]
+pub fn set_glyph_property(
+    state: State<AppState>,
+    glyphs: Vec<String>,
+    property: String,
+    value: String,
+) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let next = kernest_core::glyphprops::set(&doc.font, &glyphs, &property, &value)?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    Ok(status(doc))
+}
+
 /// Sets a glyph's writing direction (`LTR`, `RTL`, `BIDI`; empty for automatic).
 /// One undoable step.
 #[tauri::command]

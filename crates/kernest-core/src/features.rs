@@ -77,7 +77,7 @@ fn positional(font: &Font) -> BTreeMap<String, Vec<String>> {
         let Some(b) = font.glyph(base).filter(|b| b.export) else {
             continue;
         };
-        let script = ot_script(crate::glyphdata::script_of(b));
+        let script = ot_script(&b.script());
         by_tag
             .entry(tag)
             .or_default()
@@ -109,7 +109,7 @@ fn positional_scripts(font: &Font) -> BTreeSet<&'static str> {
         .filter_map(|g| {
             let (base, suf) = g.name.rsplit_once('.')?;
             POSITIONAL.contains(&suf).then_some(())?;
-            ot_script(crate::glyphdata::script_of(font.glyph(base)?))
+            ot_script(&font.glyph(base)?.script())
         })
         .filter(|s| *s != "latn")
         .collect()

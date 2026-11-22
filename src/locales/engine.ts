@@ -9,6 +9,12 @@
  * the dictionaries (npm run check:i18n lists what's missing).
  */
 export const ENGINE_MESSAGES = [
+  "\"{value}\" isn't a category; use one of {list}.",
+  "\"{value}\" isn't a case; use one of {list}.",
+  "\"{value}\" can't be used as a subcategory: use letters and spaces, at most 40.",
+  "\"{value}\" can't be used as a script: use letters and digits, like latin or arabic.",
+  "\"{value}\" can't be used as a sort name: no spaces, at most 63 characters.",
+  "Select glyphs first.",
   "Snap distance must be between 0 and 30 pixels.",
   "Select closed paths to combine.",
   "Subtract and Intersect need another closed path to work on.",
