@@ -311,6 +311,7 @@ A guide is a straight reference line to align stems, serifs or whole glyphs agai
 - **Move:** drag a guide to slide it. While you drag a node near a guide, the node snaps onto it.
 - **Edit:** double-click a guide to open its panel: position (X, Y), angle, a name, and a lock. A locked guide can't be dragged until you unlock it.
 - **Make global / Make local** in the panel moves the guide between the layer and the master, keeping its position, angle, name and lock.
+- **Measure** in the panel makes it a **measurement guide**: wherever it crosses the outline (components included) a small square is drawn, with the distance between each pair of crossings, as with the Measure tool. Unlike the tool, a measurement guide keeps showing its numbers whatever tool is active, as long as guides are shown. A global measurement guide measures every glyph of its master. Measurement guides are kept in Glyphs files (`showMeasurement`).
 - **Delete** removes the selected guide.
 - **Show or hide:** View › Show Guides (Ctrl+Shift+L).
 
@@ -450,6 +451,7 @@ An anchor is a named point that tells other glyphs where to sit: a mark above a 
 
     The sidebearing keys act on the glyph after the cursor (or before it, at the end of a line). A sidebearing linked by a metrics key is left alone, and the status bar says so. With **No kerning** chosen in the Kerning preview menu the kerning keys are off, and with **Kerning, spacing locked** the spacing keys are. Change any of these keys in **Settings › Shortcuts**.
   - **Kerning bars:** each kerned pair shows a bar under the baseline, as wide as the kerning: red where the glyphs move closer, green where they move apart, with the value below it. Exceptions have a dashed bar and a diamond marker. Hover a bar to see the pair it comes from (for example `@A | @V`); click it to open the **Kerning window** with that pair selected.
+  - **Measurement line:** tick **Measure** in the toolbar (or press Ctrl+Alt+M) to draw a dashed line across the text at one height, half the x-height at first. For every glyph it shows the distance from the glyph's left edge to where the line first meets the outline, the distances between crossings (stems and counters), and from the last crossing to the right edge. Type a height in the field next to **Measure**, or drag the round grip at the start of the line. The setting and height are remembered. The line measures the current master, so it is hidden in vertical text, in Shape preview and while previewing another location.
   - **Kerning preview** (the menu next to the kerning mode) has three settings, remembered between sessions:
     - **No kerning** sets the text without kerning, also in Shape preview and the Preview strip, and turns the kerning shortcuts and fields off. Use it to judge the spacing alone.
     - **Show kerning** (the default) shows and edits kerning as above.
@@ -808,6 +810,7 @@ Every command is in the menu bar: File, Edit, Glyph, Path, Filter, View, Script,
 | Text tab: move the outline inside its width | Ctrl+Alt+↑ / Ctrl+Alt+↓ |
 | Text tab: make or remove a kerning exception | Ctrl+Alt+E |
 | Text tab: left to right / right to left / vertical | Ctrl+Alt+Shift+L / R / V |
+| Text tab: show the measurement line | Ctrl+Alt+M |
 | Font Info / Export | Ctrl+I / Ctrl+E |
 | Macro Panel / Settings | Ctrl+Shift+P / Ctrl+, |
 | Show Preview / Preview Window | Ctrl+Alt+P / Ctrl+Alt+Shift+P |

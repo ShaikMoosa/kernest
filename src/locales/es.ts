@@ -2433,4 +2433,10 @@ export const es: Dict = {
   "Open a text tab or a glyph in the main window to preview it here.": "Abre una pestaña de texto o un glifo en la ventana principal para previsualizarlo aquí.",
   "Keep this window in front of the main window": "Mantener esta ventana delante de la ventana principal",
   "Keep on Top": "Mantener delante",
+  "Measurement guide: show the distances where this guide crosses the outline": "Guía de medición: muestra las distancias donde esta guía cruza el contorno",
+  "Measure": "Medir",
+  "Measurement line: the distances from each glyph's edges to its outline, and between crossings, at one height ({keys})": "Línea de medición: las distancias desde los bordes de cada glifo hasta su contorno, y entre cruces, a una altura ({keys})",
+  "Measurement line height": "Altura de la línea de medición",
+  "Drag to move the measurement line (height {y})": "Arrastra para mover la línea de medición (altura {y})",
+  "Show Measurement Line": "Mostrar línea de medición",
 };

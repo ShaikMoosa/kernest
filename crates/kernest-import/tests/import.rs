@@ -1967,6 +1967,7 @@ fn glyphs_round_trip_keeps_guides_backgrounds_metrics_and_colour() {
             angle: 0.0,
             name: Some("mid".into()),
             locked: true,
+            show_measurement: true,
         }];
         m.vertical.typo_ascender = Some(800.0);
         m.vertical.win_ascent = Some(1100.0);
@@ -1984,6 +1985,7 @@ fn glyphs_round_trip_keeps_guides_backgrounds_metrics_and_colour() {
         angle: 90.0,
         name: None,
         locked: false,
+        show_measurement: false,
     }];
     l.background = Some(Background {
         shapes: outline.clone(),
@@ -2237,6 +2239,7 @@ fn ufo_round_trip_keeps_guides_and_backgrounds() {
         angle: 0.0,
         name: Some("overshoot".into()),
         locked: false,
+        show_measurement: false,
     }];
     let outline = src.glyph("H").unwrap().layer("m01").unwrap().shapes.clone();
     let l = src.glyph_mut("H").unwrap().layer_mut("m02").unwrap();
@@ -2247,6 +2250,7 @@ fn ufo_round_trip_keeps_guides_and_backgrounds() {
             angle: 90.0,
             name: None,
             locked: false,
+            show_measurement: false,
         },
         Guide {
             x: 10.0,
@@ -2254,6 +2258,7 @@ fn ufo_round_trip_keeps_guides_and_backgrounds() {
             angle: 30.0,
             name: Some("slant".into()),
             locked: false,
+            show_measurement: false,
         },
     ];
     l.background = Some(Background {

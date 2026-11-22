@@ -117,11 +117,39 @@ pub fn measure(font: &Font, layer: &Layer, p0: (f64, f64), p1: (f64, f64)) -> Me
     }
 }
 
+/// SMO-37 · The measurement line in text tabs: where a horizontal line at height `y`
+/// crosses the layer's outline (components included), as x positions from left to
+/// right. Crossings at the same place (paths that touch) count once.
+pub fn crossings_at(font: &Font, layer: &Layer, y: f64) -> Vec<f64> {
+    let m = measure(font, layer, (-1.0e6, y), (1.0e6, y));
+    let mut xs: Vec<f64> = Vec::with_capacity(m.hits.len());
+    for h in m.hits {
+        if xs.last().is_none_or(|&last| (h.x - last).abs() > 1e-6) {
+            xs.push(h.x);
+        }
+    }
+    xs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{Path, Shape};
     use crate::sample::sample_font;
+
+    #[test]
+    fn crossings_at_a_height_give_stems_and_sidebearings() {
+        let f = sample_font();
+        let h = f.glyph("H").unwrap().layer(&f.masters[0].id).unwrap();
+        // Below the crossbar the line meets both stems: 80–170 and 510–600.
+        let xs = crossings_at(&f, h, 250.0);
+        assert_eq!(xs.len(), 4);
+        for (got, want) in xs.iter().zip([80.0, 170.0, 510.0, 600.0]) {
+            assert!((got - want).abs() < 1e-6, "{xs:?}");
+        }
+        // Above the cap height there is nothing to cross.
+        assert!(crossings_at(&f, h, 750.0).is_empty());
+    }
 
     fn rect_layer() -> Layer {
         let mut l = Layer::new("m01", 600.0);

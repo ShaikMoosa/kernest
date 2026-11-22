@@ -218,6 +218,12 @@ pub(crate) fn guides(list: &[Guide]) -> String {
                 let _ = writeln!(e, "name = {};", q(n));
             }
             let _ = writeln!(e, "pos = ({},{});", num(g.x), num(g.y));
+            if g.show_measurement {
+                e.push_str(
+                    "showMeasurement = 1;
+",
+                );
+            }
             e.push('}');
             e
         })
