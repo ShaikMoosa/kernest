@@ -21,6 +21,7 @@ mod settings;
 mod spacing;
 mod tools;
 mod updates;
+mod windows;
 
 fn main() {
     let launch_paths = launch::paths_from_args(std::env::args());
@@ -35,7 +36,9 @@ fn main() {
         .manage(settings::SettingsState::default())
         .manage(script::ScriptState::default())
         .manage(launch::LaunchPaths(std::sync::Mutex::new(launch_paths)))
+        .on_window_event(windows::on_window_event)
         .invoke_handler(tauri::generate_handler![
+            windows::open_preview_window,
             commands::glyph_sets,
             launch::take_launch_paths,
             commands::new_font,

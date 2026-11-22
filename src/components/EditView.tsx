@@ -17,6 +17,8 @@ import { combineSelection, extendLasso, insidePolygon, isLassoClick, selectModeF
 import { ColorGlyph } from "./ColorGlyph";
 import { PaintDialog } from "./PaintDialog";
 import { PixelPreviewPanel } from "./PixelPreviewPanel";
+import { PreviewDock } from "./PreviewPane";
+import { defaultPreviewText } from "../lib/previewPane";
 
 type Tool = "select" | "pen" | "rect" | "ellipse" | "knife" | "pixel" | "annotate" | "hoi" | "hand" | "measure";
 type AnnotSub = "select" | Annotation["kind"];
@@ -245,10 +247,18 @@ interface Props {
   onPickLayer?: (key: string) => void;
   /** Enabled reporter plug-ins; their drawing is overlaid on the canvas. */
   reporters?: string[];
+  /** View › Show Preview: the preview pane under the canvas (SMO-36). */
+  showPreview?: boolean;
+  onTogglePreview?: () => void;
+  /** The pane's text, kept by the app per glyph tab. */
+  previewText?: string;
+  onPreviewText?: (text: string) => void;
+  onOpenPreviewWindow?: () => void;
+  onOpenGlyph?: (name: string) => void;
 }
 
 /** S05 · Edit View — draw and edit one glyph layer. */
-export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showZones = true, snapDistance = 6, showBackground = true, showImage = true, showAnnotations = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, onToggleView, masterKey, onPickLayer, reporters = [] }: Props) {
+export function EditView({ glyph, masterId, version, active, glyphs, onCommitted, onStructureChanged, onDrawn, handleSize = "medium", onError, onWarning, showMetrics = true, showAnchors = true, showNodes = true, showGuides = true, showZones = true, snapDistance = 6, showBackground = true, showImage = true, showAnnotations = true, showBoundingBox = false, showSidebar = true, onToggleSidebar, onToggleView, masterKey, onPickLayer, reporters = [], showPreview = false, onTogglePreview, previewText, onPreviewText, onOpenPreviewWindow, onOpenGlyph }: Props) {
   const master = masterKey ?? masterId;
   const nodeScale = handleSize === "small" ? 0.75 : handleSize === "large" ? 1.5 : 1;
   // ---------- Reporter plug-ins ----------
@@ -399,6 +409,9 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   }, [glyph, masterId, master, onCommitted, onPickLayer, onError]);
 
   const [layer, setLayer] = useState<LayerView | null>(null);
+  // Counts this tab's own edits, so the preview pane redraws after each one.
+  const [layerRev, setLayerRev] = useState(0);
+  useEffect(() => setLayerRev((r) => r + 1), [layer]);
   const [paths, setPaths] = useState<EditPath[]>([]);
   const [comps, setComps] = useState<Comp[]>([]);
   const [anchors, setAnchors] = useState<LayerView["anchors"]>([]);
@@ -3257,6 +3270,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         </aside>
       )}
       </div>
+      {showPreview && (
+        <PreviewDock text={previewText ?? defaultPreviewText(glyph)} masterId={master} version={version * 100000 + layerRev}
+          onTextChange={onPreviewText} onOpenGlyph={onOpenGlyph} onOpenWindow={onOpenPreviewWindow} onClose={onTogglePreview} />
+      )}
       <footer className="statusbar k-caption edit-status">
         <span>{t("Layer: {name}", { name: currentLayer ? (currentLayer.kind === "master" ? currentLayer.label : `${currentLayer.masterName} · ${currentLayer.label}`) : master })} · {t("{selected} of {total} nodes selected", { selected: selection.size, total: paths.reduce((n, p) => n + p.nodes.filter(isOn).length, 0) })}</span>
         <span className="spacer" />

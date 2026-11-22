@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
+import { PREVIEW_EVENTS, type PreviewSource } from "./lib/previewEvents";
+import { defaultPreviewText } from "./lib/previewPane";
 import { backend, errorMessage, initialSettings, isTauri, type Appearance, type Milestone, type Onboarding, type UpdateInfo, type BatchOperation, type ClipGlyph, type CompareView, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PasteMode, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement } from "./lib/backend";
 import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, REPO_URL, loadRecents, openExternal, pickCompareSource, pickFeaFile, pickFontToOpen, pickGlyphsSavePath, pickMetricsSource, pickSavePath, pickScript, pickSourceToImport, pickSvgFiles, rememberRecent, showStartAtLaunch, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu, type MenuItem } from "./components/TitleBar";
@@ -117,6 +119,7 @@ export default function App() {
   const [showBoundingBox, toggleBoundingBox] = useViewToggle("kernest.showBoundingBox", false);
   const [showZones, toggleZones] = useViewToggle("kernest.showZones", true);
   const [showSidebar, toggleSidebar] = useViewToggle("kernest.showSidebar", true);
+  const [showPreview, togglePreview] = useViewToggle("kernest.showPreview", false);
   const [importNotes, setImportNotes] = useState<{ source: string; familyName: string; warnings: string[] } | null>(null);
   const [toast, setToast] = useState<{ kind: "info" | "danger"; text: string } | null>(null);
   // ---------- Scripts, plug-ins and settings (phase 6) ----------
@@ -412,6 +415,12 @@ export default function App() {
     setKerningFocus((f) => ({ left, right, seq: (f?.seq ?? 0) + 1 }));
     openTab("kerning");
   }, [openTab]);
+  // SMO-36: the preview pane under glyph tabs (text kept per glyph) and the preview window.
+  const [previewTexts, setPreviewTexts] = useState<Record<string, string>>({});
+  const openPreviewWindow = useCallback(() => {
+    if (!isTauri) return fail(t("The preview window needs the desktop app (npm run tauri dev)."));
+    backend.openPreviewWindow().catch(fail);
+  }, [fail]);
   const navigateTour = useCallback((step: number) => {
     if (!font) return;
     if (step !== 5) setExporting(false);
@@ -471,6 +480,31 @@ export default function App() {
 
   // Bumped on every change, so text and kerning tabs refresh.
   const [docVersion, setDocVersion] = useState(0);
+  // SMO-36: the preview window mirrors the current tab: a text tab's text, or a glyph
+  // tab's preview text. Other tabs, and no font, send null so the window empties.
+  const previewSource = useMemo((): PreviewSource | null => {
+    if (!font || active === null) return null;
+    if (active.startsWith("g:")) {
+      const g = active.slice(2);
+      return { text: previewTexts[g] ?? defaultPreviewText(g), masterId: font.masterId, version: docVersion * 100000 + (versions[g] ?? 0), title: g };
+    }
+    if (active.startsWith("text:")) {
+      const text = textTitles[active] ?? "";
+      return { text, masterId: font.masterId, version: docVersion, title: text };
+    }
+    return null;
+  }, [font, active, previewTexts, textTitles, docVersion, versions]);
+  const previewSourceRef = useRef(previewSource);
+  previewSourceRef.current = previewSource;
+  useEffect(() => { if (isTauri) emit(PREVIEW_EVENTS.source, previewSource).catch(() => {}); }, [previewSource]);
+  useEffect(() => {
+    if (!isTauri) return;
+    const offs = [
+      listen(PREVIEW_EVENTS.ready, () => { emit(PREVIEW_EVENTS.source, previewSourceRef.current).catch(() => {}); }),
+      listen<string>(PREVIEW_EVENTS.openGlyph, (e) => { openGlyph(e.payload); getCurrentWindow().setFocus().catch(() => {}); }),
+    ];
+    return () => { offs.forEach((p) => p.then((f) => f())); };
+  }, [openGlyph]);
   // Glyph tabs showing a brace or bracket layer instead of the current master's layer.
   const [layerOf, setLayerOf] = useState<Record<string, string | undefined>>({});
   useEffect(() => setLayerOf({}), [font?.masterId]);
@@ -964,8 +998,10 @@ export default function App() {
     "show-background": toggleBackground,
     "show-bounding-box": toggleBoundingBox,
     "macro-panel": openMacro,
+    "show-preview": togglePreview,
+    "preview-window": openPreviewWindow,
     "settings": () => setSettingsOpen(true),
-  }), [showNewFont, open, importSource, save, saveAs, active, closeTabRemembered, closeFont, openInfo, undoRedo, newTextTab, openKerning, showAddGlyphs, removeGlyphs, glyphTargets, setAnchors, repeatFilter, toggleMetrics, toggleAnchors, toggleGuides, toggleBackground, toggleBoundingBox, showSidebar, toggleSidebar, openMacro]);
+  }), [showNewFont, open, importSource, save, saveAs, active, closeTabRemembered, closeFont, openInfo, undoRedo, newTextTab, openKerning, showAddGlyphs, removeGlyphs, glyphTargets, setAnchors, repeatFilter, toggleMetrics, toggleAnchors, toggleGuides, toggleBackground, toggleBoundingBox, showSidebar, toggleSidebar, openMacro, togglePreview, openPreviewWindow]);
 
   // Windows shortcuts (Ctrl, not Cmd), honouring any rebinding stored in settings.
   useEffect(() => {
@@ -1224,6 +1260,7 @@ export default function App() {
       { label: t("Show Bounding Box"), shortcut: shortcutText("show-bounding-box"), onSelect: toggleBoundingBox, checked: showBoundingBox },
       { label: t("Show Alignment Zones"), onSelect: toggleZones, checked: showZones },
       { label: t("Show Sidebar"), onSelect: toggleSidebar, checked: showSidebar },
+      { label: t("Show Preview"), shortcut: shortcutText("show-preview"), onSelect: togglePreview, checked: showPreview },
       { label: t("Theme: System"), onSelect: () => setTheme("system"), checked: theme === "system", separatorBefore: true },
       { label: t("Theme: Light"), onSelect: () => setTheme("light"), checked: theme === "light" },
       { label: t("Theme: Dark"), onSelect: () => setTheme("dark"), checked: theme === "dark" },
@@ -1235,6 +1272,7 @@ export default function App() {
         { label: t("Font View"), onSelect: font ? () => setActive(null) : undefined },
         { label: t("New Text Tab"), shortcut: shortcutText("new-text-tab"), onSelect: font ? newTextTab : undefined },
         { label: t("Kerning"), shortcut: shortcutText("kerning"), onSelect: font ? openKerning : undefined },
+        { label: t("Preview Window"), shortcut: shortcutText("preview-window"), onSelect: isTauri ? openPreviewWindow : undefined },
         { label: t("Macro Panel"), shortcut: shortcutText("macro-panel"), onSelect: openMacro },
         { label: t("Plugin Manager"), onSelect: () => openSettingsAt("plugins"), separatorBefore: true },
         { label: t("Settings…"), shortcut: shortcutText("settings"), onSelect: () => openSettingsAt() },
@@ -1339,7 +1377,9 @@ export default function App() {
           {tabs.map((id) => (
             <div key={id} className="tab-panel" hidden={active !== id}>
               {id.startsWith("g:") ? (
-                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onStructureChanged={onStructureChanged} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showImage={showImage} showAnnotations={showAnnotations} showBoundingBox={showBoundingBox} showZones={showZones} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} onToggleView={(v) => ({ nodes: toggleNodes, metrics: toggleMetrics, anchors: toggleAnchors, guides: toggleGuides, background: toggleBackground, zones: toggleZones })[v]()} handleSize={settings.appearance.handleSize} snapDistance={settings.appearance.snapDistance ?? 6} onDrawn={() => recordMilestone("drawn")} reporters={enabledReporters} />
+                <EditView glyph={id.slice(2)} masterId={layerOf[id.slice(2)] ?? font.masterId} masterKey={font.masterId} onPickLayer={(key) => setLayerOf((m) => ({ ...m, [id.slice(2)]: key === font.masterId ? undefined : key }))} version={versions[id.slice(2)] ?? 0} active={active === id} glyphs={glyphList} onCommitted={onCommitted} onStructureChanged={onStructureChanged} onError={fail} onWarning={(text) => setToast({ kind: "info", text })} showMetrics={showMetrics} showAnchors={showAnchors} showNodes={showNodes} showGuides={showGuides} showBackground={showBackground} showImage={showImage} showAnnotations={showAnnotations} showBoundingBox={showBoundingBox} showZones={showZones} showSidebar={showSidebar} onToggleSidebar={toggleSidebar} onToggleView={(v) => ({ nodes: toggleNodes, metrics: toggleMetrics, anchors: toggleAnchors, guides: toggleGuides, background: toggleBackground, zones: toggleZones })[v]()} handleSize={settings.appearance.handleSize} snapDistance={settings.appearance.snapDistance ?? 6} onDrawn={() => recordMilestone("drawn")} reporters={enabledReporters}
+                  showPreview={showPreview} onTogglePreview={togglePreview} previewText={previewTexts[id.slice(2)]} onPreviewText={(text) => setPreviewTexts((m) => ({ ...m, [id.slice(2)]: text }))}
+                  onOpenPreviewWindow={isTauri ? openPreviewWindow : undefined} onOpenGlyph={openGlyph} />
               ) : id === "info" ? (
                 <FontInfoView version={docVersion} onChanged={onStructureChanged} onError={fail} onGenerateInstances={generateInstances} />
               ) : id === "kerning" ? (

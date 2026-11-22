@@ -353,6 +353,18 @@ With the select arrow in the palette, click a mark to select it, drag to move it
 
 The **Variation preview**, **Layers**, **Transform**, **Hints** and **Pixel preview** panels sit in a sidebar beside the canvas. Variation preview (in fonts with axes and two or more masters) draws the glyph anywhere on the axes as you drag the sliders, and names the nearest instance. The status bar under the canvas shows the layer, how many nodes are selected, the pointer position and the zoom, with − and + buttons. The sidebar is on the right, or on the left in Arabic. Each panel keeps its own collapse arrow, and the sidebar scrolls when the open panels grow taller than the window. **View › Show Sidebar**, or the sidebar button at the end of the editor toolbar, shows or hides the whole sidebar; Kernest remembers the choice between sessions. With the sidebar hidden the canvas gets the full width.
 
+### Preview area and preview window
+
+**View › Show Preview** (Ctrl+Alt+P) opens a preview area under the canvas. It draws one line of text as it will look in the font, and updates as you edit.
+
+- **Text:** the glyph being edited, by default. Type other text around it, such as `nn/a nn` (use `/glyphname` for glyphs without a character). Each glyph tab keeps its own text.
+- **Master or instance:** the menu chooses what to draw. **Master being edited** follows the master you're working on; pick another master, or an instance to see the glyphs interpolated there.
+- **Size** sets the text size, and **Invert** switches to white on black.
+- Drag the line above the area to change its height, or focus it and press ↑ or ↓. Double-click a glyph in the preview to open it.
+- The area's height, size, colours and the master or instance are remembered.
+
+**Window › Preview Window** (Ctrl+Alt+Shift+P), or **Open in Window** in the preview area, opens the same preview in a separate window, for example on a second display. It mirrors the current tab: the preview text of a glyph tab, or the text of a text tab. It is empty while another tab, or no font, is open. **Keep on Top** keeps it in front of the main window. The window has its own master or instance, size and colour choices, and it closes when Kernest closes.
+
 ### Transform panel
 
 The **Transform** panel in the editor sidebar scales, rotates, skews and mirrors the selected paths and components — or the whole layer when nothing is selected.
@@ -798,6 +810,7 @@ Every command is in the menu bar: File, Edit, Glyph, Path, Filter, View, Script,
 | Text tab: left to right / right to left / vertical | Ctrl+Alt+Shift+L / R / V |
 | Font Info / Export | Ctrl+I / Ctrl+E |
 | Macro Panel / Settings | Ctrl+Shift+P / Ctrl+, |
+| Show Preview / Preview Window | Ctrl+Alt+P / Ctrl+Alt+Shift+P |
 | Handbook | F1 |
 
 Most of these can be changed in **Settings › Shortcuts**; the menus then show your
