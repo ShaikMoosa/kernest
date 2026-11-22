@@ -415,6 +415,11 @@ An anchor is a named point that tells other glyphs where to sit: a mark above a 
   - Glyphs that take no anchors are left alone.
 - **Components that align:** select a component and use the lock button beside X and Y. Closed (green) means the component is placed by its anchors and follows them when they move; open (grey) means you placed it by hand and it stays put. A mark placed by anchors offers its own `top` as a target, so a second mark stacks on the first instead of on the letter.
 - **Glyph › Create Composites…** builds glyphs from their parts by name: `Aacute` becomes `A` + `acutecomb`, placed by anchors in every master. Glyphs that already have outlines keep them. **Add Glyphs** has the same option as "Build composites from their parts", so typing `Aacute acutecomb` draws the composite and its mark in one step.
+  - **Preferred marks:** when a variant of a mark exists, composites use it:
+    - a suffixed composite uses suffixed parts, so `aacute.sc` is built from `a.sc` and `acutecomb.sc`;
+    - uppercase letters use `.case` marks (`Aacute` uses `acutecomb.case`);
+    - `i` and `j` under a top mark become `idotless` and `jdotless` and use `.i` or `.narrow` marks (`imacron` uses `idotless` and `macroncomb.narrow`). Marks below, as in `idotbelow`, keep the dot.
+    - Without a variant, the plain mark is used.
 - **In exported fonts:** anchors become the OpenType `mark` and `mkmk` features (marks on letters, marks on marks), `curs` for cursive joins, and ligature carets in `GDEF`. Adding a mark by its name (`acutecomb`) also gives it its code point (U+0301), so text typed with combining marks shapes correctly.
 
 ## Spacing and kerning

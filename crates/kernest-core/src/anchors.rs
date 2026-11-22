@@ -456,6 +456,71 @@ pub fn recipe(name: &str) -> Option<Vec<String>> {
     crate::decompose::parts(name).map(|p| p.iter().map(|s| (*s).to_string()).collect())
 }
 
+/// Whether a mark sits on top of its base: it has a `_top` anchor, or (undrawn) its
+/// name doesn't say below, cedilla or ogonek.
+fn is_top_mark(font: &Font, mark: &str) -> bool {
+    match font.glyph(mark) {
+        Some(g) if g.layers.iter().any(|l| !l.anchors.is_empty()) => g
+            .layers
+            .iter()
+            .any(|l| l.anchors.iter().any(|a| a.name == "_top")),
+        _ => !["below", "cedilla", "ogonek"]
+            .iter()
+            .any(|w| mark.contains(w)),
+    }
+}
+
+/// The glyphs a composite is built from in this font (Glyphs Handbook 9.1.13): the
+/// Unicode recipe of its name without suffix, then
+/// - the base with the composite's suffix when it exists (`aacute.sc` → `a.sc`);
+/// - `i` and `j` under top marks as `idotless` and `jdotless`;
+/// - each mark's preferred variant when it exists: the composite's suffix
+///   (`acutecomb.sc`), `.case` on uppercase bases, `.i` or `.narrow` on i and j.
+pub fn composite_parts(font: &Font, name: &str) -> Option<Vec<String>> {
+    let (stem, suffix) = match name.find('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    };
+    let mut parts = recipe(stem)?;
+    let has = |n: &str| font.glyph(n).is_some();
+    let base_stem = parts[0].clone();
+    let marks: Vec<String> = parts[1..].to_vec();
+    // i and j lose their dot under a top mark.
+    let ij = matches!(base_stem.as_str(), "i" | "j");
+    let mut base = base_stem.clone();
+    if ij && marks.iter().any(|m| is_top_mark(font, m)) {
+        let dotless = format!("{base_stem}dotless");
+        if has(&dotless) || has(&format!("{dotless}{suffix}")) {
+            base = dotless;
+        }
+    }
+    if !suffix.is_empty() && has(&format!("{base}{suffix}")) {
+        base = format!("{base}{suffix}");
+    }
+    let upper = font
+        .glyph(&base)
+        .map(|g| g.category() == crate::glyphdata::Category::Uppercase)
+        .unwrap_or_else(|| base.chars().next().is_some_and(char::is_uppercase));
+    parts[0] = base;
+    for (i, m) in marks.iter().enumerate() {
+        let mut candidates: Vec<String> = Vec::new();
+        if !suffix.is_empty() {
+            candidates.push(format!("{m}{suffix}"));
+        }
+        if upper {
+            candidates.push(format!("{m}.case"));
+        }
+        if ij {
+            candidates.push(format!("{m}.i"));
+            candidates.push(format!("{m}.narrow"));
+        }
+        if let Some(c) = candidates.into_iter().find(|c| has(c)) {
+            parts[i + 1] = c;
+        }
+    }
+    Some(parts)
+}
+
 /// The result of building composites.
 #[derive(Debug, Clone)]
 pub struct Composites {
@@ -473,7 +538,7 @@ pub fn create_composites(font: &Font, names: &[String]) -> R<Composites> {
     let mut out = font.clone();
     let (mut built, mut skipped) = (Vec::new(), Vec::new());
     for name in names {
-        let Some(parts) = recipe(name) else {
+        let Some(parts) = composite_parts(&out, name) else {
             skipped.push(name.clone());
             continue;
         };
@@ -952,6 +1017,52 @@ mod tests {
             };
             assert_eq!((transform[4], transform[5]), expect);
         }
+    }
+
+    #[test]
+    fn composites_prefer_case_suffix_and_narrow_marks() {
+        let f = sample_font();
+        let f = add_glyphs(
+            &f,
+            &parse_glyph_list("acutecomb acutecomb.case acutecomb.sc a.sc idotless macroncomb.narrow dotbelowcomb").unwrap(),
+        )
+        .unwrap()
+        .font;
+        let parts = |n: &str| composite_parts(&f, n).unwrap();
+        // Uppercase bases take .case marks; lowercase keep the plain one.
+        assert_eq!(parts("Aacute"), ["A", "acutecomb.case"]);
+        assert_eq!(parts("aacute"), ["a", "acutecomb"]);
+        // A suffixed composite uses the suffixed base and marks.
+        assert_eq!(parts("aacute.sc"), ["a.sc", "acutecomb.sc"]);
+        // i under a top mark is dotless and takes a narrow mark; under a dot below it
+        // keeps its dot.
+        assert_eq!(parts("imacron"), ["idotless", "macroncomb.narrow"]);
+        assert_eq!(parts("idotbelow"), ["i", "dotbelowcomb"]);
+        // Missing variants fall back to the plain mark.
+        assert_eq!(parts("Eacute"), ["E", "acutecomb.case"]);
+        assert_eq!(
+            parts("jcircumflex"),
+            ["j", "circumflexcomb"],
+            "no jdotless in this font"
+        );
+        // Building uses them.
+        let f = add_glyphs(&f, &parse_glyph_list("A").unwrap())
+            .unwrap()
+            .font;
+        let r = create_composites(&f, &["Aacute".into(), "aacute.sc".into()]).unwrap();
+        assert_eq!(r.built, ["Aacute", "aacute.sc"]);
+        let bases = |n: &str| -> Vec<String> {
+            r.font.glyph(n).unwrap().layers[0]
+                .shapes
+                .iter()
+                .filter_map(|s| match s {
+                    Shape::Component { base, .. } => Some(base.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(bases("Aacute"), ["A", "acutecomb.case"]);
+        assert_eq!(bases("aacute.sc"), ["a.sc", "acutecomb.sc"]);
     }
 
     #[test]
