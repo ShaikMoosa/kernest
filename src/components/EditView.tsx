@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, type AlignOp, type Annotation, type HoiKind, type HoiView, type GlyphPicture, type ImageData, type LayerImage, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
+import { backend, errorMessage, type AlignOp, type Annotation, type HoiKind, type HoiView, type GlyphPicture, type ImageData, type LayerImage, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
 import { VariationPreview } from "./VariationPreview";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
@@ -73,7 +73,7 @@ const EDGE = 10; // px strip at the canvas border: dragging from it pulls out a 
 export type EditCommand = "add-component" | "cut" | "copy" | "paste" | "correct-direction" | "add-extremes" | "remove-overlap"
   | "edit-background" | "to-background" | "add-to-background" | "swap-background" | "clear-background"
   | "open-corner" | "reconnect-nodes" | "connect-nodes" | "close-open-paths" | "make-node-first" | "reverse-contours" | "tidy-up" | "round-coordinates"
-  | "harmonize" | "super-smooth" | "align-selection" | "union" | "subtract" | "intersect" | "focus-path" | "clear-focus"
+  | "harmonize" | "super-smooth" | "align-selection" | "component-from-selection" | "union" | "subtract" | "intersect" | "focus-path" | "clear-focus"
   | "select-all" | "deselect-all" | "invert-selection" | "zoom-in" | "zoom-out" | "zoom-fit" | "zoom-actual" | "shape-order";
 export const sendEditCommand = (name: EditCommand) => window.dispatchEvent(new CustomEvent("kernest:edit", { detail: name }));
 
@@ -301,6 +301,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   }, [layerDialog, glyph, masterId, master, onCommitted, onPickLayer]);
   // ---------- Smart glyphs ----------
   const [smartDialog, setSmartDialog] = useState<SmartDialogMode | null>(null);
+  // Component from Selection: the name being typed and any problem with it.
+  const [compFromSel, setCompFromSel] = useState<{ name: string; error: string | null; busy: boolean } | null>(null);
   const saveSmartDialog = useCallback(async (v: { axes?: { name: string; min: number; max: number }[]; pole?: Record<string, number> }) => {
     if (!smartDialog) return;
     if (smartDialog.kind === "axes") {
@@ -1789,6 +1791,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       runPathEdit(name, { paths: pathIdx.length ? pathIdx : undefined });
       return;
     }
+    if (name === "component-from-selection") {
+      const { selection: sel, compSel: cs, editingBackground: bg, layer: l } = latest.current;
+      if (bg || l?.glyphLocked) return;
+      if (!sel.size && !cs.size) { onError(t("Select the paths or components to turn into a component.")); return; }
+      const suggested = await backend.suggestComponentName(glyph).catch(() => `_part.${glyph}`);
+      setCompFromSel({ name: suggested, error: null, busy: false });
+      return;
+    }
     if (name === "align-selection") {
       runAlignRef.current("points");
       return;
@@ -2616,6 +2626,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             {layer.glyphLocked ? (
               <span className="ctx-note k-caption muted">{t("This glyph is locked. Unlock it to edit.")}</span>
             ) : <>
+              {!editingBackground && (selection.size > 0 || compSel.size > 0) && <>
+                <button type="button" role="menuitem" onClick={() => { runCommand("component-from-selection"); setCtxMenu(null); }}>{t("Component from Selection…")}</button>
+                <span className="ctx-sep" />
+              </>}
               {ctxMenu.node && !editingBackground && <>
                 <button type="button" role="menuitem" onClick={() => { runCommand("open-corner"); setCtxMenu(null); }}>{t("Open Corner")}</button>
                 <button type="button" role="menuitem" onClick={() => { runCommand("make-node-first"); setCtxMenu(null); }}>{t("Make Node First")}</button>
@@ -3270,6 +3284,46 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
           masters={layerList.filter((l) => l.kind === "master").map((l) => ({ id: l.masterId, name: l.masterName }))}
           onLoadMaster={(mid) => backend.masterColorPaint(glyph, masterId, mid)}
           onCancel={() => setPainting(false)} onSave={savePaint} />
+      )}
+      {compFromSel && (
+        <div className="scrim" role="presentation">
+          <form className="dialog component-from-selection" role="dialog" aria-modal="true" aria-labelledby="cfs-title"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const name = compFromSel.name.trim();
+              setCompFromSel({ ...compFromSel, busy: true, error: null });
+              chain.current = chain.current.then(async () => {
+                try {
+                  const l = await backend.componentFromSelection(glyph, masterId, currentSelection(), name);
+                  accept(l);
+                  setSelection(new Set());
+                  setCompSel(new Set());
+                  setCompFromSel(null);
+                  onStructureChanged?.(l.status);
+                } catch (err) {
+                  setCompFromSel((c) => c && { ...c, busy: false, error: translateMessage(errorMessage(err)) });
+                }
+              });
+            }}>
+            <header className="dialog-header">
+              <h2 id="cfs-title" className="k-subtitle">{t("Component from Selection")} · {glyph}</h2>
+              <button type="button" className="icon-btn" aria-label={t("Close")} onClick={() => setCompFromSel(null)}><CloseIcon /></button>
+            </header>
+            <div className="dialog-body">
+              <p className="k-caption muted">{t("The selected paths and components become a new glyph, and a component of it takes their place in every master. Start the name with _ to keep the new glyph out of exported fonts.")}</p>
+              <label className="field">
+                <span className="k-label">{t("New glyph name")}</span>
+                <input className="text-input" autoFocus value={compFromSel.name} aria-invalid={!!compFromSel.error}
+                  onChange={(e) => setCompFromSel({ ...compFromSel, name: e.target.value, error: null })} />
+              </label>
+              {compFromSel.error && <p className="k-caption field-error" role="alert">{compFromSel.error}</p>}
+            </div>
+            <footer className="dialog-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => setCompFromSel(null)}>{t("Cancel")}</button>
+              <button type="submit" className="btn btn-primary" disabled={compFromSel.busy || !compFromSel.name.trim()}>{t("Create")}</button>
+            </footer>
+          </form>
+        </div>
       )}
       {smartDialog && <SmartDialog glyph={glyph} mode={smartDialog} onCancel={() => setSmartDialog(null)} onSave={saveSmartDialog} />}
       {layerDialog && <LayerDialog glyph={glyph} axes={layerDialog.axes} mode={layerDialog.mode} onCancel={() => setLayerDialog(null)} onSave={saveLayerDialog} />}

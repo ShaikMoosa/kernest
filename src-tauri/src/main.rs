@@ -128,6 +128,8 @@ fn main() {
             glyphs::rename_glyphs,
             commands::path_operation,
             commands::path_edit,
+            commands::suggest_component_name,
+            commands::component_from_selection,
             commands::add_pixel_glyph,
             commands::set_pixels,
             commands::set_path_mask,

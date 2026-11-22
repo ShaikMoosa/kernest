@@ -158,6 +158,11 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
 - **Adding and removing:** with either shape, Shift+drag adds to the selection and Ctrl+drag takes away from it. Alt+drag uses the other shape for that one drag.
 - **Zoom:** Ctrl+= and Ctrl+- zoom in and out, and Ctrl+0 fits the glyph to the window.
 - **Components** (Ctrl+Shift+C): add another glyph as a component. Kernest won't let a glyph contain itself.
+- **Component from Selection** (Glyph menu, or right-click with something selected) turns the selected paths and components into a new glyph:
+  - A dialog suggests a name such as `_part.H`. Start the name with `_` to keep the new glyph out of exported fonts.
+  - The new glyph goes right after the current one, with the shapes from every master and intermediate or alternate layer. A component of it takes their place at the same position.
+  - The glyph's masters must have the same paths for this to work.
+  - Ctrl+Z undoes it in one step.
 - **Clipboard:** Ctrl+X, Ctrl+C and Ctrl+V cut, copy and paste paths and components, including between glyph tabs.
 - **Sidebearings and width:** edit the left sidebearing, advance width and right sidebearing in the panel at the bottom.
 - **Path › Correct Path Direction** (Ctrl+Shift+R): makes outer contours run counter-clockwise and counters (holes) clockwise, which is what the compiler expects. It also orders contours left to right, with each counter right after its outline.

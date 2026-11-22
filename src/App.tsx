@@ -1151,6 +1151,7 @@ export default function App() {
         { label: glyphTargets.length > 1 ? tn(glyphTargets.length, "Remove {n} Glyph", "Remove {n} Glyphs") : t("Remove Glyph"), shortcut: shortcutText("remove-glyph"), onSelect: font && glyphTargets.length ? () => removeGlyphs(glyphTargets) : undefined },
         { label: t("Rename Glyphs…"), onSelect: font ? () => setRenameOpen(true) : undefined },
         { label: t("Add Component…"), shortcut: shortcutText("add-component"), onSelect: inGlyph ? () => sendEditCommand("add-component") : undefined, separatorBefore: true },
+        { label: t("Component from Selection…"), onSelect: inGlyph ? () => sendEditCommand("component-from-selection") : undefined },
         { label: t("Set Anchors"), shortcut: shortcutText("set-anchors"), onSelect: font && glyphTargets.length ? () => setAnchors(glyphTargets) : undefined, separatorBefore: true },
         { label: t("Create Composites…"), onSelect: font ? () => setComposites({ initial: glyphTargets.join(" ") }) : undefined },
         { label: t("Decompose Components"), onSelect: font && glyphTargets.length ? () => { decomposeTargets(); } : undefined },
