@@ -1287,6 +1287,39 @@ fn path_edit_in(
     })
 }
 
+/// A name for Component from Selection to suggest (`_part.<glyph>`).
+#[tauri::command]
+pub fn suggest_component_name(state: State<AppState>, glyph: String) -> CmdResult<String> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    Ok(kernest_core::componentize::suggest_name(&doc.font, &glyph))
+}
+
+/// Component from Selection: the selected paths and components of `glyph` become a
+/// new glyph `name`, replaced by a component of it in every master. One undoable step.
+#[tauri::command]
+pub fn component_from_selection(
+    state: State<AppState>,
+    glyph: String,
+    master_id: String,
+    selection: kernest_core::transform::Selection,
+    name: String,
+) -> CmdResult<LayerView> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    let next = kernest_core::componentize::component_from_selection(
+        &doc.font, &glyph, &master_id, &selection, &name,
+    )?;
+    if doc
+        .history
+        .apply_font(&mut doc.font, next)
+        .map_err(|e| e.to_string())?
+    {
+        doc.revision += 1;
+    }
+    layer_view_of(doc, &glyph, &master_id)
+}
+
 #[tauri::command]
 pub fn path_edit(
     state: State<AppState>,

@@ -9,6 +9,10 @@
  * the dictionaries (npm run check:i18n lists what's missing).
  */
 export const ENGINE_MESSAGES = [
+  "\"{name}\" can't be used as a glyph name: use letters, digits, . _ and -, starting with a letter or _.",
+  "There is already a glyph named \"{name}\".",
+  "A selected path is locked. Unlock it first.",
+  "\"{glyph}\" doesn't have the same paths in every master, so its selection can't become one component. Make the masters compatible first.",
   "Colour labels are numbered 0 to 11.",
   "\"{value}\" isn't a category; use one of {list}.",
   "\"{value}\" isn't a case; use one of {list}.",

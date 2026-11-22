@@ -16,6 +16,7 @@ pub mod booleans;
 pub mod clipboard;
 pub mod color;
 pub mod compare;
+pub mod componentize;
 pub mod decompose;
 pub mod designspace;
 pub mod edit;

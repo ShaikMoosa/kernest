@@ -1158,6 +1158,10 @@ export interface Backend {
   setProductionName(glyph: string, name: string): Promise<DocStatus>;
   /** Sets the colour label of glyphs, or of their layer `layer`; null clears it. */
   setColorLabel(glyphs: string[], layer: string | null, label: ColorLabel | null): Promise<DocStatus>;
+  /** A name Component from Selection suggests (`_part.<glyph>`). */
+  suggestComponentName(glyph: string): Promise<string>;
+  /** Turns the selected paths and components into a new glyph, placed as a component. */
+  componentFromSelection(glyph: string, masterId: string, selection: Selection, name: string): Promise<LayerView>;
   /** Sets category, subCategory, case, script or sortName on glyphs; "" is automatic. */
   setGlyphProperty(glyphs: string[], property: GlyphProperty, value: string): Promise<DocStatus>;
   setWritingDirection(glyph: string, direction: string): Promise<DocStatus>;
@@ -1647,6 +1651,8 @@ const tauriBackend: Backend = {
   setGlyphUnicodes: (glyph, unicodes, take) => invoke("set_glyph_unicodes", { glyph, unicodes, take }),
   setProductionName: (glyph, name) => invoke("set_production_name", { glyph, name }),
   setColorLabel: (glyphs, layer, label) => invoke("set_color_label", { glyphs, layer, label }),
+  suggestComponentName: (glyph) => invoke("suggest_component_name", { glyph }),
+  componentFromSelection: (glyph, masterId, selection, name) => invoke("component_from_selection", { glyph, masterId, selection, name }),
   setGlyphProperty: (glyphs, property, value) => invoke("set_glyph_property", { glyphs, property, value }),
   setWritingDirection: (glyph, direction) => invoke("set_writing_direction", { glyph, direction }),
   setVerticalMetric: (glyph, masterId, which, value) => invoke("set_vertical_metric", { glyph, masterId, which, value }),
@@ -2416,6 +2422,12 @@ const mockBackend: Backend = {
   },
   async setVerticalMetric() {
     throw "Vertical metrics need the desktop app (npm run tauri dev).";
+  },
+  async suggestComponentName(glyph) {
+    return `_part.${glyph}`;
+  },
+  async componentFromSelection() {
+    throw "Component from Selection needs the desktop app (npm run tauri dev).";
   },
   async setColorLabel() {
     throw "Colour labels need the desktop app (npm run tauri dev).";

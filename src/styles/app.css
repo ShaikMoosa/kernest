@@ -1132,3 +1132,5 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .glyph-overrides .row { display: flex; gap: var(--k-space-8); }
 .glyph-overrides .glyph-prop { flex: 1; min-width: 0; }
 .glyph-prop-reset { margin-inline-start: var(--k-space-4); }
+.field-error { color: var(--k-text-danger); margin: var(--k-space-4) 0 0; }
+.component-from-selection { width: min(440px, calc(100vw - 32px)); }
