@@ -325,8 +325,8 @@ fn compiled_variable_font_skips_extreme_at_default() {
     fs::write(&path, square_glyphs()).unwrap();
     let f = import(&path).unwrap().font;
     let out = dir.path().join("out");
-    let r = kernest_export::export(&f, &kernest_export::ExportOptions::ttf(true, false, &out))
-        .unwrap();
+    let r =
+        kernest_export::export(&f, &kernest_export::ExportOptions::ttf(true, false, &out)).unwrap();
     assert!(r.problems.is_empty(), "{:?}", r.problems);
     let imp = import(Path::new(&r.files[0].path)).unwrap();
     let names: Vec<&str> = imp.font.masters.iter().map(|m| m.name.as_str()).collect();
@@ -334,7 +334,9 @@ fn compiled_variable_font_skips_extreme_at_default() {
     let locs: Vec<_> = imp.font.masters.iter().map(|m| &m.location).collect();
     assert_ne!(locs[0], locs[1]);
     assert!(
-        imp.warnings.iter().any(|w| w.contains("Kernest drew 2 masters")),
+        imp.warnings
+            .iter()
+            .any(|w| w.contains("Kernest drew 2 masters")),
         "{:?}",
         imp.warnings
     );
