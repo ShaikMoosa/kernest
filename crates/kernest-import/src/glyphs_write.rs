@@ -893,6 +893,31 @@ fn features(code: &str) -> String {
     s
 }
 
+/// Feature code parameters (SMO-23) as Glyphs custom parameters: the list ones
+/// (Remove Features…) as arrays, the replace ones as `name;` and code.
+fn feature_parameters(params: &[kernest_core::CustomParameter]) -> Vec<String> {
+    params
+        .iter()
+        .map(|p| {
+            let value = if p.name.starts_with("Remove") {
+                let items: Vec<String> = kernest_core::featureedits::list_items(&p.value)
+                    .iter()
+                    .map(|x| q(x))
+                    .collect();
+                format!("(\n{}\n)", items.join(",\n"))
+            } else {
+                q(&p.value)
+            };
+            format!(
+                "{{\n{}name = {};\nvalue = {};\n}}",
+                if p.disabled { "disabled = 1;\n" } else { "" },
+                q(&p.name),
+                value
+            )
+        })
+        .collect()
+}
+
 /// The autohinting custom parameter value, from Kernest's hinting settings.
 fn hinting_options(h: &kernest_core::Hinting) -> String {
     let mut s = format!(
@@ -1301,6 +1326,7 @@ pub fn glyphs_source(font: &Font) -> String {
                             v.join(",\n")
                         ));
                     }
+                    ip.extend(feature_parameters(&i.feature_parameters));
                     if let Some(f) = &i.names.file_name {
                         ip.push(format!("{{\nname = fileName;\nvalue = {};\n}}", q(f)));
                     }
@@ -1385,6 +1411,7 @@ pub fn glyphs_source(font: &Font) -> String {
                     v.join(",\n")
                 ));
             }
+            vp.extend(feature_parameters(&vf.feature_parameters));
             if !vf.glyphs.is_empty() {
                 let names: Vec<String> = vf.glyphs.iter().map(|g| q(g)).collect();
                 vp.push(format!(

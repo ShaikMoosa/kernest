@@ -368,4 +368,11 @@ export const DYNAMIC_KEYS = [
   "Underline position",
   // Strokes, brushes and the pixel tool
   "Pixel (X)",
+  // SMO-23 · Feature code parameter names
+  "Replace Feature",
+  "Remove Features",
+  "Replace Prefix",
+  "Remove Prefixes",
+  "Replace Class",
+  "Remove Classes",
 ];

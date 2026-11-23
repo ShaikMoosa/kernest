@@ -97,6 +97,26 @@ pub fn set_features(state: State<AppState>, text: String) -> CmdResult<FeaturesV
     })
 }
 
+/// What export-specific feature code parameters (SMO-23) would do to this font's
+/// feature code: a warning for each one that can't be read or names something the
+/// code doesn't have. Empty when they all apply.
+#[tauri::command]
+pub fn check_feature_parameters(
+    state: State<AppState>,
+    parameters: Vec<kernest_core::CustomParameter>,
+) -> CmdResult<Vec<String>> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    Ok(feature_parameter_warnings(&doc.font, &parameters))
+}
+
+fn feature_parameter_warnings(
+    font: &Font,
+    parameters: &[kernest_core::CustomParameter],
+) -> Vec<String> {
+    kernest_core::featureedits::apply(&kernest_core::features::combined(font), parameters).1
+}
+
 #[tauri::command]
 pub fn set_automatic_features(
     state: State<AppState>,
@@ -748,5 +768,23 @@ mod tests {
         assert_eq!(names(&mut doc, "0", &["zero"]), ["zero.zero"]);
         assert_eq!(names(&mut doc, "1", &["onum", "tnum"]), ["one.tosf"]);
         assert_eq!(names(&mut doc, "1", &["onum"]), ["one.osf"]);
+    }
+
+    #[test]
+    fn feature_parameters_are_checked_against_the_fonts_code() {
+        // SMO-23: liga is generated, so removing it is fine; dlig isn't there.
+        let doc = doc_with_alternates();
+        let p = |name: &str, value: &str| kernest_core::CustomParameter {
+            name: name.into(),
+            value: value.into(),
+            disabled: false,
+        };
+        assert!(feature_parameter_warnings(&doc.font, &[p("Remove Features", "liga")]).is_empty());
+        let w = feature_parameter_warnings(
+            &doc.font,
+            &[p("Remove Features", "dlig"), p("Replace Feature", "oops")],
+        );
+        assert_eq!(w.len(), 2, "{w:?}");
+        assert!(w[0].contains("dlig"), "{w:?}");
     }
 }

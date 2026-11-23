@@ -506,6 +506,13 @@ Open **Font Info** (Ctrl+I) to set:
 
 - **Virtual masters** (Font Info › Masters): a named location that only glyphs with intermediate layers there use. Use it for an axis that changes only a few glyphs, such as a Crossbar axis that raises the bar of A, E, F and H: add the axis, add a virtual master at its far end, then give those glyphs an intermediate layer at that location. Every other glyph stays as drawn along that axis. Locations must lie inside each axis' range. Save As .glyphs writes them as Glyphs' Virtual Master parameter.
 - **Glyph swaps:** each instance and each variable font can swap glyph drawings when it's exported. **Rename Glyphs** takes pairs such as `dollar=dollar.alt`: the exported `dollar` gets the drawing of `dollar.alt` (and the other way round). **Remove Glyphs** lists glyphs to leave out of that export, such as the alternates you swapped in. Use it for a style whose default `g` is the single-storey form, for example. Save As .glyphs writes both as Glyphs parameters.
+- **Export-specific feature code:** each instance and each variable font has a **Feature code** fold with Glyphs' feature parameters. They change the feature code for that export only. They apply in order, to the generated features and to your own code:
+  - **Replace Feature** gives a feature new code: write its tag, a semicolon, then the code, such as `liga; sub f i by f_i.alt;`. If the font has no such feature, it's added.
+  - **Remove Features** leaves features out, such as `liga, dlig`. A removed feature is also taken out of `aalt`.
+  - **Replace Prefix** and **Remove Prefixes** work on the prefixes that Glyphs files bring in. A prefix is the code under a `# Prefix: name` line. Write the name, a semicolon and the new code.
+  - **Replace Class** gives a class new glyphs, such as `Uppercase; A B C`. **Remove Classes** removes class definitions.
+  - Untick **On** to keep a parameter without applying it. When a parameter names something the code doesn't have, a note appears under the parameters and in the export report. The export goes on without that parameter.
+  - These parameters come from Glyphs files and go back to them. A font that uses them saves at format version 23.
 
 A font with masks, annotations, images, interpolation curves, virtual masters or glyph swaps saves at format version 14.
 

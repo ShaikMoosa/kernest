@@ -626,6 +626,7 @@ mod tests {
 
     fn inst(name: &str, wght: f64) -> Instance {
         Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: name.into(),
             location: BTreeMap::from([("wght".into(), wght)]),

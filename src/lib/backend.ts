@@ -587,6 +587,8 @@ export interface Instance {
   localizedFamilyNames?: Record<string, string>;
   /** Masters (by name) this instance is interpolated without ("Disable Masters"). */
   disabledMasters?: string[];
+  /** Export-specific feature code (Replace Feature, Remove Features…), applied in order. */
+  featureParameters?: CustomParameter[];
   /** Naming overrides (Glyphs naming parameters); omitted when none are set. */
   names?: NameOverrides;
 }
@@ -663,6 +665,8 @@ export interface VariableFontSetting {
   familyName?: string;
   /** Name records set by hand for this variable font. */
   nameRecords?: NameRecord[];
+  /** Export-specific feature code (Replace Feature, Remove Features…), applied in order. */
+  featureParameters?: CustomParameter[];
 }
 
 export interface VariableAxisSubset {
@@ -1029,6 +1033,8 @@ export interface Backend {
   features(): Promise<FeaturesView>;
   setFeatures(text: string): Promise<FeaturesView>;
   setAutomaticFeatures(automatic: string[]): Promise<FeaturesView>;
+  /** Warnings for export-specific feature code parameters against the font's code; empty when all apply. */
+  checkFeatureParameters(parameters: CustomParameter[]): Promise<string[]>;
   previewFeatureImport(path: string): Promise<FeatureImportPreview>;
   importFeatures(path: string): Promise<FeaturesView>;
   /** Shapes text with feature settings like "ss01=1" against a compiled preview. */
@@ -1583,6 +1589,7 @@ const tauriBackend: Backend = {
   features: () => invoke("features"),
   setFeatures: (text) => invoke("set_features", { text }),
   setAutomaticFeatures: (automatic) => invoke("set_automatic_features", { automatic }),
+  checkFeatureParameters: (parameters) => invoke("check_feature_parameters", { parameters }),
   previewFeatureImport: (path) => invoke("preview_feature_import", { path }),
   importFeatures: (path) => invoke("import_features", { path }),
   shapeText: (text, masterId, location, features, direction) => invoke("shape_text", { text, masterId, location: location ?? null, features: features ?? [], direction: direction ?? null }),
@@ -2127,6 +2134,9 @@ const mockBackend: Backend = {
   },
   async setAutomaticFeatures() {
     throw "The Features editor needs the desktop app (npm run tauri dev).";
+  },
+  async checkFeatureParameters() {
+    return [];
   },
   async previewFeatureImport() {
     throw "Importing features needs the desktop app (npm run tauri dev).";

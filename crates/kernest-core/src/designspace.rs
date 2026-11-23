@@ -813,6 +813,7 @@ mod tests {
         let f = two_master_font();
         let setting =
             |min: Option<f64>, max: Option<f64>, glyphs: Vec<String>| VariableFontSetting {
+                feature_parameters: Vec::new(),
                 family_name: None,
                 name_records: Vec::new(),
                 name: "Cut".into(),

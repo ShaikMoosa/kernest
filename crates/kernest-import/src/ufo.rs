@@ -139,6 +139,7 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
         .iter()
         .enumerate()
         .map(|(i, inst)| Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: inst
                 .stylename
@@ -181,6 +182,7 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
         .variable_fonts
         .iter()
         .map(|vf| VariableFontSetting {
+            feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
             name: vf.name.clone(),

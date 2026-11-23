@@ -430,6 +430,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         .iter()
         .filter(|i| i.type_ == InstanceType::Single)
         .map(|i| Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: i.name.clone(),
             location: location(&i.axes_values),
@@ -1036,6 +1037,41 @@ fn split_family_names(
     (default, names)
 }
 
+/// A feature code parameter (SMO-23) from a Glyphs custom parameter, keeping its
+/// switched-off state: list values joined with commas, others as written.
+fn feature_parameter(p: &glyphs_reader::Plist, name: &str) -> kernest_core::CustomParameter {
+    let value = match p.get("value") {
+        Some(v) => match v.as_array() {
+            Some(items) => items
+                .iter()
+                .filter_map(|x| x.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            None => v.as_str().unwrap_or_default().trim().to_string(),
+        },
+        None => String::new(),
+    };
+    kernest_core::CustomParameter {
+        name: name.to_string(),
+        value,
+        disabled: p.get("disabled").and_then(num).is_some_and(|v| v != 0.0),
+    }
+}
+
+/// The feature code parameters among a Glyphs instance's custom parameters.
+fn feature_parameters_of(inst: &glyphs_reader::Plist) -> Vec<kernest_core::CustomParameter> {
+    inst.get("customParameters")
+        .and_then(|p| p.as_array())
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|p| {
+            let name = p.get("name").and_then(|n| n.as_str())?;
+            kernest_core::featureedits::is_feature_parameter(name)
+                .then(|| feature_parameter(p, name))
+        })
+        .collect()
+}
+
 /// Per-instance settings Glyphs keeps outside the parsed instance: "Rename Glyphs",
 /// "Remove Glyphs" and the instance's own family names (the `familyNames` property in
 /// Glyphs 3; the `familyName` and `Localized Family Names` parameters in Glyphs 2).
@@ -1110,6 +1146,7 @@ fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font, warnings: &
         let (family, others) = split_family_names(names);
         target.family_name = family.filter(|f| *f != font_family || !others.is_empty());
         target.localized_family_names = others;
+        target.feature_parameters = feature_parameters_of(inst);
         for p in inst
             .get("customParameters")
             .and_then(|p| p.as_array())
@@ -1616,6 +1653,7 @@ fn variable_settings_from(
                 "Variable Font Origin" => {}
                 "Rename Glyphs" => rename = swaps_in(p),
                 "Disable Masters" => disabled = list(),
+                n if kernest_core::featureedits::is_feature_parameter(n) => {}
                 other => {
                     if !ignored.iter().any(|x| x == other) {
                         ignored.push(other.to_string());
@@ -1634,6 +1672,7 @@ fn variable_settings_from(
             }
         });
         out.push(kernest_core::VariableFontSetting {
+            feature_parameters: feature_parameters_of(inst),
             family_name: vf_family,
             name_records: records,
             name,
@@ -1662,6 +1701,7 @@ fn variable_settings_from(
         let vf_file = param("Variable Font File Name");
         if vf_family.is_some() || vf_file.is_some() {
             out.push(kernest_core::VariableFontSetting {
+                feature_parameters: Vec::new(),
                 name: "Variable".into(),
                 file_name: vf_file.unwrap_or_else(|| format!("{family}-VF")),
                 family_name: vf_family,

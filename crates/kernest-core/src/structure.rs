@@ -1022,6 +1022,7 @@ mod tests {
         use crate::model::{VariableAxisSubset, VariableFontSetting};
         let f = set_axes(&sample_font(), vec![wght()]).unwrap();
         let vf = |name: &str, file: &str| VariableFontSetting {
+            feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
             name: name.into(),
@@ -1141,6 +1142,7 @@ mod tests {
     fn instances_and_info() {
         let f = set_axes(&sample_font(), vec![wght()]).unwrap();
         let i = |n: &str, v: f64| Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: n.into(),
             location: BTreeMap::from([("wght".into(), v)]),
