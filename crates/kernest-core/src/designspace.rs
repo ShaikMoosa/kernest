@@ -475,8 +475,22 @@ pub fn reduce_for_variable(
     font: &Font,
     setting: &crate::model::VariableFontSetting,
 ) -> Result<Font, String> {
-    let mut f = crate::glyphset::apply_swaps(font, &setting.rename_glyphs, &setting.remove_glyphs)
-        .map_err(|e| format!("{}: {e}", setting.name))?;
+    reduce_for_variable_with_warnings(font, setting).map(|(f, _)| f)
+}
+
+/// [`reduce_for_variable`], with the glyph processing warnings (SMO-28: patterns
+/// that match no glyph).
+pub fn reduce_for_variable_with_warnings(
+    font: &Font,
+    setting: &crate::model::VariableFontSetting,
+) -> Result<(Font, Vec<String>), String> {
+    let (mut f, warnings) = crate::processing::prepare(
+        font,
+        &setting.rename_glyphs,
+        &setting.remove_glyphs,
+        &setting.processing,
+    )
+    .map_err(|e| format!("{}: {e}", setting.name))?;
     f.variable_fonts.clear();
     let mut narrowed = f.axes.clone();
     for sub in &setting.axes {
@@ -586,7 +600,8 @@ pub fn reduce_for_variable(
     f.axes = narrowed;
     // Glyph subset: the listed glyphs plus .notdef and every component target.
     if !setting.glyphs.is_empty() {
-        for name in &setting.glyphs {
+        // Names must exist; patterns with * or ? may match any number of glyphs.
+        for name in setting.glyphs.iter().filter(|n| !n.contains(['*', '?'])) {
             if f.glyph(name).is_none() {
                 return Err(format!(
                     "Variable font \"{}\" keeps unknown glyph \"{}\".",
@@ -594,7 +609,10 @@ pub fn reduce_for_variable(
                 ));
             }
         }
-        let mut keep: BTreeSet<String> = setting.glyphs.iter().cloned().collect();
+        let mut keep: BTreeSet<String> = crate::processing::expand(&f, &setting.glyphs)
+            .0
+            .into_iter()
+            .collect();
         keep.insert(".notdef".into());
         loop {
             let mut added = false;
@@ -616,9 +634,16 @@ pub fn reduce_for_variable(
                 break;
             }
         }
+        let gone: std::collections::HashSet<String> = f
+            .glyphs
+            .iter()
+            .filter(|g| !keep.contains(&g.name))
+            .map(|g| g.name.clone())
+            .collect();
         f.glyphs.retain(|g| keep.contains(&g.name));
+        f.features = crate::featureprune::prune(&f.features, &gone);
     }
-    Ok(f)
+    Ok((f, warnings))
 }
 
 #[cfg(test)]
@@ -813,6 +838,7 @@ mod tests {
         let f = two_master_font();
         let setting =
             |min: Option<f64>, max: Option<f64>, glyphs: Vec<String>| VariableFontSetting {
+                processing: Default::default(),
                 feature_parameters: Vec::new(),
                 family_name: None,
                 name_records: Vec::new(),

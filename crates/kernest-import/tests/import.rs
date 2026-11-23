@@ -41,6 +41,7 @@ fn two_masters() -> Font {
         }],
     );
     f.instances.push(Instance {
+        processing: Default::default(),
         feature_parameters: Vec::new(),
         names: Default::default(),
         name: "Medium".into(),
@@ -350,6 +351,7 @@ fn glyphs_disable_masters_round_trip() {
     let mut src = two_masters();
     src.instances[0].disabled_masters = vec!["Bold".into()];
     src.variable_fonts = vec![VariableFontSetting {
+        processing: Default::default(),
         feature_parameters: Vec::new(),
         family_name: None,
         name_records: Vec::new(),
@@ -390,6 +392,7 @@ fn glyphs_feature_parameters_round_trip() {
         param("Replace Class", "Figures; one.osf two.osf", true),
     ];
     src.variable_fonts = vec![VariableFontSetting {
+        processing: Default::default(),
         feature_parameters: vec![param("Remove Prefixes", "Lookups", false)],
         family_name: None,
         name_records: Vec::new(),
@@ -418,6 +421,54 @@ fn glyphs_feature_parameters_round_trip() {
     assert_eq!(
         f.variable_fonts[0].feature_parameters,
         src.variable_fonts[0].feature_parameters
+    );
+}
+
+#[test]
+fn glyphs_processing_parameters_round_trip() {
+    // SMO-28: Keep/Decompose Glyphs, Filter, PreFilter and Remove Overlap off on an
+    // instance; Decompose Components in Variable Font on a variable font.
+    let mut src = two_masters();
+    src.instances[0].remove_glyphs = vec!["*.ss01".into()];
+    src.instances[0].processing = kernest_core::GlyphProcessing {
+        keep_glyphs: vec!["A*".into(), "H".into()],
+        decompose_glyphs: vec!["Aacute".into()],
+        decompose_components: false,
+        pre_filters: vec!["RoundCorner;10".into()],
+        filters: vec!["OffsetCurve;5;5".into(), "Transformations;Slant:8".into()],
+        keep_overlaps: true,
+    };
+    src.variable_fonts = vec![VariableFontSetting {
+        feature_parameters: Vec::new(),
+        processing: kernest_core::GlyphProcessing {
+            decompose_glyphs: vec!["O".into()],
+            decompose_components: true,
+            ..Default::default()
+        },
+        family_name: None,
+        name_records: Vec::new(),
+        name: "Variable".into(),
+        file_name: "Sample-VF".into(),
+        axes: Vec::new(),
+        glyphs: Vec::new(),
+        rename_glyphs: Vec::new(),
+        remove_glyphs: Vec::new(),
+        disabled_masters: Vec::new(),
+    }];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Processing.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(
+        text.contains("name = \"Remove Overlap\";\nvalue = 0;"),
+        "{text}"
+    );
+    let f = import(&path).unwrap().font;
+    assert_eq!(f.instances[0].processing, src.instances[0].processing);
+    assert_eq!(f.instances[0].remove_glyphs, src.instances[0].remove_glyphs);
+    assert_eq!(
+        f.variable_fonts[0].processing,
+        src.variable_fonts[0].processing
     );
 }
 
@@ -1786,6 +1837,7 @@ fn designspace_variable_fonts_round_trip() {
     let mut src = two_masters();
     src.variable_fonts = vec![
         VariableFontSetting {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
@@ -1802,6 +1854,7 @@ fn designspace_variable_fonts_round_trip() {
             disabled_masters: Vec::new(),
         },
         VariableFontSetting {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
@@ -2135,6 +2188,7 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
     ];
     src.variable_fonts = vec![
         VariableFontSetting {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
@@ -2147,6 +2201,7 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
             disabled_masters: Vec::new(),
         },
         VariableFontSetting {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),

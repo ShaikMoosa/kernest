@@ -430,6 +430,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         .iter()
         .filter(|i| i.type_ == InstanceType::Single)
         .map(|i| Instance {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
             name: i.name.clone(),
@@ -1037,6 +1038,32 @@ fn split_family_names(
     (default, names)
 }
 
+/// A Glyphs list parameter's strings (`value = (a, b);`).
+fn string_list(p: &glyphs_reader::Plist) -> Vec<String> {
+    p.get("value")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|x| x.as_str().map(String::from))
+        .collect()
+}
+
+/// Whether a Glyphs boolean parameter is off (`value = 0;`).
+fn is_off(p: &glyphs_reader::Plist) -> bool {
+    match p.get("value") {
+        Some(v) => v.as_str().map_or_else(
+            || num(v) == Some(0.0),
+            |s| s.trim() == "0" || s.eq_ignore_ascii_case("false"),
+        ),
+        None => false,
+    }
+}
+
+/// Whether a Glyphs boolean parameter is on (`value = 1;`).
+fn is_on(p: &glyphs_reader::Plist) -> bool {
+    p.get("value").is_some() && !is_off(p)
+}
+
 /// A feature code parameter (SMO-23) from a Glyphs custom parameter, keeping its
 /// switched-off state: list values joined with commas, others as written.
 fn feature_parameter(p: &glyphs_reader::Plist, name: &str) -> kernest_core::CustomParameter {
@@ -1191,6 +1218,14 @@ fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font, warnings: &
                         .iter()
                         .filter_map(|x| x.as_str().map(String::from))
                         .collect()
+                }
+                // Glyph processing (SMO-28).
+                Some("Keep Glyphs") => target.processing.keep_glyphs = string_list(p),
+                Some("Decompose Glyphs") => target.processing.decompose_glyphs = string_list(p),
+                Some("Filter") => target.processing.filters.extend(text()),
+                Some("PreFilter") => target.processing.pre_filters.extend(text()),
+                Some("Remove Overlap" | "Remove overlap" | "removeOverlap") => {
+                    target.processing.keep_overlaps = is_off(p)
                 }
                 _ => {}
             }
@@ -1590,6 +1625,7 @@ fn variable_settings_from(
         let mut glyphs: Vec<String> = Vec::new();
         let mut rename: Vec<[String; 2]> = Vec::new();
         let mut disabled: Vec<String> = Vec::new();
+        let mut processing = kernest_core::GlyphProcessing::default();
         for p in inst
             .get("customParameters")
             .and_then(|p| p.as_array())
@@ -1654,6 +1690,10 @@ fn variable_settings_from(
                 "Rename Glyphs" => rename = swaps_in(p),
                 "Disable Masters" => disabled = list(),
                 n if kernest_core::featureedits::is_feature_parameter(n) => {}
+                "Decompose Glyphs" => processing.decompose_glyphs = list(),
+                "Decompose Components in Variable Font" => {
+                    processing.decompose_components = is_on(p)
+                }
                 other => {
                     if !ignored.iter().any(|x| x == other) {
                         ignored.push(other.to_string());
@@ -1672,6 +1712,7 @@ fn variable_settings_from(
             }
         });
         out.push(kernest_core::VariableFontSetting {
+            processing,
             feature_parameters: feature_parameters_of(inst),
             family_name: vf_family,
             name_records: records,
@@ -1701,6 +1742,7 @@ fn variable_settings_from(
         let vf_file = param("Variable Font File Name");
         if vf_family.is_some() || vf_file.is_some() {
             out.push(kernest_core::VariableFontSetting {
+                processing: Default::default(),
                 feature_parameters: Vec::new(),
                 name: "Variable".into(),
                 file_name: vf_file.unwrap_or_else(|| format!("{family}-VF")),

@@ -593,4 +593,15 @@ export const ENGINE_MESSAGES = [
   "Replace Feature: \"{tag}\" isn't a feature tag; use up to four letters or digits. It was ignored.",
   "Replace Prefix: start with the prefix name and a semicolon, such as \"Languagesystems; languagesystem DFLT dflt;\". It was ignored.",
   "Replace Class: start with the class name and a semicolon, such as \"Figures; one.osf two.osf\". It was ignored.",
+  // SMO-28 · Glyph processing
+  "Rename Glyphs: there is no glyph named \"{name}\".",
+  "Remove Glyphs: no glyph matches {pattern}.",
+  "Keep Glyphs: no glyph matches {pattern}.",
+  "Decompose Glyphs: no glyph matches {pattern}.",
+  "Filter: {e} It was skipped.",
+  "PreFilter: {e} It was skipped.",
+  "There is no filter named {filter}; Kernest has {list}.",
+  "{filter}: \"{value}\" isn't a number.",
+  "{filter}: \"{value}\" should be a setting such as Slant:10.",
+  "{filter}: {setting} isn't supported; use OffsetX, OffsetY, Scale, ScaleX, ScaleY or Slant.",
 ];

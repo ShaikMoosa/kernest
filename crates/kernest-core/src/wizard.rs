@@ -185,6 +185,7 @@ mod tests {
                 master("Bold", &[("wght", 900.0)]),
             ],
             instances: vec![Instance {
+                processing: Default::default(),
                 feature_parameters: Vec::new(),
                 names: Default::default(),
                 name: "Regular".into(),

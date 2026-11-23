@@ -89,6 +89,7 @@ fn main() {
             fontinfo::update_master,
             fontinfo::remove_master,
             fontinfo::set_instances,
+            fontinfo::check_glyph_processing,
             fontinfo::parse_name_records,
             fontinfo::set_variable_fonts,
             fontinfo::set_export_presets,

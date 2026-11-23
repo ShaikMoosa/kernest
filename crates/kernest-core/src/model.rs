@@ -345,6 +345,42 @@ pub struct VariableFontSetting {
     /// Features…; see [`crate::featureedits`]), applied in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub feature_parameters: Vec<CustomParameter>,
+    /// Glyph processing for this variable font (Decompose Glyphs, Decompose
+    /// Components in Variable Font…).
+    #[serde(default, flatten)]
+    pub processing: GlyphProcessing,
+}
+
+/// Glyph processing for one export (SMO-28), as Glyphs' parameters do it. Glyph
+/// lists take `*` and `?` wildcards. Empty or off means nothing changes.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlyphProcessing {
+    /// Only these glyphs are exported ("Keep Glyphs"); empty keeps every glyph.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keep_glyphs: Vec<String>,
+    /// Glyphs whose components become outlines ("Decompose Glyphs").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decompose_glyphs: Vec<String>,
+    /// Every component becomes outlines ("Decompose Components in Variable Font").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub decompose_components: bool,
+    /// Filters run on each glyph before overlaps are removed ("PreFilter"), such as
+    /// `RoundCorner;20`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pre_filters: Vec<String>,
+    /// Filters run on each glyph after overlaps are removed ("Filter").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<String>,
+    /// Overlaps stay, even when the export removes them ("Remove Overlap" off).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_overlaps: bool,
+}
+
+impl GlyphProcessing {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// The part of one axis a variable font covers, in user coordinates. A missing
@@ -1593,6 +1629,10 @@ pub struct Instance {
     /// Features…; see [`crate::featureedits`]), applied in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub feature_parameters: Vec<CustomParameter>,
+    /// Glyph processing for this instance's export (Keep Glyphs, Decompose
+    /// Glyphs, Filter, PreFilter, Remove Overlap off).
+    #[serde(default, flatten)]
+    pub processing: GlyphProcessing,
     /// Masters (by name) this instance is interpolated without ("Disable Masters").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_masters: Vec<String>,
