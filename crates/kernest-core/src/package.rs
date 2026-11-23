@@ -47,11 +47,12 @@ use crate::model::{
 /// drawings and number values for feature tokens; version 16 adds per-instance
 /// family names and disabled masters; version 17 adds vertical metrics (vertical
 /// widths and origins, vhea values) and glyph writing directions; version 22 adds
-/// measurement guides.
+/// measurement guides; version 23 adds export-specific feature code (feature
+/// parameters on instances and variable fonts).
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 22;
+pub const FORMAT_VERSION: u32 = 23;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -323,11 +324,21 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
                 .flat_map(|g| g.layers.iter().flat_map(|l| &l.guides)),
         )
         .any(|g| g.show_measurement);
+    let has_v23 = font
+        .instances
+        .iter()
+        .any(|i| !i.feature_parameters.is_empty())
+        || font
+            .variable_fonts
+            .iter()
+            .any(|v| !v.feature_parameters.is_empty());
     let has_vertical =
         font.info.use_typo_metrics || font.masters.iter().any(|m| !m.vertical.is_empty());
     let file = FontFile {
-        format_version: if has_v22 {
+        format_version: if has_v23 {
             FORMAT_VERSION
+        } else if has_v22 {
+            22
         } else if has_v21 {
             21
         } else if has_v20 {
@@ -645,6 +656,7 @@ mod tests {
         let path = dir.path().join("x.kernest");
         let mut font = sample_font();
         font.instances.push(crate::model::Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Bold".into(),
             location: Default::default(),
@@ -689,6 +701,7 @@ mod tests {
         font.info.designer_url = Some("https://example.com".into());
         font.info.license = Some("SIL OFL 1.1".into());
         font.instances.push(Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Bold".into(),
             location: BTreeMap::new(),
@@ -801,6 +814,44 @@ mod tests {
         save(&font, &path).unwrap();
         let fj = fs::read_to_string(path.join("font.json")).unwrap();
         assert!(fj.contains("\"formatVersion\": 22"), "{fj}");
+        assert_eq!(open(&path).unwrap(), font);
+    }
+
+    #[test]
+    fn feature_parameters_round_trip_and_gate_version() {
+        // SMO-23: export-specific feature code is kept and raises the format to 23.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.kernest");
+        let mut font = sample_font();
+        font.instances.push(crate::model::Instance {
+            name: "Display".into(),
+            location: Default::default(),
+            export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
+            feature_parameters: Vec::new(),
+            disabled_masters: Vec::new(),
+            names: Default::default(),
+        });
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(!fj.contains("\"formatVersion\": 23"), "{fj}");
+        assert!(!fj.contains("featureParameters"), "{fj}");
+        font.instances[0]
+            .feature_parameters
+            .push(crate::model::CustomParameter {
+                name: "Remove Features".into(),
+                value: "liga".into(),
+                disabled: false,
+            });
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 23"), "{fj}");
         assert_eq!(open(&path).unwrap(), font);
     }
 

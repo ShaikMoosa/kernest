@@ -865,6 +865,15 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                                     disabled: false,
                                 }
                             }));
+                        // Export-specific feature code for this variable font.
+                        if !vf.feature_parameters.is_empty() {
+                            let (f, warnings) =
+                                kernest_core::featureedits::for_export(&r, &vf.feature_parameters);
+                            report
+                                .warnings
+                                .extend(warnings.into_iter().map(|w| format!("{}: {w}", vf.name)));
+                            r = f;
+                        }
                         r
                     }
                     Err(e) => {
@@ -932,6 +941,20 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     },
                     None => font,
                 };
+            // Export-specific feature code (Replace Feature, Remove Features…).
+            let edited;
+            let font = match inst.filter(|i| !i.feature_parameters.is_empty()) {
+                Some(i) => {
+                    let (f, warnings) =
+                        kernest_core::featureedits::for_export(font, &i.feature_parameters);
+                    report
+                        .warnings
+                        .extend(warnings.into_iter().map(|w| format!("{style}: {w}")));
+                    edited = f;
+                    &edited
+                }
+                None => font,
+            };
             let built = instance_source(font, style, location).and_then(|mut src| {
                 src.instance = *inst;
                 if opts.remove_overlaps {
@@ -1619,6 +1642,7 @@ pub(crate) mod tests {
 
     fn vf_setting(name: &str, disabled: &[&str]) -> kernest_core::VariableFontSetting {
         kernest_core::VariableFontSetting {
+            feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
             name: name.into(),
@@ -1764,6 +1788,7 @@ pub(crate) mod tests {
         f.instances = [400.0, 700.0]
             .into_iter()
             .map(|weight| Instance {
+                feature_parameters: Vec::new(),
                 names: Default::default(),
                 name: if weight == 400.0 { "Regular" } else { "Bold" }.into(),
                 location: BTreeMap::from([("wght".into(), weight)]),
@@ -2030,6 +2055,7 @@ pub(crate) mod tests {
     fn variable_and_interpolated_instance() {
         let mut f = two_masters();
         f.instances.push(Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
@@ -2151,6 +2177,7 @@ pub(crate) mod tests {
             &f,
             vec![
                 VariableFontSetting {
+                    feature_parameters: Vec::new(),
                     family_name: None,
                     name_records: Vec::new(),
                     name: "Light".into(),
@@ -2166,6 +2193,7 @@ pub(crate) mod tests {
                     disabled_masters: Vec::new(),
                 },
                 VariableFontSetting {
+                    feature_parameters: Vec::new(),
                     family_name: None,
                     name_records: Vec::new(),
                     name: "Bold".into(),
@@ -2257,6 +2285,7 @@ pub(crate) mod tests {
         // An instance at the brace location picks up the brace layer's extra width.
         let mut f2 = f.clone();
         f2.instances.push(Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
@@ -2460,6 +2489,7 @@ pub(crate) mod tests {
         // With a weight axis: the location.
         let mut f = two_masters();
         f.instances.push(Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
@@ -2474,6 +2504,7 @@ pub(crate) mod tests {
             localized_family_names: Default::default(),
         });
         f.instances.push(Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Bold".into(),
             location: BTreeMap::from([("wght".into(), 700.0)]),
@@ -2533,6 +2564,7 @@ pub(crate) mod tests {
 
     fn instance(name: &str, wght: f64, family: Option<&str>) -> Instance {
         Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: name.into(),
             location: BTreeMap::from([("wght".into(), wght)]),
@@ -2668,6 +2700,7 @@ pub(crate) mod tests {
     fn instance_naming_parameters_reach_names_and_file_names() {
         let mut f = two_masters();
         let inst = |name: &str, wght: f64| Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: name.into(),
             location: BTreeMap::from([("wght".into(), wght)]),
@@ -2762,6 +2795,7 @@ pub(crate) mod tests {
     fn variable_font_family_name_and_entries() {
         let mut f = two_masters();
         f.variable_fonts = vec![kernest_core::VariableFontSetting {
+            feature_parameters: Vec::new(),
             name: "Variable".into(),
             file_name: "MyVF".into(),
             family_name: Some("Test Variable".into()),
@@ -2779,6 +2813,49 @@ pub(crate) mod tests {
         assert_eq!(name_at(&bytes, 1, 3).as_deref(), Some("Test Variable"));
         assert_eq!(name_at(&bytes, 0, 3).as_deref(), Some("VF copyright"));
         assert!(name_at(&bytes, 16, 3).is_none_or(|n| n == "Test Variable"));
+    }
+
+    #[test]
+    fn variable_fonts_export_their_own_feature_code() {
+        // SMO-23: a variable font setting with Remove Features; the default variable
+        // font isn't built when settings exist, so a second setting keeps every feature.
+        let mut f = two_masters();
+        // a.ss01 drawn like a, in both masters.
+        let mut alt = f.glyph("a").expect("two_masters has an a").clone();
+        alt.name = "a.ss01".into();
+        alt.unicodes.clear();
+        f.glyphs.push(alt);
+        f.feature_settings.automatic = ["ss01".to_string()].into();
+        let setting = |name: &str, feature_parameters| kernest_core::VariableFontSetting {
+            feature_parameters,
+            name: name.into(),
+            file_name: name.into(),
+            family_name: None,
+            name_records: Vec::new(),
+            axes: Vec::new(),
+            glyphs: Vec::new(),
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
+        };
+        f.variable_fonts = vec![
+            setting("Full", Vec::new()),
+            setting(
+                "Plain",
+                vec![kernest_core::CustomParameter {
+                    name: "Remove Features".into(),
+                    value: "ss01".into(),
+                    disabled: false,
+                }],
+            ),
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let full = std::fs::read(out.path().join("Full.ttf")).unwrap();
+        let plain = std::fs::read(out.path().join("Plain.ttf")).unwrap();
+        assert!(gsub_tags(&full).contains(&"ss01".to_string()));
+        assert!(!gsub_tags(&plain).contains(&"ss01".to_string()));
     }
 
     #[test]
@@ -2833,6 +2910,7 @@ pub(crate) mod tests {
     fn instance_class_overrides_and_style_map() {
         let mut f = two_masters();
         f.instances.push(Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Medium".into(),
             location: BTreeMap::from([("wght".into(), 550.0)]),
@@ -2847,6 +2925,7 @@ pub(crate) mod tests {
             localized_family_names: Default::default(),
         });
         f.instances.push(Instance {
+            feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Bold".into(),
             location: BTreeMap::from([("wght".into(), 700.0)]),
@@ -2916,7 +2995,10 @@ pub(crate) mod tests {
 
     fn gsub_tags(bytes: &[u8]) -> Vec<String> {
         let f = FontRef::new(bytes).unwrap();
-        let gsub = f.gsub().unwrap();
+        // A font with no substitutions has no GSUB table.
+        let Ok(gsub) = f.gsub() else {
+            return Vec::new();
+        };
         let mut tags: Vec<String> = gsub
             .feature_list()
             .unwrap()
@@ -2940,6 +3022,122 @@ pub(crate) mod tests {
         for t in ["ss01", "liga", "salt", "aalt"] {
             assert!(tags.contains(&t.to_string()), "{tags:?}");
         }
+    }
+
+    /// The glyphs each GSUB feature substitutes one-for-one (single substitutions),
+    /// by feature tag, as names from the post table.
+    fn single_subst_inputs(bytes: &[u8]) -> BTreeMap<String, BTreeSet<String>> {
+        use write_fonts::read::tables::gsub::{SingleSubst, SubstitutionSubtables};
+        let f = FontRef::new(bytes).unwrap();
+        let gsub = f.gsub().unwrap();
+        let post = f.post().unwrap();
+        let fl = gsub.feature_list().unwrap();
+        let lookups = gsub.lookup_list().unwrap();
+        let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for rec in fl.feature_records() {
+            let tag = String::from_utf8_lossy(&rec.feature_tag().to_be_bytes()).into_owned();
+            let feat = rec.feature(fl.offset_data()).unwrap();
+            for idx in feat.lookup_list_indices() {
+                let lookup = lookups.lookups().get(idx.get() as usize).unwrap();
+                let SubstitutionSubtables::Single(subs) = lookup.subtables().unwrap() else {
+                    continue;
+                };
+                for sub in subs.iter() {
+                    let cov = match sub.unwrap() {
+                        SingleSubst::Format1(t) => t.coverage().unwrap(),
+                        SingleSubst::Format2(t) => t.coverage().unwrap(),
+                        _ => continue,
+                    };
+                    for gid in cov.iter() {
+                        let gid = write_fonts::types::GlyphId16::new(gid.to_u32() as u16);
+                        let name = post.glyph_name(gid).unwrap_or("?").to_string();
+                        out.entry(tag.clone()).or_default().insert(name);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn instances_export_their_own_feature_code() {
+        // SMO-23: two instances; Display removes liga, swaps a class and replaces salt.
+        let mut f = Font::new("Feat", [0x61, 0x62, 0x66, 0x69]);
+        let mid = f.masters[0].id.clone();
+        for n in ["a.alt", "b.alt", "f_i"] {
+            let mut g = kernest_core::Glyph::new(n, vec![]);
+            g.layers.push(Layer::new(&mid, 600.0));
+            f.glyphs.push(g);
+        }
+        // liga is generated from f_i; the class and salt are hand-written.
+        f.feature_settings.automatic = ["liga".to_string()].into();
+        f.features = "@Alts = [ a ];\nfeature ss02 {\n  sub @Alts by a.alt;\n} ss02;\nfeature salt {\n  sub b by b.alt;\n} salt;\n".into();
+        let param = |name: &str, value: &str| kernest_core::CustomParameter {
+            name: name.into(),
+            value: value.into(),
+            disabled: false,
+        };
+        let inst = |name: &str, feature_parameters| Instance {
+            name: name.into(),
+            location: Default::default(),
+            export: true,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
+            feature_parameters,
+            disabled_masters: Vec::new(),
+            names: Default::default(),
+        };
+        f.instances = vec![
+            inst("Regular", Vec::new()),
+            inst(
+                "Display",
+                vec![
+                    param("Remove Features", "liga, dlig"),
+                    param("Replace Class", "Alts; b"),
+                    param("Replace Feature", "salt;\nsub a by a.alt;"),
+                ],
+            ),
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        // dlig isn't in the code: a warning, and the export still succeeds.
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.starts_with("Display:") && w.contains("no dlig feature")),
+            "{:?}",
+            r.warnings
+        );
+        let file = |stem: &str| {
+            let p = r
+                .files
+                .iter()
+                .find(|x| x.path.ends_with(&format!("{stem}.ttf")))
+                .unwrap_or_else(|| panic!("{stem} in {:?}", r.files));
+            std::fs::read(&p.path).unwrap()
+        };
+        let regular = file("Feat-Regular");
+        let display = file("Feat-Display");
+        assert!(gsub_tags(&regular).contains(&"liga".to_string()));
+        assert!(!gsub_tags(&display).contains(&"liga".to_string()));
+        let (reg, disp) = (single_subst_inputs(&regular), single_subst_inputs(&display));
+        let names = |m: &BTreeMap<String, BTreeSet<String>>, t: &str| -> Vec<String> {
+            m.get(t)
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default()
+        };
+        // The class: a in Regular, b in Display.
+        assert_eq!(names(&reg, "ss02"), ["a"]);
+        assert_eq!(names(&disp, "ss02"), ["b"]);
+        // The replaced feature.
+        assert_eq!(names(&reg, "salt"), ["b"]);
+        assert_eq!(names(&disp, "salt"), ["a"]);
     }
 
     #[test]

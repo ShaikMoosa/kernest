@@ -582,4 +582,15 @@ export const ENGINE_MESSAGES = [
   "\"{name}\" isn't a writing direction; use LTR, RTL or BIDI.",
   "The vertical width can't be negative.",
   "Glyph \"{name}\" has no outline, so it has no top or bottom sidebearing.",
+  // SMO-23 · Export-specific feature code
+  "Replace Feature: there is no {tag} feature; it was added.",
+  "Remove Features: there is no {tag} feature; it was ignored.",
+  "Replace Prefix: there is no prefix named {name}; it was ignored.",
+  "Remove Prefixes: there is no prefix named {name}; it was ignored.",
+  "Replace Class: there is no class named @{name}; it was ignored.",
+  "Remove Classes: there is no class named @{name}; it was ignored.",
+  "Replace Feature: start with the feature tag and a semicolon, such as \"liga; sub f i by f_i;\". It was ignored.",
+  "Replace Feature: \"{tag}\" isn't a feature tag; use up to four letters or digits. It was ignored.",
+  "Replace Prefix: start with the prefix name and a semicolon, such as \"Languagesystems; languagesystem DFLT dflt;\". It was ignored.",
+  "Replace Class: start with the class name and a semicolon, such as \"Figures; one.osf two.osf\". It was ignored.",
 ];

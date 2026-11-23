@@ -41,6 +41,7 @@ fn two_masters() -> Font {
         }],
     );
     f.instances.push(Instance {
+        feature_parameters: Vec::new(),
         names: Default::default(),
         name: "Medium".into(),
         location: BTreeMap::from([("wght".into(), 550.0)]),
@@ -349,6 +350,7 @@ fn glyphs_disable_masters_round_trip() {
     let mut src = two_masters();
     src.instances[0].disabled_masters = vec!["Bold".into()];
     src.variable_fonts = vec![VariableFontSetting {
+        feature_parameters: Vec::new(),
         family_name: None,
         name_records: Vec::new(),
         name: "Light only".into(),
@@ -370,6 +372,52 @@ fn glyphs_disable_masters_round_trip() {
     assert_eq!(
         f.variable_fonts[0].disabled_masters,
         vec!["Bold".to_string()]
+    );
+}
+
+#[test]
+fn glyphs_feature_parameters_round_trip() {
+    // SMO-23: export-specific feature code on an instance and a variable font.
+    let param = |name: &str, value: &str, disabled| kernest_core::CustomParameter {
+        name: name.into(),
+        value: value.into(),
+        disabled,
+    };
+    let mut src = two_masters();
+    src.instances[0].feature_parameters = vec![
+        param("Replace Feature", "liga;\nsub f i by f_i.alt;", false),
+        param("Remove Features", "dlig, salt", false),
+        param("Replace Class", "Figures; one.osf two.osf", true),
+    ];
+    src.variable_fonts = vec![VariableFontSetting {
+        feature_parameters: vec![param("Remove Prefixes", "Lookups", false)],
+        family_name: None,
+        name_records: Vec::new(),
+        name: "Variable".into(),
+        file_name: "Sample-VF".into(),
+        axes: Vec::new(),
+        glyphs: Vec::new(),
+        rename_glyphs: Vec::new(),
+        remove_glyphs: Vec::new(),
+        disabled_masters: Vec::new(),
+    }];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Features.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    // Lists are written as arrays, as Glyphs does.
+    assert!(
+        text.contains("name = \"Remove Features\";\nvalue = (\ndlig,\nsalt\n);"),
+        "{text}"
+    );
+    let f = import(&path).unwrap().font;
+    assert_eq!(
+        f.instances[0].feature_parameters,
+        src.instances[0].feature_parameters
+    );
+    assert_eq!(
+        f.variable_fonts[0].feature_parameters,
+        src.variable_fonts[0].feature_parameters
     );
 }
 
@@ -1738,6 +1786,7 @@ fn designspace_variable_fonts_round_trip() {
     let mut src = two_masters();
     src.variable_fonts = vec![
         VariableFontSetting {
+            feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
             name: "Light".into(),
@@ -1753,6 +1802,7 @@ fn designspace_variable_fonts_round_trip() {
             disabled_masters: Vec::new(),
         },
         VariableFontSetting {
+            feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
             name: "Bold".into(),
@@ -2085,6 +2135,7 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
     ];
     src.variable_fonts = vec![
         VariableFontSetting {
+            feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
             name: "Upright".into(),
@@ -2096,6 +2147,7 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
             disabled_masters: Vec::new(),
         },
         VariableFontSetting {
+            feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
             name: "Text".into(),

@@ -185,6 +185,7 @@ mod tests {
                 master("Bold", &[("wght", 900.0)]),
             ],
             instances: vec![Instance {
+                feature_parameters: Vec::new(),
                 names: Default::default(),
                 name: "Regular".into(),
                 location: BTreeMap::from([("wght".into(), 400.0)]),

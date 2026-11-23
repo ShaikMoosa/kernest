@@ -1,5 +1,5 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { backend, errorMessage, nameRecordText, type Axis, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type NameOverrides, type NameRecord, type VariableFontSetting, type VerticalMetrics, type VirtualMaster } from "../lib/backend";
+import { backend, errorMessage, nameRecordText, type Axis, type CustomParameter, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type NameOverrides, type NameRecord, type VariableFontSetting, type VerticalMetrics, type VirtualMaster } from "../lib/backend";
 import { designBounds, designToUser, hasMap, userToDesign } from "../lib/axisMap";
 import { hasLabels, statStyleName } from "../lib/statName";
 import { pickMasterSource } from "../lib/desktop";
@@ -139,6 +139,79 @@ function NamingFields({ names, instance, onChange }: { names: NameOverrides | un
         {text("fileName", "File name", "The exported file's name without extension, e.g. MyFont-Bold. Characters Windows forbids become _.", 160)}
         <NameRecordsField records={n.records} label={t("Name table entries for {name}", { name: instance })} onChange={(records) => set({ records })} />
       </div>
+    </details>
+  );
+}
+
+/** The export-specific feature code parameters (Glyphs names), in the order offered. */
+const FEATURE_PARAMETERS = ["Replace Feature", "Remove Features", "Replace Prefix", "Remove Prefixes", "Replace Class", "Remove Classes"] as const;
+const FEATURE_PARAMETER_HINTS: Record<string, string> = {
+  "Replace Feature": "liga;\nsub f i by f_i.alt;",
+  "Remove Features": "liga, dlig",
+  "Replace Prefix": "Languagesystems;\nlanguagesystem DFLT dflt;",
+  "Remove Prefixes": "Languagesystems",
+  "Replace Class": "Figures; one.osf two.osf",
+  "Remove Classes": "Figures",
+};
+
+/** One parameter's code, edited in a text area and applied on blur. */
+function FeatureCodeArea({ value, label, placeholder, onCommit }: { value: string; label: string; placeholder: string; onCommit: (v: string) => void }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  return (
+    <textarea className="k-code fi-feature-code-area" rows={3} aria-label={label} value={text} placeholder={placeholder} spellCheck={false} dir="ltr"
+      onChange={(e) => setText(e.target.value)} onBlur={() => { if (text !== value) onCommit(text); }} />
+  );
+}
+
+/**
+ * SMO-23 · Export-specific feature code: Glyphs' Replace Feature, Remove Features,
+ * Replace/Remove Prefix and Replace/Remove Class parameters for one instance or
+ * variable font, applied in order to the generated and hand-written code.
+ */
+function FeatureCodeFields({ params, owner, onChange }: { params: CustomParameter[] | undefined; owner: string; onChange: (params: CustomParameter[] | undefined) => void }) {
+  const list = params ?? [];
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const key = JSON.stringify(list);
+  useEffect(() => {
+    if (list.length === 0) { setWarnings([]); return; }
+    let live = true;
+    backend.checkFeatureParameters(list).then((w) => { if (live) setWarnings(w); }, () => { if (live) setWarnings([]); });
+    return () => { live = false; };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const set = (i: number, p: Partial<CustomParameter>) => onChange(list.map((x, j) => (j === i ? { ...x, ...p } : x)));
+  const on = list.filter((p) => !p.disabled).length;
+  return (
+    <details className="fi-names fi-feature-code" open={list.length > 0 ? true : undefined}>
+      <summary className="k-caption">{list.length > 0 ? tn(on, "Feature code ({n} parameter)", "Feature code ({n} parameters)") : t("Feature code")}</summary>
+      <p className="k-caption muted">{t("Change the feature code for this export only. Parameters apply in order, to the generated features and your own code.")}</p>
+      {list.map((p, i) => {
+        const isList = p.name.startsWith("Remove");
+        const label = t("{parameter} for {name}", { parameter: t(p.name), name: owner });
+        return (
+          <div key={i} className="fi-row fi-feature-param">
+            <select className="select" value={p.name} aria-label={t("Parameter")} onChange={(e) => set(i, { name: e.target.value })}>
+              {FEATURE_PARAMETERS.map((k) => <option key={k} value={k}>{t(k)}</option>)}
+            </select>
+            {isList ? (
+              <Field label={label} value={p.value} width={240} mono={false} numeric={false} placeholder={FEATURE_PARAMETER_HINTS[p.name]} onCommit={(v) => set(i, { value: v.trim() })} />
+            ) : (
+              <FeatureCodeArea value={p.value} label={label} placeholder={FEATURE_PARAMETER_HINTS[p.name] ?? ""} onCommit={(v) => set(i, { value: v })} />
+            )}
+            <label className="check-row" title={t("Apply this parameter when exporting")}>
+              <input type="checkbox" checked={!p.disabled} aria-label={t("Use {parameter}", { parameter: t(p.name) })} onChange={(e) => set(i, { disabled: e.target.checked ? undefined : true })} />
+              <span className="k-caption">{t("On")}</span>
+            </label>
+            <button className="icon-btn" aria-label={t("Remove {name}", { name: t(p.name) })} title={t("Remove parameter")} onClick={() => { const next = list.filter((_, j) => j !== i); onChange(next.length ? next : undefined); }}><CloseIcon size={14} /></button>
+          </div>
+        );
+      })}
+      {warnings.length > 0 && (
+        <ul className="fi-feature-warnings" role="status">
+          {warnings.map((w, i) => <li key={i} className="k-caption">{translateMessage(w)}</li>)}
+        </ul>
+      )}
+      <button className="btn btn-secondary btn-sm" onClick={() => onChange([...list, { name: "Remove Features", value: "" }])}><AddIcon size={14} /> {t("Add parameter")}</button>
     </details>
   );
 }
@@ -824,6 +897,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
               <SwapFields rename={it.renameGlyphs} remove={it.removeGlyphs} onChange={(renameGlyphs, removeGlyphs) => patch({ renameGlyphs, removeGlyphs })} />
               <button className="icon-btn" aria-label={t("Remove {name}", { name: it.name })} title={t("Remove instance")} onClick={() => setInstances(curInst().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
               <NamingFields names={it.names} instance={it.name} onChange={(names) => patch({ names })} />
+              <FeatureCodeFields params={it.featureParameters} owner={it.name} onChange={(featureParameters) => patch({ featureParameters })} />
             </div>
             );
           })}
@@ -900,6 +974,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                 <span className="k-caption muted fi-vf-glyphs-hint">{t("Empty keeps every glyph.")}</span>
                 <SwapFields rename={vf.renameGlyphs} remove={vf.removeGlyphs} onChange={(renameGlyphs, removeGlyphs) => patch({ renameGlyphs, removeGlyphs })} />
               </div>
+              <FeatureCodeFields params={vf.featureParameters} owner={vf.name} onChange={(featureParameters) => patch({ featureParameters })} />
               {info.masters.length > 1 && (
                 <fieldset className="fi-row fi-vf-masters" title={t("Masters left out of this variable font. Its axes shrink to the masters that remain.")}>
                   <legend className="k-caption muted">{t("Disable masters")}</legend>

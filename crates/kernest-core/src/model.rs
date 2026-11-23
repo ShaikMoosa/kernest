@@ -341,6 +341,10 @@ pub struct VariableFontSetting {
     /// Name records set by hand for this variable font ("Name Table Entry").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub name_records: Vec<NameRecord>,
+    /// Feature code changes for this variable font (Replace Feature, Remove
+    /// Features…; see [`crate::featureedits`]), applied in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feature_parameters: Vec<CustomParameter>,
 }
 
 /// The part of one axis a variable font covers, in user coordinates. A missing
@@ -1585,6 +1589,10 @@ pub struct Instance {
     /// Family names in other languages, keyed by Glyphs language tag ("DEU", "JAN"…).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub localized_family_names: BTreeMap<String, String>,
+    /// Feature code changes for this instance's export (Replace Feature, Remove
+    /// Features…; see [`crate::featureedits`]), applied in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feature_parameters: Vec<CustomParameter>,
     /// Masters (by name) this instance is interpolated without ("Disable Masters").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_masters: Vec<String>,

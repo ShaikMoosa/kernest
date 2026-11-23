@@ -99,6 +99,7 @@ fn main() {
             features::features,
             features::set_features,
             features::set_automatic_features,
+            features::check_feature_parameters,
             features::preview_feature_import,
             features::import_features,
             features::shape_text,
