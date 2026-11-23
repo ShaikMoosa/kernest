@@ -690,4 +690,63 @@ mod tests {
         assert_eq!(p.added, vec!["ss02".to_string()]);
         assert!(!p.diagnostics.is_empty());
     }
+
+    #[test]
+    fn generated_fraction_ligature_zero_and_figure_features_shape() {
+        // SMO-21: alternates drawn like H, added to the sample font.
+        let mut f = sample_font();
+        let mid = f.masters[0].id.clone();
+        let layer = f.glyph("H").and_then(|g| g.layer(&mid)).cloned().unwrap();
+        let mut add = |n: &str, cp: Option<u32>| {
+            if f.glyph(n).is_none() {
+                let mut g = Glyph::new(n, cp.map(kernest_core::Codepoint).into_iter().collect());
+                g.layers.push(layer.clone());
+                f.glyphs.push(g);
+            }
+        };
+        add("fraction", Some(0x2044));
+        for (n, cp) in [
+            ("zero", 0x30),
+            ("one", 0x31),
+            ("two", 0x32),
+            ("slash", 0x2F),
+        ] {
+            add(n, Some(cp));
+        }
+        for n in [
+            "one.numr",
+            "one.dnom",
+            "two.numr",
+            "two.dnom",
+            "f_f_i.dlig",
+            "zero.zero",
+            "one.tf",
+            "one.osf",
+            "one.tosf",
+        ] {
+            add(n, None);
+        }
+        f.feature_settings.automatic = available(&f);
+        let mut doc = Document::new(f, None);
+        let names = |doc: &mut Document, text: &str, feats: &[&str]| -> Vec<String> {
+            let feats: Vec<String> = feats.iter().map(|t| format!("{t}=1")).collect();
+            shape(doc, text, "m01", None, &feats, None).unwrap().lines[0]
+                .iter()
+                .map(|g| g.name.clone())
+                .collect()
+        };
+        assert_eq!(
+            names(&mut doc, "1/2", &["frac"]),
+            ["one.numr", "fraction", "two.dnom"]
+        );
+        assert_eq!(
+            names(&mut doc, "12/21", &["frac"]),
+            ["one.numr", "two.numr", "fraction", "two.dnom", "one.dnom"]
+        );
+        assert_eq!(names(&mut doc, "1/2", &[]), ["one", "slash", "two"]);
+        assert_eq!(names(&mut doc, "ffi", &["dlig"]), ["f_f_i.dlig"]);
+        assert_eq!(names(&mut doc, "0", &["zero"]), ["zero.zero"]);
+        assert_eq!(names(&mut doc, "1", &["onum", "tnum"]), ["one.tosf"]);
+        assert_eq!(names(&mut doc, "1", &["onum"]), ["one.osf"]);
+    }
 }

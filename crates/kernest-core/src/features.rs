@@ -24,8 +24,23 @@ const ORDER: &[&str] = &[
     "ccmp", "isol", "fina", "fin2", "fin3", "medi", "med2", "init", "liga", "locl", "smcp", "c2sc",
     "case", "tnum", "onum", "lnum", "sups", "subs", "salt", "ss01", "ss02", "ss03", "ss04", "ss05",
     "ss06", "ss07", "ss08", "ss09", "ss10", "ss11", "ss12", "ss13", "ss14", "ss15", "ss16", "ss17",
-    "ss18", "ss19", "ss20", "aalt",
+    "ss18", "ss19", "ss20", "rlig", "dlig", "hlig", "pnum", "sinf", "numr", "dnom", "frac", "afrc",
+    "ordn", "zero", "titl", "swsh", "cswh", "pcap", "c2pc", "cpsp", "ornm", "hist", "aalt",
 ];
+
+/// The ten figures, by glyph name.
+const FIGURES: &[&str] = &[
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+];
+
+/// Suffixes that substitute the base glyph in the feature of the same name.
+const SAME_TAG: &[&str] = &[
+    "sinf", "ordn", "titl", "swsh", "cswh", "ornm", "hist", "dlig", "hlig", "rlig", "afrc",
+];
+
+/// Suffixes of ligature-like glyphs (`f_f_i.dlig`, `one_fraction_two.afrc`) whose
+/// parts are substituted by them.
+const LIGATURE_TAGS: &[&str] = &["dlig", "hlig", "rlig", "afrc"];
 
 /// Tags the designer wrote by hand. Anything here is left out of generation.
 pub fn handwritten_tags(font: &Font) -> BTreeSet<String> {
@@ -152,6 +167,118 @@ fn ccmp(font: &Font) -> Option<Vec<String>> {
     ])
 }
 
+/// The exporting glyph with this name, or else the one encoded `cp` (a fraction slash
+/// made from its code point is called `uni2044`, not `fraction`).
+fn named_or_encoded<'a>(font: &'a Font, name: &str, cp: u32) -> Option<&'a str> {
+    font.glyph(name)
+        .or_else(|| {
+            font.glyphs
+                .iter()
+                .find(|g| g.unicodes.iter().any(|c| c.0 == cp))
+        })
+        .filter(|g| g.export)
+        .map(|g| g.name.as_str())
+}
+
+/// The figure's numerator and denominator glyphs (`one.numr`/`one.dnom`, or the
+/// longer `.numerator`/`.denominator` names).
+fn numr_dnom<'a>(font: &'a Font, fig: &str) -> Option<(&'a str, &'a str)> {
+    let find = |sufs: [&str; 2]| {
+        sufs.iter()
+            .find_map(|s| font.glyph(&format!("{fig}.{s}")))
+            .map(|g| g.name.as_str())
+    };
+    Some((find(["numr", "numerator"])?, find(["dnom", "denominator"])?))
+}
+
+/// `frac`, the Glyphs and Adobe recipe: a slash becomes the fraction slash, every
+/// figure becomes a numerator, and figures after the fraction slash (or after a
+/// denominator) become denominators. Needs `fraction` and at least one figure with
+/// both a numerator and a denominator.
+fn frac(font: &Font) -> Option<Vec<String>> {
+    let fraction = named_or_encoded(font, "fraction", 0x2044)?;
+    let figs: Vec<(&str, &str, &str)> = FIGURES
+        .iter()
+        .filter(|f| font.glyph(f).is_some())
+        .filter_map(|f| numr_dnom(font, f).map(|(n, d)| (*f, n, d)))
+        .collect();
+    if figs.is_empty() {
+        return None;
+    }
+    let join = |v: Vec<&str>| v.join(" ");
+    let base = join(figs.iter().map(|f| f.0).collect());
+    let numr = join(figs.iter().map(|f| f.1).collect());
+    let dnom = join(figs.iter().map(|f| f.2).collect());
+    let mut lines = Vec::new();
+    if font.glyph("slash").is_some() {
+        lines.extend([
+            "  lookup FractionBar {".to_string(),
+            format!("    sub slash by {fraction};"),
+            "  } FractionBar;".into(),
+        ]);
+    }
+    lines.extend([
+        "  lookup Numerators {".to_string(),
+        format!("    sub [{base}] by [{numr}];"),
+        "  } Numerators;".into(),
+        "  lookup Denominators {".into(),
+        format!("    sub {fraction} [{numr}]' by [{dnom}];"),
+        format!("    sub [{dnom}] [{numr}]' by [{dnom}];"),
+        "  } Denominators;".into(),
+    ]);
+    Some(lines)
+}
+
+/// `ordn`'s contextual part: `ordfeminine` and `ordmasculine` after figures, and the
+/// numero sign from `N o period`. Suffixed `.ordn` glyphs are added by the suffix rules.
+fn ordn(font: &Font) -> Option<Vec<String>> {
+    let has = |n: &str| font.glyph(n).is_some();
+    let figs: Vec<&str> = FIGURES.iter().copied().filter(|f| has(f)).collect();
+    let mut lines = Vec::new();
+    if !figs.is_empty() {
+        for (ord, cp, letters) in [
+            ("ordfeminine", 0xAA, ["A", "a"]),
+            ("ordmasculine", 0xBA, ["O", "o"]),
+        ] {
+            let after: Vec<&str> = letters.into_iter().filter(|l| has(l)).collect();
+            if let Some(ord) = named_or_encoded(font, ord, cp).filter(|_| !after.is_empty()) {
+                lines.push(format!(
+                    "  sub [{}] [{}]' by {ord};",
+                    figs.join(" "),
+                    after.join(" ")
+                ));
+            }
+        }
+    }
+    if let Some(numero) = named_or_encoded(font, "numero", 0x2116) {
+        if ["N", "o", "period"].iter().all(|n| has(n)) {
+            lines.push(format!("  sub N o period by {numero};"));
+        }
+    }
+    (!lines.is_empty()).then_some(lines)
+}
+
+/// `cpsp`: extra space around capitals, from the number value named `cpsp` (that much
+/// on each side), so it varies like the value does. Without that value there's nothing.
+fn cpsp(font: &Font) -> Option<Vec<String>> {
+    if !font.info.numbers.contains_key("cpsp") {
+        return None;
+    }
+    let caps: Vec<&str> = font
+        .glyphs
+        .iter()
+        .filter(|g| g.export && g.category() == crate::glyphdata::Category::Uppercase)
+        .map(|g| g.name.as_str())
+        .collect();
+    if caps.is_empty() {
+        return None;
+    }
+    Some(vec![
+        format!("  @CapitalSpacing = [{}];", caps.join(" ")),
+        "  pos @CapitalSpacing <$cpsp 0 ${cpsp*2} 0>;".into(),
+    ])
+}
+
 /// Substitution lines per feature tag, including the `aalt` aggregate.
 fn collect(font: &Font) -> BTreeMap<String, Vec<String>> {
     let mut blocks: BTreeMap<String, Vec<String>> = positional(font);
@@ -167,13 +294,59 @@ fn collect(font: &Font) -> BTreeMap<String, Vec<String>> {
             .push(format!("  sub {base} by {alt};"));
     }
 
+    fn put_line(blocks: &mut BTreeMap<String, Vec<String>>, tag: &str, line: String) {
+        blocks.entry(tag.to_string()).or_default().push(line);
+    }
+
     for g in &font.glyphs {
         let name = g.name.as_str();
         if let Some((base, suf)) = name.rsplit_once('.') {
+            // f_f_i.dlig, one_fraction_two.afrc: the parts become the ligature.
+            if LIGATURE_TAGS.contains(&suf) && !has(base) && base.contains('_') {
+                let parts: Vec<&str> = base.split('_').collect();
+                if parts.len() >= 2 && parts.iter().all(|p| has(p)) {
+                    put_line(
+                        &mut blocks,
+                        suf,
+                        format!("  sub {} by {name};", parts.join(" ")),
+                    );
+                }
+                continue;
+            }
             if !has(base) {
                 continue;
             }
+            let alt = |s: &str| format!("{base}.{s}");
             match suf {
+                "numr" | "numerator" => put(&mut blocks, "numr", base, name),
+                "dnom" | "denominator" => put(&mut blocks, "dnom", base, name),
+                "zero" if base.starts_with("zero") => put(&mut blocks, "zero", base, name),
+                // zero.slash only when there's no zero.zero for the same base.
+                "slash" if base.starts_with("zero") && !has(&alt("zero")) => {
+                    put(&mut blocks, "zero", base, name)
+                }
+                "pc" => {
+                    let tag = if base.chars().next().is_some_and(|c| c.is_uppercase()) {
+                        "c2pc"
+                    } else {
+                        "pcap"
+                    };
+                    put(&mut blocks, tag, base, name);
+                }
+                "pf" | "pnum" => put(&mut blocks, "pnum", base, name),
+                // Tabular oldstyle: reached from tabular lining by onum and from
+                // proportional oldstyle by tnum; pnum and lnum lead back.
+                "tosf" => {
+                    if has(&alt("tf")) {
+                        put(&mut blocks, "onum", &alt("tf"), name);
+                        put(&mut blocks, "lnum", name, &alt("tf"));
+                    }
+                    if has(&alt("osf")) {
+                        put(&mut blocks, "tnum", &alt("osf"), name);
+                        put(&mut blocks, "pnum", name, &alt("osf"));
+                    }
+                }
+                s if SAME_TAG.contains(&s) => put(&mut blocks, s, base, name),
                 "sc" => {
                     // Uppercase small caps are the capital-to-small-cap feature.
                     let tag = if base.chars().next().is_some_and(|c| c.is_uppercase()) {
@@ -185,9 +358,26 @@ fn collect(font: &Font) -> BTreeMap<String, Vec<String>> {
                 }
                 "c2sc" => put(&mut blocks, "c2sc", base, name),
                 "case" => put(&mut blocks, "case", base, name),
-                "tf" => put(&mut blocks, "tnum", base, name),
-                "osf" => put(&mut blocks, "onum", base, name),
-                "lf" => put(&mut blocks, "lnum", base, name),
+                // Default figures are proportional when tabular ones are suffixed, so
+                // pnum turns tabular back into the default.
+                "tf" => {
+                    put(&mut blocks, "tnum", base, name);
+                    put(&mut blocks, "pnum", name, base);
+                }
+                // Each figure style leads back to the default style from the other
+                // one, when the font has no explicit alternate for that direction.
+                "osf" => {
+                    put(&mut blocks, "onum", base, name);
+                    if !has(&alt("lf")) {
+                        put(&mut blocks, "lnum", name, base);
+                    }
+                }
+                "lf" => {
+                    put(&mut blocks, "lnum", base, name);
+                    if !has(&alt("osf")) {
+                        put(&mut blocks, "onum", name, base);
+                    }
+                }
                 "sups" => put(&mut blocks, "sups", base, name),
                 "subs" => put(&mut blocks, "subs", base, name),
                 "alt" => {
@@ -219,6 +409,16 @@ fn collect(font: &Font) -> BTreeMap<String, Vec<String>> {
                     .push(format!("  sub {} by {name};", parts.join(" ")));
             }
         }
+    }
+
+    if let Some(lines) = frac(font) {
+        blocks.insert("frac".into(), lines);
+    }
+    if let Some(lines) = ordn(font) {
+        blocks.entry("ordn".into()).or_default().splice(0..0, lines);
+    }
+    if let Some(lines) = cpsp(font) {
+        blocks.insert("cpsp".into(), lines);
     }
 
     if has("i") && has("idotaccent") {
@@ -721,5 +921,285 @@ mod tests {
         let diags = check(&f);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].line, 1);
+    }
+
+    /// The ten figures with numerators and denominators, a slash and a fraction slash.
+    fn fraction_font() -> Font {
+        let mut names: Vec<String> = vec!["slash".into(), "fraction".into()];
+        for f in FIGURES {
+            names.push(f.to_string());
+            names.push(format!("{f}.numr"));
+            names.push(format!("{f}.dnom"));
+        }
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        font_with(&refs)
+    }
+
+    #[test]
+    fn fractions_generate_frac_numr_and_dnom() {
+        let mut f = fraction_font();
+        enable_all(&mut f);
+        let a = available(&f);
+        for t in ["frac", "numr", "dnom"] {
+            assert!(a.contains(t), "{t} in {a:?}");
+        }
+        let code = generate(&f);
+        for expected in [
+            "feature numr {\n  sub zero by zero.numr;",
+            "feature dnom {\n  sub zero by zero.dnom;",
+            "    sub slash by fraction;",
+            "    sub [zero one two three four five six seven eight nine] by [zero.numr one.numr two.numr three.numr four.numr five.numr six.numr seven.numr eight.numr nine.numr];",
+            "    sub fraction [zero.numr one.numr two.numr three.numr four.numr five.numr six.numr seven.numr eight.numr nine.numr]' by [zero.dnom one.dnom two.dnom three.dnom four.dnom five.dnom six.dnom seven.dnom eight.dnom nine.dnom];",
+            "    sub [zero.dnom one.dnom two.dnom three.dnom four.dnom five.dnom six.dnom seven.dnom eight.dnom nine.dnom] [zero.numr",
+        ] {
+            assert!(code.contains(expected), "missing {expected:?} in:\n{code}");
+        }
+        // numr and dnom come before frac, which runs last of the three; zero runs after
+        // frac, as in Glyphs, so a zero in a fraction still becomes a numerator.
+        let pos = |t: &str| code.find(&format!("feature {t} ")).unwrap_or(usize::MAX);
+        assert!(pos("numr") < pos("frac") && pos("dnom") < pos("frac"));
+        f.glyphs.push(Glyph::new("zero.zero", vec![]));
+        enable_all(&mut f);
+        let code = generate(&f);
+        let pos = |t: &str| code.find(&format!("feature {t} ")).unwrap();
+        assert!(pos("frac") < pos("zero"), "{code}");
+    }
+
+    #[test]
+    fn partial_figures_and_a_missing_fraction_slash() {
+        // Only one and two have both forms; three has a numerator only.
+        let mut f = font_with(&[
+            "fraction",
+            "one",
+            "one.numr",
+            "one.dnom",
+            "two",
+            "two.numerator",
+            "two.denominator",
+            "three",
+            "three.numr",
+        ]);
+        enable_all(&mut f);
+        let code = generate(&f);
+        assert!(
+            code.contains("    sub [one two] by [one.numr two.numerator];"),
+            "{code}"
+        );
+        assert!(!code.contains("sub slash by fraction"), "no slash glyph");
+        assert!(
+            code.contains("  sub three by three.numr;"),
+            "numr maps every pair"
+        );
+        // Without the fraction slash, numr and dnom are still made but frac isn't.
+        f.glyphs.retain(|g| g.name != "fraction");
+        enable_all(&mut f);
+        let a = available(&f);
+        assert!(!a.contains("frac") && a.contains("numr") && a.contains("dnom"));
+    }
+
+    #[test]
+    fn suffixed_ligatures_and_suffix_features() {
+        let mut f = font_with(&[
+            "f",
+            "i",
+            "f_f_i.dlig",
+            "c",
+            "t",
+            "c_t.hlig",
+            "x",
+            "x_x.rlig",
+            "one",
+            "fraction",
+            "two",
+            "one_fraction_two.afrc",
+            "a",
+            "a.sinf",
+            "a.ordn",
+            "A",
+            "A.titl",
+            "A.swsh",
+            "A.cswh",
+            "bullet",
+            "bullet.ornm",
+            "s",
+            "s.hist",
+            "zero",
+            "zero.zero",
+            "zero.slash",
+            "zero.tf",
+            "zero.tf.zero",
+            "b",
+            "b.pc",
+            "B",
+            "B.pc",
+        ]);
+        enable_all(&mut f);
+        let code = generate(&f);
+        for expected in [
+            "feature dlig {\n  sub f f i by f_f_i.dlig;\n} dlig;",
+            "feature hlig {\n  sub c t by c_t.hlig;\n} hlig;",
+            "feature rlig {\n  sub x x by x_x.rlig;\n} rlig;",
+            "feature afrc {\n  sub one fraction two by one_fraction_two.afrc;\n} afrc;",
+            "feature sinf {\n  sub a by a.sinf;",
+            "  sub a by a.ordn;",
+            "feature titl {\n  sub A by A.titl;",
+            "feature swsh {\n  sub A by A.swsh;",
+            "feature cswh {\n  sub A by A.cswh;",
+            "feature ornm {\n  sub bullet by bullet.ornm;",
+            "feature hist {\n  sub s by s.hist;",
+            "  sub zero by zero.zero;",
+            "  sub zero.tf by zero.tf.zero;",
+            "feature pcap {\n  sub b by b.pc;",
+            "feature c2pc {\n  sub B by B.pc;",
+        ] {
+            assert!(code.contains(expected), "missing {expected:?} in:\n{code}");
+        }
+        // zero.zero wins over zero.slash for the same figure.
+        assert!(!code.contains("zero.slash"), "{code}");
+        // A suffixed ligature isn't also a plain liga.
+        assert!(!code.contains("feature liga"), "{code}");
+    }
+
+    #[test]
+    fn zero_slash_is_used_without_zero_zero() {
+        let mut f = font_with(&["zero", "zero.slash"]);
+        enable_all(&mut f);
+        assert!(generate(&f).contains("feature zero {\n  sub zero by zero.slash;\n} zero;"));
+    }
+
+    #[test]
+    fn figure_styles_combine_like_glyphs() {
+        let mut f = font_with(&["one", "one.tf", "one.osf", "one.tosf"]);
+        enable_all(&mut f);
+        let code = generate(&f);
+        for expected in [
+            "feature tnum {\n  sub one by one.tf;\n  sub one.osf by one.tosf;\n} tnum;",
+            "feature onum {\n  sub one by one.osf;\n  sub one.tf by one.tosf;\n} onum;",
+            "feature lnum {\n  sub one.osf by one;\n  sub one.tosf by one.tf;\n} lnum;",
+            "feature pnum {\n  sub one.tf by one;\n  sub one.tosf by one.osf;\n} pnum;",
+        ] {
+            assert!(code.contains(expected), "missing {expected:?} in:\n{code}");
+        }
+        // Oldstyle default with lining alternates: onum leads back to the default.
+        let mut g = font_with(&["one", "one.lf"]);
+        enable_all(&mut g);
+        let code = generate(&g);
+        assert!(
+            code.contains("feature lnum {\n  sub one by one.lf;\n} lnum;"),
+            "{code}"
+        );
+        assert!(
+            code.contains("feature onum {\n  sub one.lf by one;\n} onum;"),
+            "{code}"
+        );
+        // An explicit proportional alternate.
+        let mut h = font_with(&["one", "one.pf"]);
+        enable_all(&mut h);
+        assert!(generate(&h).contains("feature pnum {\n  sub one by one.pf;\n} pnum;"));
+    }
+
+    #[test]
+    fn ordinals_after_figures_and_the_numero_sign() {
+        let mut f = font_with(&[
+            "one",
+            "two",
+            "a",
+            "A",
+            "o",
+            "N",
+            "period",
+            "ordfeminine",
+            "ordmasculine",
+            "numero",
+            "a.ordn",
+        ]);
+        enable_all(&mut f);
+        let code = generate(&f);
+        assert!(
+            code.contains("feature ordn {\n  sub [one two] [A a]' by ordfeminine;\n  sub [one two] [o]' by ordmasculine;\n  sub N o period by numero;\n  sub a by a.ordn;\n} ordn;"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn capital_spacing_needs_the_cpsp_number_value() {
+        let mut f = Font::new("Test", [0x41, 0x42, 0x61]);
+        enable_all(&mut f);
+        assert!(!available(&f).contains("cpsp"));
+        let m = f.masters[0].id.clone();
+        f.info
+            .numbers
+            .insert("cpsp".into(), BTreeMap::from([(m, 5.0)]));
+        enable_all(&mut f);
+        let code = generate(&f);
+        assert!(
+            code.contains("feature cpsp {\n  @CapitalSpacing = [A B];\n  pos @CapitalSpacing <$cpsp 0 ${cpsp*2} 0>;\n} cpsp;"),
+            "{code}"
+        );
+        // The token expands to the master's value on export.
+        let out = combined_for(&f, &crate::featuretokens::Context::DEFAULT).unwrap();
+        assert!(out.contains("pos @CapitalSpacing <5 0 10 0>;"), "{out}");
+    }
+
+    #[test]
+    fn an_encoded_fraction_slash_is_found_by_code_point() {
+        let mut f = Font::new("Test", [0x2044, 0x31]);
+        f.glyphs.push(Glyph::new("one.numr", vec![]));
+        f.glyphs.push(Glyph::new("one.dnom", vec![]));
+        enable_all(&mut f);
+        let code = generate(&f);
+        assert!(
+            code.contains("    sub uni2044 [one.numr]' by [one.dnom];"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn hand_written_frac_wins() {
+        let mut f = fraction_font();
+        f.features = "feature frac {\n  sub slash by fraction;\n} frac;\n".into();
+        enable_all(&mut f);
+        assert!(!available(&f).contains("frac"));
+        let code = generate(&f);
+        assert!(!code.contains("feature frac"), "{code}");
+        assert!(code.contains("feature numr"), "{code}");
+    }
+
+    #[test]
+    fn every_generated_feature_compiles() {
+        let mut f = fraction_font();
+        for n in [
+            "f",
+            "i",
+            "f_f_i.dlig",
+            "a",
+            "A",
+            "o",
+            "N",
+            "period",
+            "ordfeminine",
+            "ordmasculine",
+            "numero",
+            "a.ordn",
+            "a.sinf",
+            "A.titl",
+            "A.swsh",
+            "zero.zero",
+            "one.tf",
+            "one.osf",
+            "one.tosf",
+            "b",
+            "b.pc",
+            "B",
+            "B.pc",
+            "one_fraction_two.afrc",
+        ] {
+            f.glyphs.push(Glyph::new(n, vec![]));
+        }
+        enable_all(&mut f);
+        // check() compiles the designer's text; run the generated code through it.
+        f.features = generate(&f);
+        f.feature_settings.automatic.clear();
+        assert!(check(&f).is_empty(), "{:?}\n{}", check(&f), f.features);
     }
 }
