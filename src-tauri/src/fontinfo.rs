@@ -507,6 +507,26 @@ pub fn parse_name_records(text: String) -> CmdResult<Vec<kernest_core::NameRecor
         .collect()
 }
 
+/// What an instance's or variable font's glyph processing would warn about
+/// (SMO-28): renames of glyphs that don't exist, patterns that match no glyph and
+/// filters that can't be read. Empty when everything applies.
+#[tauri::command]
+pub fn check_glyph_processing(
+    state: State<AppState>,
+    rename_glyphs: Vec<[String; 2]>,
+    remove_glyphs: Vec<String>,
+    processing: kernest_core::GlyphProcessing,
+) -> CmdResult<Vec<String>> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    Ok(kernest_core::processing::check(
+        &doc.font,
+        &rename_glyphs,
+        &remove_glyphs,
+        &processing,
+    ))
+}
+
 #[tauri::command]
 pub fn set_instances(state: State<AppState>, instances: Vec<Instance>) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_instances(f, instances))
@@ -672,5 +692,29 @@ mod tests {
         let v = info_view(&doc);
         assert!(v.master_palettes.is_empty());
         assert_eq!(v.palettes.len(), 1);
+    }
+
+    #[test]
+    fn glyph_processing_is_checked_against_the_font() {
+        // SMO-28: what the Exports editor shows under the processing fields.
+        let font = kernest_core::sample::sample_font();
+        let p = kernest_core::GlyphProcessing {
+            keep_glyphs: vec!["H".into(), "nothing*".into()],
+            filters: vec!["RoundCorner;20".into(), "Sparkle;3".into()],
+            ..Default::default()
+        };
+        let w = kernest_core::processing::check(&font, &[], &["O".into()], &p);
+        assert_eq!(w.len(), 2, "{w:?}");
+        assert!(
+            w[0].contains("nothing*") && w[1].contains("Sparkle"),
+            "{w:?}"
+        );
+        let w = kernest_core::processing::check(
+            &font,
+            &[["H".into(), "zz".into()], ["nope".into(), "H".into()]],
+            &[],
+            &Default::default(),
+        );
+        assert_eq!(w, ["Rename Glyphs: there is no glyph named \"nope\"."]);
     }
 }

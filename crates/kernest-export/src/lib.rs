@@ -457,7 +457,9 @@ fn variable_subset(
             None => setting.axes.push(r),
         }
     }
-    let mut reduced = kernest_core::designspace::reduce_for_variable(&base, &setting)?;
+    let (mut reduced, processing) =
+        kernest_core::designspace::reduce_for_variable_with_warnings(&base, &setting)?;
+    warnings.extend(processing);
     if !vf.disabled_masters.is_empty() {
         let instances = std::mem::take(&mut reduced.instances);
         let (keep, drop): (Vec<_>, Vec<_>) = instances
@@ -921,26 +923,36 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                 }
                 None => font,
             };
-            // Glyph swaps and removals for this instance.
+            // Glyph processing for this instance: renames and swaps, Remove/Keep
+            // Glyphs, Decompose Glyphs (SMO-28).
             let swapped;
-            let font =
-                match inst.filter(|i| !i.rename_glyphs.is_empty() || !i.remove_glyphs.is_empty()) {
-                    Some(i) => match kernest_core::glyphset::apply_swaps(
-                        font,
-                        &i.rename_glyphs,
-                        &i.remove_glyphs,
-                    ) {
-                        Ok(f) => {
-                            swapped = f;
-                            &swapped
-                        }
-                        Err(e) => {
-                            report.problems.push(format!("{style}: {e}"));
-                            continue;
-                        }
-                    },
-                    None => font,
-                };
+            let font = match inst.filter(|i| {
+                !i.rename_glyphs.is_empty()
+                    || !i.remove_glyphs.is_empty()
+                    || !i.processing.keep_glyphs.is_empty()
+                    || !i.processing.decompose_glyphs.is_empty()
+                    || i.processing.decompose_components
+            }) {
+                Some(i) => match kernest_core::processing::prepare(
+                    font,
+                    &i.rename_glyphs,
+                    &i.remove_glyphs,
+                    &i.processing,
+                ) {
+                    Ok((f, warnings)) => {
+                        report
+                            .warnings
+                            .extend(warnings.into_iter().map(|w| format!("{style}: {w}")));
+                        swapped = f;
+                        &swapped
+                    }
+                    Err(e) => {
+                        report.problems.push(format!("{style}: {e}"));
+                        continue;
+                    }
+                },
+                None => font,
+            };
             // Export-specific feature code (Replace Feature, Remove Features…).
             let edited;
             let font = match inst.filter(|i| !i.feature_parameters.is_empty()) {
@@ -955,12 +967,31 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                 }
                 None => font,
             };
+            let mut filter_warnings = Vec::new();
             let built = instance_source(font, style, location).and_then(|mut src| {
                 src.instance = *inst;
-                if opts.remove_overlaps {
+                let processing = inst.map(|i| &i.processing);
+                // PreFilter runs before overlaps are removed, Filter after (SMO-28).
+                if let Some(p) = processing {
+                    kernest_core::processing::run_filters(
+                        &mut src.layers,
+                        &p.pre_filters,
+                        "PreFilter",
+                        &mut filter_warnings,
+                    );
+                }
+                if opts.remove_overlaps && !processing.is_some_and(|p| p.keep_overlaps) {
                     for (_, layer) in &mut src.layers {
                         kernest_core::overlap::remove_overlaps(layer);
                     }
+                }
+                if let Some(p) = processing {
+                    kernest_core::processing::run_filters(
+                        &mut src.layers,
+                        &p.filters,
+                        "Filter",
+                        &mut filter_warnings,
+                    );
                 }
                 let path = tmp.path().join(format!("instance{i}.ufo"));
                 let ufo = to_ufo(&src)?;
@@ -968,6 +999,9 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     .map_err(|e| format!("could not write a UFO: {e}"))?;
                 Ok((compile(&path)?, ufo))
             });
+            report
+                .warnings
+                .extend(filter_warnings.into_iter().map(|w| format!("{style}: {w}")));
             match built {
                 Ok((bytes, ufo)) => {
                     let stem = static_stem(font, style, *inst);
@@ -1642,6 +1676,7 @@ pub(crate) mod tests {
 
     fn vf_setting(name: &str, disabled: &[&str]) -> kernest_core::VariableFontSetting {
         kernest_core::VariableFontSetting {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,
             name_records: Vec::new(),
@@ -1788,6 +1823,7 @@ pub(crate) mod tests {
         f.instances = [400.0, 700.0]
             .into_iter()
             .map(|weight| Instance {
+                processing: Default::default(),
                 feature_parameters: Vec::new(),
                 names: Default::default(),
                 name: if weight == 400.0 { "Regular" } else { "Bold" }.into(),
@@ -2055,6 +2091,7 @@ pub(crate) mod tests {
     fn variable_and_interpolated_instance() {
         let mut f = two_masters();
         f.instances.push(Instance {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Medium".into(),
@@ -2177,6 +2214,7 @@ pub(crate) mod tests {
             &f,
             vec![
                 VariableFontSetting {
+                    processing: Default::default(),
                     feature_parameters: Vec::new(),
                     family_name: None,
                     name_records: Vec::new(),
@@ -2193,6 +2231,7 @@ pub(crate) mod tests {
                     disabled_masters: Vec::new(),
                 },
                 VariableFontSetting {
+                    processing: Default::default(),
                     feature_parameters: Vec::new(),
                     family_name: None,
                     name_records: Vec::new(),
@@ -2285,6 +2324,7 @@ pub(crate) mod tests {
         // An instance at the brace location picks up the brace layer's extra width.
         let mut f2 = f.clone();
         f2.instances.push(Instance {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Medium".into(),
@@ -2489,6 +2529,7 @@ pub(crate) mod tests {
         // With a weight axis: the location.
         let mut f = two_masters();
         f.instances.push(Instance {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Medium".into(),
@@ -2504,6 +2545,7 @@ pub(crate) mod tests {
             localized_family_names: Default::default(),
         });
         f.instances.push(Instance {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Bold".into(),
@@ -2564,6 +2606,7 @@ pub(crate) mod tests {
 
     fn instance(name: &str, wght: f64, family: Option<&str>) -> Instance {
         Instance {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
             name: name.into(),
@@ -2700,6 +2743,7 @@ pub(crate) mod tests {
     fn instance_naming_parameters_reach_names_and_file_names() {
         let mut f = two_masters();
         let inst = |name: &str, wght: f64| Instance {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
             name: name.into(),
@@ -2795,6 +2839,7 @@ pub(crate) mod tests {
     fn variable_font_family_name_and_entries() {
         let mut f = two_masters();
         f.variable_fonts = vec![kernest_core::VariableFontSetting {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             name: "Variable".into(),
             file_name: "MyVF".into(),
@@ -2827,6 +2872,7 @@ pub(crate) mod tests {
         f.glyphs.push(alt);
         f.feature_settings.automatic = ["ss01".to_string()].into();
         let setting = |name: &str, feature_parameters| kernest_core::VariableFontSetting {
+            processing: Default::default(),
             feature_parameters,
             name: name.into(),
             file_name: name.into(),
@@ -2910,6 +2956,7 @@ pub(crate) mod tests {
     fn instance_class_overrides_and_style_map() {
         let mut f = two_masters();
         f.instances.push(Instance {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Medium".into(),
@@ -2925,6 +2972,7 @@ pub(crate) mod tests {
             localized_family_names: Default::default(),
         });
         f.instances.push(Instance {
+            processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
             name: "Bold".into(),
@@ -3059,6 +3107,210 @@ pub(crate) mod tests {
         out
     }
 
+    /// A glyph's advance, point count and contour count in a TrueType file, by name
+    /// or (with `cp`) by the glyph the code point maps to.
+    fn glyph_stats(bytes: &[u8], name: &str, cp: Option<u32>) -> Option<(u16, usize, i16)> {
+        use write_fonts::read::tables::glyf::Glyph as G;
+        let f = FontRef::new(bytes).unwrap();
+        let gid = match cp {
+            Some(cp) => f.cmap().unwrap().map_codepoint(cp)?,
+            None => {
+                let post = f.post().unwrap();
+                let n = f.maxp().unwrap().num_glyphs();
+                (0..n)
+                    .find(|i| post.glyph_name(write_fonts::types::GlyphId16::new(*i)) == Some(name))
+                    .map(|i| write_fonts::types::GlyphId::new(i as u32))?
+            }
+        };
+        let advance = f.hmtx().unwrap().advance(gid).unwrap_or(0);
+        let glyf = f.glyf().unwrap();
+        let (points, contours) = match f.loca(None).unwrap().get_glyf(gid, &glyf).unwrap() {
+            Some(G::Simple(s)) => (s.num_points(), s.number_of_contours()),
+            _ => (0, 0),
+        };
+        Some((advance, points, contours))
+    }
+
+    #[test]
+    fn instances_process_their_glyphs() {
+        // SMO-28: one instance per parameter, compared with a plain one.
+        let mut f = sample_font();
+        let mid = f.masters[0].id.clone();
+        // H.ss01 is drawn like O but 777 wide, so the swap shows in hmtx.
+        let mut alt = f.glyph("O").unwrap().clone();
+        alt.name = "H.ss01".into();
+        alt.unicodes.clear();
+        for l in &mut alt.layers {
+            l.width = 777.0;
+        }
+        f.glyphs.push(alt);
+        // Two overlapping squares.
+        let mut sq = kernest_core::Glyph::new("squares", vec![]);
+        let mut l = Layer::new(&mid, 600.0);
+        for x in [100.0, 200.0] {
+            l.shapes.push(Shape::Path(kernest_core::Path {
+                closed: true,
+                nodes: [(x, 0.0), (x, 200.0), (x + 200.0, 200.0), (x + 200.0, 0.0)]
+                    .iter()
+                    .map(|&(x, y)| kernest_core::Node::new(x, y, NodeKind::Line))
+                    .collect(),
+                locked: false,
+                stroke: None,
+                mask: false,
+            }));
+        }
+        sq.layers.push(l);
+        f.glyphs.push(sq);
+        f.features = "feature ss01 {\n  sub H by H.ss01;\n} ss01;\n".into();
+        let inst =
+            |name: &str, rename: Vec<[String; 2]>, remove: Vec<String>, processing| Instance {
+                name: name.into(),
+                location: Default::default(),
+                export: true,
+                weight_class: None,
+                width_class: None,
+                style_link: None,
+                rename_glyphs: rename,
+                remove_glyphs: remove,
+                family_name: None,
+                localized_family_names: Default::default(),
+                feature_parameters: Vec::new(),
+                processing,
+                disabled_masters: Vec::new(),
+                names: Default::default(),
+            };
+        let none = kernest_core::GlyphProcessing::default;
+        f.instances = vec![
+            inst("Plain", vec![], vec![], none()),
+            inst("NoAlts", vec![], vec!["*.ss01".into()], none()),
+            inst(
+                "Swapped",
+                vec![["H".into(), "H.ss01".into()]],
+                vec![],
+                none(),
+            ),
+            inst(
+                "Rounded",
+                vec![],
+                vec![],
+                kernest_core::GlyphProcessing {
+                    filters: vec!["RoundCorner;20;include:H".into(), "Nope;1".into()],
+                    ..Default::default()
+                },
+            ),
+            inst(
+                "Overlaps",
+                vec![],
+                vec![],
+                kernest_core::GlyphProcessing {
+                    keep_overlaps: true,
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(false, true, out.path());
+        opts.remove_overlaps = true;
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.starts_with("Rounded: Filter: There is no filter named Nope")),
+            "{:?}",
+            r.warnings
+        );
+        let file = |style: &str| {
+            let p = r
+                .files
+                .iter()
+                .find(|x| x.path.ends_with(&format!("-{style}.ttf")))
+                .unwrap_or_else(|| panic!("{style} in {:?}", r.files));
+            std::fs::read(&p.path).unwrap()
+        };
+        let (plain, no_alts, swapped, rounded, overlaps) = (
+            file("Plain"),
+            file("NoAlts"),
+            file("Swapped"),
+            file("Rounded"),
+            file("Overlaps"),
+        );
+        // Remove Glyphs *.ss01: the glyph and the hand-written ss01 feature are gone.
+        assert!(glyph_stats(&plain, "H.ss01", None).is_some());
+        assert!(glyph_stats(&no_alts, "H.ss01", None).is_none());
+        assert!(gsub_tags(&plain).contains(&"ss01".to_string()));
+        assert!(!gsub_tags(&no_alts).contains(&"ss01".to_string()));
+        // Rename Glyphs H=H.ss01: U+0048 shows the former H.ss01.
+        assert_ne!(glyph_stats(&plain, "", Some(0x48)).unwrap().0, 777);
+        assert_eq!(glyph_stats(&swapped, "", Some(0x48)).unwrap().0, 777);
+        // Filter RoundCorner;20 on H only.
+        let (p, r_) = (
+            glyph_stats(&plain, "", Some(0x48)).unwrap(),
+            glyph_stats(&rounded, "", Some(0x48)).unwrap(),
+        );
+        assert!(r_.1 > p.1, "rounded corners add points: {p:?} {r_:?}");
+        assert_eq!(
+            glyph_stats(&rounded, "", Some(0x4F)),
+            glyph_stats(&plain, "", Some(0x4F)),
+            "O isn't included"
+        );
+        // Remove Overlap off: the squares stay two contours.
+        assert_eq!(glyph_stats(&plain, "squares", None).unwrap().2, 1);
+        assert_eq!(glyph_stats(&overlaps, "squares", None).unwrap().2, 2);
+    }
+
+    #[test]
+    fn variable_fonts_decompose_and_keep_by_pattern() {
+        // SMO-28: Decompose Components in Variable Font, and Keep Glyphs with a wildcard.
+        let mut f = two_masters();
+        let ids: Vec<String> = f.masters.iter().map(|m| m.id.clone()).collect();
+        let mut comp = kernest_core::Glyph::new("Hcomp", vec![]);
+        for id in &ids {
+            let mut l = Layer::new(id, 680.0);
+            l.shapes.push(Shape::Component {
+                base: "H".into(),
+                transform: kernest_core::IDENTITY,
+                smart: Default::default(),
+                align: Default::default(),
+            });
+            comp.layers.push(l);
+        }
+        f.glyphs.push(comp);
+        let setting =
+            |name: &str, glyphs: Vec<String>, decompose| kernest_core::VariableFontSetting {
+                feature_parameters: Vec::new(),
+                processing: kernest_core::GlyphProcessing {
+                    decompose_components: decompose,
+                    ..Default::default()
+                },
+                name: name.into(),
+                file_name: name.into(),
+                family_name: None,
+                name_records: Vec::new(),
+                axes: Vec::new(),
+                glyphs,
+                rename_glyphs: Vec::new(),
+                remove_glyphs: Vec::new(),
+                disabled_masters: Vec::new(),
+            };
+        f.variable_fonts = vec![
+            setting("Composite", vec![], false),
+            setting("Flat", vec!["H*".into()], true),
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let composite = std::fs::read(out.path().join("Composite.ttf")).unwrap();
+        let flat = std::fs::read(out.path().join("Flat.ttf")).unwrap();
+        // A composite glyph has no simple outline of its own (0 contours here).
+        assert_eq!(glyph_stats(&composite, "Hcomp", None).unwrap().2, 0);
+        assert!(glyph_stats(&flat, "Hcomp", None).unwrap().2 > 0);
+        // H* keeps H and Hcomp; O is left out.
+        assert!(glyph_stats(&composite, "O", None).is_some());
+        assert!(glyph_stats(&flat, "O", None).is_none());
+        assert!(glyph_stats(&flat, "H", None).is_some());
+    }
+
     #[test]
     fn instances_export_their_own_feature_code() {
         // SMO-23: two instances; Display removes liga, swaps a class and replaces salt.
@@ -3078,6 +3330,7 @@ pub(crate) mod tests {
             disabled: false,
         };
         let inst = |name: &str, feature_parameters| Instance {
+            processing: Default::default(),
             name: name.into(),
             location: Default::default(),
             export: true,

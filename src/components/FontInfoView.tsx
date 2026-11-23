@@ -1,5 +1,5 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { backend, errorMessage, nameRecordText, type Axis, type CustomParameter, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type NameOverrides, type NameRecord, type VariableFontSetting, type VerticalMetrics, type VirtualMaster } from "../lib/backend";
+import { backend, errorMessage, nameRecordText, type Axis, type CustomParameter, type GlyphProcessing, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type NameOverrides, type NameRecord, type VariableFontSetting, type VerticalMetrics, type VirtualMaster } from "../lib/backend";
 import { designBounds, designToUser, hasMap, userToDesign } from "../lib/axisMap";
 import { hasLabels, statStyleName } from "../lib/statName";
 import { pickMasterSource } from "../lib/desktop";
@@ -82,7 +82,7 @@ function SwapFields({ rename, remove, onChange }: { rename?: [string, string][];
             return onChange(pairs, remove ?? []);
           }} />
       </label>
-      <label className="info-field" title={t("Glyphs left out of this export, such as the alternates swapped in above")}>
+      <label className="info-field" title={t("Glyphs left out of this export, such as the alternates swapped in above. * and ? work as wildcards, such as *.ss01.")}>
         <span className="k-caption muted">{t("Remove Glyphs")}</span>
         <Field label={t("Remove Glyphs")} value={(remove ?? []).join(", ")} width={160} mono={false} numeric={false}
           onCommit={(v) => onChange(rename ?? [], v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean))} />
@@ -212,6 +212,85 @@ function FeatureCodeFields({ params, owner, onChange }: { params: CustomParamete
         </ul>
       )}
       <button className="btn btn-secondary btn-sm" onClick={() => onChange([...list, { name: "Remove Features", value: "" }])}><AddIcon size={14} /> {t("Add parameter")}</button>
+    </details>
+  );
+}
+
+/** Glyphs filter strings shown as examples (not translated: they are code). */
+const FILTER_EXAMPLES = { pre: "RoundCorner;20", post: "OffsetCurve;10;10" };
+
+/** Glyph lists typed in a field: separated by commas or spaces. */
+const nameList = (v: string) => v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+/** Filter strings typed one per line. */
+const lineList = (v: string) => v.split("\n").map((x) => x.trim()).filter(Boolean);
+
+/**
+ * SMO-28 · Glyph processing for one export: Keep Glyphs, Decompose Glyphs (or every
+ * component, for variable fonts), PreFilter, Filter and Remove Overlap off, with the
+ * warnings an export would give (renames, patterns that match nothing, filters).
+ */
+function GlyphProcessingFields({ value, rename, remove, owner, variable, onChange }: {
+  value: GlyphProcessing; rename?: [string, string][]; remove?: string[]; owner: string; variable: boolean;
+  onChange: (p: Partial<GlyphProcessing>) => void;
+}) {
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const p: GlyphProcessing = {
+    keepGlyphs: value.keepGlyphs, decomposeGlyphs: value.decomposeGlyphs, decomposeComponents: value.decomposeComponents,
+    preFilters: value.preFilters, filters: value.filters, keepOverlaps: value.keepOverlaps,
+  };
+  const key = JSON.stringify([p, rename ?? [], remove ?? []]);
+  useEffect(() => {
+    let live = true;
+    backend.checkGlyphProcessing(rename ?? [], remove ?? [], p).then((w) => { if (live) setWarnings(w); }, () => { if (live) setWarnings([]); });
+    return () => { live = false; };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const list = (v: string[]) => (v.length ? v : undefined);
+  const set = (label: string) => t("{field} for {name}", { field: t(label), name: owner });
+  const count = [p.keepGlyphs?.length, p.decomposeGlyphs?.length, p.decomposeComponents, p.preFilters?.length, p.filters?.length, p.keepOverlaps].filter(Boolean).length;
+  const filterHelp = t("One filter per line, as in Glyphs: RoundCorner;20, OffsetCurve;10;10, Transformations;Slant:8 or RemoveOverlap. End a line with ;include:A,B or ;exclude:A,B to choose glyphs.");
+  return (
+    <details className="fi-names fi-processing" open={count > 0 || warnings.length > 0 ? true : undefined}>
+      <summary className="k-caption">{count > 0 ? tn(count, "Glyph processing ({n} set)", "Glyph processing ({n} set)") : t("Glyph processing")}</summary>
+      <div className="fi-row">
+        {!variable && (
+          <label className="info-field" title={t("Only these glyphs are exported, plus .notdef. * and ? work as wildcards, such as a* or *.sc.")}>
+            <span className="k-caption muted">{t("Keep Glyphs")}</span>
+            <Field label={set("Keep Glyphs")} value={(p.keepGlyphs ?? []).join(", ")} width={200} mono={false} numeric={false} placeholder={t("All glyphs")}
+              onCommit={(v) => onChange({ keepGlyphs: list(nameList(v)) })} />
+          </label>
+        )}
+        <label className="info-field" title={t("Components in these glyphs become outlines. * and ? work as wildcards.")}>
+          <span className="k-caption muted">{t("Decompose Glyphs")}</span>
+          <Field label={set("Decompose Glyphs")} value={(p.decomposeGlyphs ?? []).join(", ")} width={200} mono={false} numeric={false}
+            onCommit={(v) => onChange({ decomposeGlyphs: list(nameList(v)) })} />
+        </label>
+        {variable ? (
+          <label className="check-row" title={t("Every component in this variable font becomes outlines (Decompose Components in Variable Font).")}>
+            <input type="checkbox" checked={!!p.decomposeComponents} aria-label={t("Decompose all components in {name}", { name: owner })} onChange={(e) => onChange({ decomposeComponents: e.target.checked || undefined })} />
+            <span className="k-caption">{t("Decompose all components")}</span>
+          </label>
+        ) : (
+          <>
+            <label className="info-field" title={filterHelp}>
+              <span className="k-caption muted">{t("PreFilter")}</span>
+              <FeatureCodeArea value={(p.preFilters ?? []).join("\n")} label={set("PreFilter")} placeholder={FILTER_EXAMPLES.pre} onCommit={(v) => onChange({ preFilters: list(lineList(v)) })} />
+            </label>
+            <label className="info-field" title={filterHelp}>
+              <span className="k-caption muted">{t("Filter")}</span>
+              <FeatureCodeArea value={(p.filters ?? []).join("\n")} label={set("Filter")} placeholder={FILTER_EXAMPLES.post} onCommit={(v) => onChange({ filters: list(lineList(v)) })} />
+            </label>
+            <label className="check-row" title={t("Untick to keep overlapping outlines in this instance, even when the export removes overlaps. PreFilter runs before overlaps are removed, Filter after.")}>
+              <input type="checkbox" checked={!p.keepOverlaps} aria-label={t("Remove overlaps in {name}", { name: owner })} onChange={(e) => onChange({ keepOverlaps: e.target.checked ? undefined : true })} />
+              <span className="k-caption">{t("Remove overlaps")}</span>
+            </label>
+          </>
+        )}
+      </div>
+      {warnings.length > 0 && (
+        <ul className="fi-feature-warnings" role="status">
+          {warnings.map((w, i) => <li key={i} className="k-caption">{translateMessage(w)}</li>)}
+        </ul>
+      )}
     </details>
   );
 }
@@ -897,6 +976,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
               <SwapFields rename={it.renameGlyphs} remove={it.removeGlyphs} onChange={(renameGlyphs, removeGlyphs) => patch({ renameGlyphs, removeGlyphs })} />
               <button className="icon-btn" aria-label={t("Remove {name}", { name: it.name })} title={t("Remove instance")} onClick={() => setInstances(curInst().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
               <NamingFields names={it.names} instance={it.name} onChange={(names) => patch({ names })} />
+              <GlyphProcessingFields value={it} rename={it.renameGlyphs} remove={it.removeGlyphs} owner={it.name} variable={false} onChange={(p) => patch(p)} />
               <FeatureCodeFields params={it.featureParameters} owner={it.name} onChange={(featureParameters) => patch({ featureParameters })} />
             </div>
             );
@@ -971,9 +1051,10 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                   <Field label={t("Glyphs")} value={(vf.glyphs ?? []).join(", ")} width={240} mono={false} numeric={false}
                     onCommit={(v) => patch({ glyphs: v.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean) })} />
                 </label>
-                <span className="k-caption muted fi-vf-glyphs-hint">{t("Empty keeps every glyph.")}</span>
+                <span className="k-caption muted fi-vf-glyphs-hint">{t("Empty keeps every glyph. * and ? work as wildcards.")}</span>
                 <SwapFields rename={vf.renameGlyphs} remove={vf.removeGlyphs} onChange={(renameGlyphs, removeGlyphs) => patch({ renameGlyphs, removeGlyphs })} />
               </div>
+              <GlyphProcessingFields value={vf} rename={vf.renameGlyphs} remove={vf.removeGlyphs} owner={vf.name} variable={true} onChange={(p) => patch(p)} />
               <FeatureCodeFields params={vf.featureParameters} owner={vf.name} onChange={(featureParameters) => patch({ featureParameters })} />
               {info.masters.length > 1 && (
                 <fieldset className="fi-row fi-vf-masters" title={t("Masters left out of this variable font. Its axes shrink to the masters that remain.")}>

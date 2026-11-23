@@ -102,7 +102,7 @@ pub fn parse(p: &CustomParameter) -> Result<Option<Edit>, String> {
 
 /// A top-level piece of feature code.
 #[derive(Debug, Clone, PartialEq)]
-enum Item {
+pub(crate) enum Item {
     /// `feature tag { … } tag;`: the whole span and the span of the code inside.
     Feature {
         tag: String,
@@ -124,7 +124,7 @@ enum Item {
 }
 
 /// Skips a comment, string or plain character at `i`; returns the next index.
-fn skip_one(b: &[u8], i: usize) -> usize {
+pub(crate) fn skip_one(b: &[u8], i: usize) -> usize {
     match b[i] {
         b'#' => b[i..]
             .iter()
@@ -179,7 +179,7 @@ fn skip_ws(b: &[u8], mut i: usize) -> usize {
 }
 
 /// The top-level feature blocks, class definitions and prefix headers, in order.
-fn scan(text: &str) -> Vec<Item> {
+pub(crate) fn scan(text: &str) -> Vec<Item> {
     let b = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -287,7 +287,7 @@ fn prefix_end(items: &[Item], start: usize, len: usize) -> usize {
 }
 
 /// Replaces byte ranges in `text` (non-overlapping, any order).
-fn splice(text: &str, mut edits: Vec<((usize, usize), String)>) -> String {
+pub(crate) fn splice(text: &str, mut edits: Vec<((usize, usize), String)>) -> String {
     edits.sort_by_key(|((s, _), _)| std::cmp::Reverse(*s));
     let mut out = text.to_string();
     for ((s, e), with) in edits {
@@ -297,7 +297,7 @@ fn splice(text: &str, mut edits: Vec<((usize, usize), String)>) -> String {
 }
 
 /// `feature tag;` references (in `aalt`) to a removed feature.
-fn drop_references(text: &str, tag: &str) -> String {
+pub(crate) fn drop_references(text: &str, tag: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
         let t = line.trim();

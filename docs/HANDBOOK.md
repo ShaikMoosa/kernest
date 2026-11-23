@@ -505,7 +505,25 @@ Open **Font Info** (Ctrl+I) to set:
   - **Disable masters** leaves the ticked masters out of that variable font (Glyphs' Disable Masters). Each axis then spans only the masters that remain: without a Thin master at the light end, the weight axis starts at the next master. Named instances the remaining masters can't reach are left out, and the export says which. If the default master is left out, the nearest remaining master becomes the default. Instances can carry the same setting in Glyphs files, and they're then interpolated without those masters.
 
 - **Virtual masters** (Font Info › Masters): a named location that only glyphs with intermediate layers there use. Use it for an axis that changes only a few glyphs, such as a Crossbar axis that raises the bar of A, E, F and H: add the axis, add a virtual master at its far end, then give those glyphs an intermediate layer at that location. Every other glyph stays as drawn along that axis. Locations must lie inside each axis' range. Save As .glyphs writes them as Glyphs' Virtual Master parameter.
-- **Glyph swaps:** each instance and each variable font can swap glyph drawings when it's exported. **Rename Glyphs** takes pairs such as `dollar=dollar.alt`: the exported `dollar` gets the drawing of `dollar.alt` (and the other way round). **Remove Glyphs** lists glyphs to leave out of that export, such as the alternates you swapped in. Use it for a style whose default `g` is the single-storey form, for example. Save As .glyphs writes both as Glyphs parameters.
+- **Glyph swaps:** each instance and each variable font can swap glyph drawings when it's exported. Use this, for example, for a style whose default `g` is the single-storey form.
+  - **Rename Glyphs** takes pairs such as `dollar=dollar.alt`. The exported `dollar` gets the drawing of `dollar.alt`, and the other way round. Unicode values stay with the names. Kerning groups, kerning and the rules in your feature code follow the drawings. If the second glyph doesn't exist, the first one is simply renamed.
+  - **Remove Glyphs** lists glyphs to leave out of that export, such as the alternates you swapped in. `*` and `?` work as wildcards, so `*.ss01` removes every `.ss01` glyph.
+  - Removing a glyph decomposes the components that use it and drops its kerning. Rules in your feature code that need it are removed too, along with classes, lookups and features left empty. Generated features are built from the glyphs that remain.
+  - Save As .glyphs writes both as Glyphs parameters.
+- **Glyph processing:** each instance has a **Glyph processing** fold with more of Glyphs' parameters:
+  - **Keep Glyphs** exports only the glyphs it lists, plus `.notdef`. Wildcards work, such as `A*, a*`.
+  - **Decompose Glyphs** turns the components of the listed glyphs into outlines.
+  - **PreFilter** and **Filter** run filters on that instance's outlines, one per line, written as in Glyphs:
+    - `RoundCorner;20` rounds corners.
+    - `OffsetCurve;10;10` offsets outlines horizontally and vertically; add `;1` to make a stroke instead.
+    - `Transformations;Slant:8` slants outlines. It also takes `OffsetX`, `OffsetY`, `Scale`, `ScaleX` and `ScaleY`, joined with `;`.
+    - `RemoveOverlap` removes overlaps.
+    - End a line with `;include:A,B` or `;exclude:A,B` to choose the glyphs a filter works on.
+    - PreFilter runs before overlaps are removed, Filter after.
+  - Untick **Remove overlaps** to keep that instance's overlaps even when the export removes them.
+  - A variable font's fold has **Decompose Glyphs** and **Decompose all components** (Glyphs' Decompose Components in Variable Font). Its **Glyphs** list takes wildcards too.
+  - Under the fields, a note lists anything an export would warn about: patterns that match no glyph, filters Kernest doesn't have, and numbers it can't read. The export goes on without them.
+  - Glyphs files bring these parameters in and Save As .glyphs writes them back. A font that uses them saves at format version 24.
 - **Export-specific feature code:** each instance and each variable font has a **Feature code** fold with Glyphs' feature parameters. They change the feature code for that export only. They apply in order, to the generated features and to your own code:
   - **Replace Feature** gives a feature new code: write its tag, a semicolon, then the code, such as `liga; sub f i by f_i.alt;`. If the font has no such feature, it's added.
   - **Remove Features** leaves features out, such as `liga, dlig`. A removed feature is also taken out of `aalt`.

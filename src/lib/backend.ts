@@ -567,7 +567,23 @@ export interface CompareView {
   kerning: KernDiff[];
 }
 
-export interface Instance {
+/** SMO-28 · Glyph processing for one export (Glyphs' parameters); lists take * and ? wildcards. */
+export interface GlyphProcessing {
+  /** Only these glyphs are exported ("Keep Glyphs"). */
+  keepGlyphs?: string[];
+  /** Glyphs whose components become outlines ("Decompose Glyphs"). */
+  decomposeGlyphs?: string[];
+  /** Every component becomes outlines ("Decompose Components in Variable Font"). */
+  decomposeComponents?: boolean;
+  /** Filters run before overlaps are removed ("PreFilter"), e.g. RoundCorner;20. */
+  preFilters?: string[];
+  /** Filters run after overlaps are removed ("Filter"). */
+  filters?: string[];
+  /** Overlaps stay even when the export removes them ("Remove Overlap" off). */
+  keepOverlaps?: boolean;
+}
+
+export interface Instance extends GlyphProcessing {
   name: string;
   location: Location;
   export?: boolean;
@@ -650,7 +666,7 @@ export interface StyleLink {
 }
 
 /** One named variable font built from a subset of the family's axes and glyphs. */
-export interface VariableFontSetting {
+export interface VariableFontSetting extends GlyphProcessing {
   name: string;
   fileName: string;
   /** Per-axis user-range restrictions; an absent bound uses the full axis range. Omitted when empty. */
@@ -1035,6 +1051,8 @@ export interface Backend {
   setAutomaticFeatures(automatic: string[]): Promise<FeaturesView>;
   /** Warnings for export-specific feature code parameters against the font's code; empty when all apply. */
   checkFeatureParameters(parameters: CustomParameter[]): Promise<string[]>;
+  /** Warnings for an export's glyph processing (renames, patterns, filters); empty when all apply. */
+  checkGlyphProcessing(renameGlyphs: [string, string][], removeGlyphs: string[], processing: GlyphProcessing): Promise<string[]>;
   previewFeatureImport(path: string): Promise<FeatureImportPreview>;
   importFeatures(path: string): Promise<FeaturesView>;
   /** Shapes text with feature settings like "ss01=1" against a compiled preview. */
@@ -1590,6 +1608,7 @@ const tauriBackend: Backend = {
   setFeatures: (text) => invoke("set_features", { text }),
   setAutomaticFeatures: (automatic) => invoke("set_automatic_features", { automatic }),
   checkFeatureParameters: (parameters) => invoke("check_feature_parameters", { parameters }),
+  checkGlyphProcessing: (renameGlyphs, removeGlyphs, processing) => invoke("check_glyph_processing", { renameGlyphs, removeGlyphs, processing }),
   previewFeatureImport: (path) => invoke("preview_feature_import", { path }),
   importFeatures: (path) => invoke("import_features", { path }),
   shapeText: (text, masterId, location, features, direction) => invoke("shape_text", { text, masterId, location: location ?? null, features: features ?? [], direction: direction ?? null }),
@@ -2136,6 +2155,9 @@ const mockBackend: Backend = {
     throw "The Features editor needs the desktop app (npm run tauri dev).";
   },
   async checkFeatureParameters() {
+    return [];
+  },
+  async checkGlyphProcessing() {
     return [];
   },
   async previewFeatureImport() {

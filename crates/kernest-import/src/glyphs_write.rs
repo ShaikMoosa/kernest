@@ -893,6 +893,38 @@ fn features(code: &str) -> String {
     s
 }
 
+/// Glyph processing (SMO-28) as Glyphs custom parameters.
+fn processing_parameters(p: &kernest_core::GlyphProcessing) -> Vec<String> {
+    let list = |name: &str, items: &[String]| {
+        let v: Vec<String> = items.iter().map(|x| q(x)).collect();
+        format!(
+            "{{\nname = {};\nvalue = (\n{}\n);\n}}",
+            q(name),
+            v.join(",\n")
+        )
+    };
+    let mut out = Vec::new();
+    if !p.keep_glyphs.is_empty() {
+        out.push(list("Keep Glyphs", &p.keep_glyphs));
+    }
+    if !p.decompose_glyphs.is_empty() {
+        out.push(list("Decompose Glyphs", &p.decompose_glyphs));
+    }
+    if p.decompose_components {
+        out.push("{\nname = \"Decompose Components in Variable Font\";\nvalue = 1;\n}".into());
+    }
+    for f in &p.pre_filters {
+        out.push(format!("{{\nname = PreFilter;\nvalue = {};\n}}", q(f)));
+    }
+    for f in &p.filters {
+        out.push(format!("{{\nname = Filter;\nvalue = {};\n}}", q(f)));
+    }
+    if p.keep_overlaps {
+        out.push("{\nname = \"Remove Overlap\";\nvalue = 0;\n}".into());
+    }
+    out
+}
+
 /// Feature code parameters (SMO-23) as Glyphs custom parameters: the list ones
 /// (Remove Features…) as arrays, the replace ones as `name;` and code.
 fn feature_parameters(params: &[kernest_core::CustomParameter]) -> Vec<String> {
@@ -1327,6 +1359,7 @@ pub fn glyphs_source(font: &Font) -> String {
                         ));
                     }
                     ip.extend(feature_parameters(&i.feature_parameters));
+                    ip.extend(processing_parameters(&i.processing));
                     if let Some(f) = &i.names.file_name {
                         ip.push(format!("{{\nname = fileName;\nvalue = {};\n}}", q(f)));
                     }
@@ -1412,6 +1445,7 @@ pub fn glyphs_source(font: &Font) -> String {
                 ));
             }
             vp.extend(feature_parameters(&vf.feature_parameters));
+            vp.extend(processing_parameters(&vf.processing));
             if !vf.glyphs.is_empty() {
                 let names: Vec<String> = vf.glyphs.iter().map(|g| q(g)).collect();
                 vp.push(format!(
