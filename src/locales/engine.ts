@@ -604,4 +604,7 @@ export const ENGINE_MESSAGES = [
   "{filter}: \"{value}\" isn't a number.",
   "{filter}: \"{value}\" should be a setting such as Slant:10.",
   "{filter}: {setting} isn't supported; use OffsetX, OffsetY, Scale, ScaleX, ScaleY or Slant.",
+  // SMO-29 · Variable font parameters
+  "Variable Font Origin \"{name}\" isn't one of this variable font's masters; the default master stays.",
+  "Variable Font Origin \"{name}\" sits outside the \"{axis}\" range of this variable font; the default master stays.",
 ];

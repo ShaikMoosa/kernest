@@ -1022,6 +1022,8 @@ mod tests {
         use crate::model::{VariableAxisSubset, VariableFontSetting};
         let f = set_axes(&sample_font(), vec![wght()]).unwrap();
         let vf = |name: &str, file: &str| VariableFontSetting {
+            origin: None,
+            export_stat: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,

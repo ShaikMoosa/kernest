@@ -623,6 +623,8 @@ export interface NameOverrides {
   fileName?: string;
   /** Name records set by hand ("Name Table Entry"). */
   records?: NameRecord[];
+  /** Axis tags whose STAT label at this instance's location is elidable ("Elidable STAT Axis Value Name"). */
+  elidableStatAxes?: string[];
 }
 
 /** One name table record. */
@@ -683,6 +685,10 @@ export interface VariableFontSetting extends GlyphProcessing {
   nameRecords?: NameRecord[];
   /** Export-specific feature code (Replace Feature, Remove Features…), applied in order. */
   featureParameters?: CustomParameter[];
+  /** The master (by name) this variable font uses as its default ("Variable Font Origin"); unset keeps the font's default master. */
+  origin?: string;
+  /** Whether export writes a STAT table ("Export STAT Table"); unset means yes. */
+  exportStat?: boolean;
 }
 
 export interface VariableAxisSubset {

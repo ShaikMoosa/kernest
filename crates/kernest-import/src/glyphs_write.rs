@@ -1360,6 +1360,15 @@ pub fn glyphs_source(font: &Font) -> String {
                     }
                     ip.extend(feature_parameters(&i.feature_parameters));
                     ip.extend(processing_parameters(&i.processing));
+                    for tag in &i.names.elidable_stat_axes {
+                        ip.push(format!(
+                            "{{
+name = \"Elidable STAT Axis Value Name\";
+value = {};
+}}",
+                            q(tag)
+                        ));
+                    }
                     if let Some(f) = &i.names.file_name {
                         ip.push(format!("{{\nname = fileName;\nvalue = {};\n}}", q(f)));
                     }
@@ -1446,6 +1455,30 @@ pub fn glyphs_source(font: &Font) -> String {
             }
             vp.extend(feature_parameters(&vf.feature_parameters));
             vp.extend(processing_parameters(&vf.processing));
+            // Glyphs names the origin by master id.
+            if let Some(o) = vf.origin.as_deref().filter(|o| !o.trim().is_empty()) {
+                let id = font
+                    .masters
+                    .iter()
+                    .find(|m| m.name == o || m.id == o)
+                    .map_or(o, |m| m.id.as_str());
+                vp.push(format!(
+                    "{{
+name = \"Variable Font Origin\";
+value = {};
+}}",
+                    q(id)
+                ));
+            }
+            if !vf.export_stat {
+                vp.push(
+                    "{
+name = \"Export STAT Table\";
+value = 0;
+}"
+                    .into(),
+                );
+            }
             if !vf.glyphs.is_empty() {
                 let names: Vec<String> = vf.glyphs.iter().map(|g| q(g)).collect();
                 vp.push(format!(

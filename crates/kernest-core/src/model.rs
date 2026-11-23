@@ -349,6 +349,14 @@ pub struct VariableFontSetting {
     /// Components in Variable Font…).
     #[serde(default, flatten)]
     pub processing: GlyphProcessing,
+    /// The master (by name) this variable font uses as its default ("Variable Font
+    /// Origin"): fvar's default values sit at its location. `None` keeps the
+    /// font's default master.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// Whether export adds a STAT table ("Export STAT Table"); off leaves it out.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub export_stat: bool,
 }
 
 /// Glyph processing for one export (SMO-28), as Glyphs' parameters do it. Glyph
@@ -1664,6 +1672,10 @@ pub struct NameOverrides {
     /// Name records set by hand ("Name Table Entry").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub records: Vec<NameRecord>,
+    /// Axis tags whose STAT label at this instance's location is elidable
+    /// ("Elidable STAT Axis Value Name"), like Regular on the weight axis.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub elidable_stat_axes: Vec<String>,
 }
 
 impl NameOverrides {

@@ -183,6 +183,8 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
         .variable_fonts
         .iter()
         .map(|vf| VariableFontSetting {
+            origin: None,
+            export_stat: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,

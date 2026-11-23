@@ -768,9 +768,18 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                              stat_font: &Font,
                              label: &str,
                              file_base: &str,
+                             with_stat: bool,
                              bytes: Vec<u8>|
          -> Result<(), String> {
-            let bytes = match stat::add_stat(stat_font, &bytes) {
+            // "Export STAT Table" off: no STAT, not even fontc's axis-only one.
+            let add_stat = |b: &[u8]| {
+                if with_stat {
+                    stat::add_stat(stat_font, b)
+                } else {
+                    stat::remove_stat(b)
+                }
+            };
+            let bytes = match add_stat(&bytes) {
                 Ok(b) => b,
                 Err(e) => {
                     report.problems.push(format!("{label} (STAT): {e}"));
@@ -807,7 +816,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     .and_then(|o| vorg::add(&o, &bytes))
                     .map(|o| {
                         let o = colorize(report, &format!("{label} (OTF)"), &bytes, o, true, None);
-                        match stat::add_stat(stat_font, &o) {
+                        match add_stat(&o) {
                             Ok(s) => s,
                             Err(e) => {
                                 report.problems.push(format!("{label} (OTF, STAT): {e}"));
@@ -835,6 +844,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     font,
                     "Variable",
                     &format!("{family}-VF"),
+                    true,
                     bytes,
                 )?,
                 Err(e) => report.problems.push(format!("Variable font: {e}")),
@@ -884,9 +894,14 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     }
                 };
                 match variable(&reduced, &dir) {
-                    Ok(bytes) => {
-                        emit_variable(&mut report, &reduced, &vf.name, &vf.file_name, bytes)?
-                    }
+                    Ok(bytes) => emit_variable(
+                        &mut report,
+                        &reduced,
+                        &vf.name,
+                        &vf.file_name,
+                        vf.export_stat,
+                        bytes,
+                    )?,
                     Err(e) => report.problems.push(format!("{}: {e}", vf.name)),
                 }
             }
@@ -1676,6 +1691,8 @@ pub(crate) mod tests {
 
     fn vf_setting(name: &str, disabled: &[&str]) -> kernest_core::VariableFontSetting {
         kernest_core::VariableFontSetting {
+            origin: None,
+            export_stat: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,
@@ -1688,6 +1705,104 @@ pub(crate) mod tests {
             remove_glyphs: Vec::new(),
             disabled_masters: disabled.iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    #[test]
+    fn variable_font_origin_sets_the_default() {
+        // SMO-29: "Variable Font Origin" makes Thin the default of one variable font.
+        let mut f = three_masters();
+        let thin_width = {
+            let thin = f
+                .masters
+                .iter()
+                .find(|m| m.name == "Thin")
+                .unwrap()
+                .id
+                .clone();
+            f.glyph("H").unwrap().layer(&thin).unwrap().width
+        };
+        let mut thin = vf_setting("ThinOrigin", &[]);
+        thin.origin = Some("Thin".into());
+        let mut gone = vf_setting("GoneOrigin", &["Thin"]);
+        gone.origin = Some("Thin".into());
+        f.variable_fonts = vec![vf_setting("Plain", &[]), thin, gone];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let read = |label: &str| {
+            std::fs::read(&r.files.iter().find(|x| x.style == label).unwrap().path).unwrap()
+        };
+        assert_eq!(fvar_axes(&read("Plain")), vec![(100.0, 400.0, 700.0)]);
+        let bytes = read("ThinOrigin");
+        assert_eq!(fvar_axes(&bytes), vec![(100.0, 100.0, 700.0)]);
+        // The default outlines are Thin's: H is 100 units narrower.
+        let font = FontRef::new(&bytes).unwrap();
+        let gid = font.cmap().unwrap().map_codepoint('H').unwrap();
+        let advance = font.hmtx().unwrap().advance(gid).unwrap();
+        assert_eq!(f64::from(advance), thin_width);
+        // An origin left out by Disable Masters keeps the default, with a warning.
+        assert_eq!(fvar_axes(&read("GoneOrigin")), vec![(400.0, 400.0, 700.0)]);
+        assert!(
+            r.warnings.iter().any(|w| w.starts_with("GoneOrigin:")
+                && w.contains("Variable Font Origin \"Thin\" isn't one of")),
+            "{:?}",
+            r.warnings
+        );
+    }
+
+    #[test]
+    fn export_stat_switch_and_elidable_instances() {
+        // SMO-29: "Export STAT Table" off writes no STAT; "Elidable STAT Axis Value
+        // Name" on an instance marks its label elidable.
+        use write_fonts::read::tables::stat::{AxisValue as StatValue, AxisValueTableFlags};
+        let mut f = three_masters();
+        f.axes[0].labels = ["Thin", "Regular", "Bold"]
+            .iter()
+            .zip([100.0, 400.0, 700.0])
+            .map(|(n, v)| kernest_core::AxisValue {
+                name: n.to_string(),
+                value: v,
+                min: None,
+                max: None,
+                elidable: false,
+                linked_value: None,
+            })
+            .collect();
+        let mut regular = instance("Regular", 400.0, None);
+        regular.names.elidable_stat_axes = vec!["wght".into()];
+        f.instances = vec![instance("Thin", 100.0, None), regular];
+        let mut no_stat = vf_setting("NoStat", &[]);
+        no_stat.export_stat = false;
+        f.variable_fonts = vec![vf_setting("WithStat", &[]), no_stat];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let read = |label: &str| {
+            std::fs::read(&r.files.iter().find(|x| x.style == label).unwrap().path).unwrap()
+        };
+        let none = read("NoStat");
+        assert!(FontRef::new(&none).unwrap().stat().is_err(), "STAT left in");
+        let with = read("WithStat");
+        let font = FontRef::new(&with).unwrap();
+        let stat = font.stat().expect("a STAT table");
+        let values = stat.offset_to_axis_values().unwrap().unwrap();
+        let elidable: Vec<(f64, bool)> = values
+            .axis_values()
+            .iter()
+            .filter_map(|v| v.ok())
+            .map(|v| match v {
+                StatValue::Format1(t) => (
+                    t.value().to_f64(),
+                    t.flags()
+                        .contains(AxisValueTableFlags::ELIDABLE_AXIS_VALUE_NAME),
+                ),
+                _ => panic!("expected format 1 axis values"),
+            })
+            .collect();
+        assert_eq!(
+            elidable,
+            vec![(100.0, false), (400.0, true), (700.0, false)]
+        );
     }
 
     #[test]
@@ -2214,6 +2329,8 @@ pub(crate) mod tests {
             &f,
             vec![
                 VariableFontSetting {
+                    origin: None,
+                    export_stat: true,
                     processing: Default::default(),
                     feature_parameters: Vec::new(),
                     family_name: None,
@@ -2231,6 +2348,8 @@ pub(crate) mod tests {
                     disabled_masters: Vec::new(),
                 },
                 VariableFontSetting {
+                    origin: None,
+                    export_stat: true,
                     processing: Default::default(),
                     feature_parameters: Vec::new(),
                     family_name: None,
@@ -2769,6 +2888,7 @@ pub(crate) mod tests {
                 kernest_core::NameRecord::parse("0; © 2026 Me").unwrap(),
                 kernest_core::NameRecord::parse("9 1; Mac Designer").unwrap(),
             ],
+            elidable_stat_axes: Vec::new(),
         };
         f.instances = vec![inst("Regular", 400.0), bold];
         // A font-wide entry; the instance's nameID 0 wins over it.
@@ -2839,6 +2959,8 @@ pub(crate) mod tests {
     fn variable_font_family_name_and_entries() {
         let mut f = two_masters();
         f.variable_fonts = vec![kernest_core::VariableFontSetting {
+            origin: None,
+            export_stat: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             name: "Variable".into(),
@@ -2872,6 +2994,8 @@ pub(crate) mod tests {
         f.glyphs.push(alt);
         f.feature_settings.automatic = ["ss01".to_string()].into();
         let setting = |name: &str, feature_parameters| kernest_core::VariableFontSetting {
+            origin: None,
+            export_stat: true,
             processing: Default::default(),
             feature_parameters,
             name: name.into(),
@@ -3278,6 +3402,8 @@ pub(crate) mod tests {
         f.glyphs.push(comp);
         let setting =
             |name: &str, glyphs: Vec<String>, decompose| kernest_core::VariableFontSetting {
+                origin: None,
+                export_stat: true,
                 feature_parameters: Vec::new(),
                 processing: kernest_core::GlyphProcessing {
                     decompose_components: decompose,

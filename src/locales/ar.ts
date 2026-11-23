@@ -2697,4 +2697,16 @@ export const ar: Dict = {
   "{filter}: \"{value}\" should be a setting such as Slant:10.": "{filter}: يجب أن يكون \"{value}\" إعدادًا مثل Slant:10.",
   "{filter}: {setting} isn't supported; use OffsetX, OffsetY, Scale, ScaleX, ScaleY or Slant.": "{filter}: {setting} غير مدعوم؛ استخدم OffsetX أو OffsetY أو Scale أو ScaleX أو ScaleY أو Slant.",
   "Glyph processing ({n} set)": { zero: "معالجة الحروف ({n} إعداد)", one: "معالجة الحروف (إعداد واحد)", two: "معالجة الحروف (إعدادان)", few: "معالجة الحروف ({n} إعدادات)", many: "معالجة الحروف ({n} إعدادًا)", other: "معالجة الحروف ({n} إعداد)" },
+  // SMO-29 · Variable font parameters
+  "Marks the axis value name at this instance's location as one apps may leave out, like Regular on the weight axis (Elidable STAT Axis Value Name).": "يجعل اسم قيمة المحور في موضع هذه النسخة اسمًا يمكن للتطبيقات حذفه، مثل Regular على محور الوزن (Elidable STAT Axis Value Name).",
+  "Elidable {axis} name for {name}": "اسم {axis} قابل للحذف في {name}",
+  "The master this variable font uses as its default (Variable Font Origin). Apps show the default when no axis is set.": "الماستر الذي يستخدمه هذا الخط المتغير افتراضيًا (Variable Font Origin). تعرض التطبيقات الافتراضي عندما لا يُضبط أي محور.",
+  "Origin": "الأصل",
+  "Origin of {name}": "أصل {name}",
+  "Default master": "الماستر الافتراضي",
+  "Write a STAT table with the axis value names (Export STAT Table). Turn it off to leave the table out.": "يكتب جدول STAT بأسماء قيم المحاور (Export STAT Table). أوقفه لترك الجدول.",
+  "Export STAT table for {name}": "تصدير جدول STAT لـ {name}",
+  "STAT table": "جدول STAT",
+  "Variable Font Origin \"{name}\" isn't one of this variable font's masters; the default master stays.": "Variable Font Origin \"{name}\" ليس من ماسترات هذا الخط المتغير؛ يبقى الماستر الافتراضي.",
+  "Variable Font Origin \"{name}\" sits outside the \"{axis}\" range of this variable font; the default master stays.": "Variable Font Origin \"{name}\" يقع خارج نطاق \"{axis}\" في هذا الخط المتغير؛ يبقى الماستر الافتراضي.",
 };
