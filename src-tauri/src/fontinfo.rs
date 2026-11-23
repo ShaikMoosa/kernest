@@ -104,6 +104,7 @@ pub struct FontInfoView {
     control_instructions: String,
     /// PostScript blue zone controls (the defaults if the font has none).
     ps_hinting: PsHinting,
+    gasp: Vec<kernest_core::GaspRange>,
     /// The edit view's snap grid, if set.
     grid: Option<Grid>,
     /// OS/2 fsSelection bit 7: applications use the typo metrics for line spacing.
@@ -152,9 +153,10 @@ fn info_view(doc: &Document) -> FontInfoView {
         instances: f.instances.clone(),
         variable_fonts: f.variable_fonts.clone(),
         export_presets: f.export_presets.clone(),
-        hinting: f.info.hinting.unwrap_or_default(),
+        hinting: f.info.hinting.clone().unwrap_or_default(),
         control_instructions: f.info.control_instructions.clone(),
-        ps_hinting: f.info.ps_hinting.unwrap_or_default(),
+        ps_hinting: f.info.ps_hinting.clone().unwrap_or_default(),
+        gasp: f.info.gasp.clone(),
         grid: f.info.grid,
         use_typo_metrics: f.info.use_typo_metrics,
         custom_parameters: f.info.custom_parameters.clone(),
@@ -264,6 +266,15 @@ pub fn set_control_instructions(state: State<AppState>, text: String) -> CmdResu
     edit(&state, |f| {
         kernest_core::hinting::set_control_instructions(f, text)
     })
+}
+
+/// Replaces the gasp table (Font Info › Hinting); an empty list clears it.
+#[tauri::command]
+pub fn set_gasp(
+    state: State<AppState>,
+    gasp: Vec<kernest_core::GaspRange>,
+) -> CmdResult<FontInfoView> {
+    edit(&state, |f| structure::set_gasp(f, gasp))
 }
 
 /// Sets or clears the PostScript blue zone controls (`None` restores defaults).

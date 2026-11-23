@@ -61,8 +61,57 @@ pub fn set_hinting(font: &Font, hinting: crate::Hinting) -> R<Font> {
     if hinting.increase_x_height != 0 && !(6..=1000).contains(&hinting.increase_x_height) {
         return Err("Increase x-height must be 0 (off) or between 6 and 1000.".into());
     }
+    let mut hinting = hinting;
+    let tidy = |v: &mut Option<String>| {
+        *v = v
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+    };
+    tidy(&mut hinting.stem_width_mode);
+    tidy(&mut hinting.default_script);
+    tidy(&mut hinting.fallback_script);
+    tidy(&mut hinting.x_height_snapping_exceptions);
+    if let Some(limit) = hinting.hinting_limit {
+        if limit != 0 && limit < hinting.range_max {
+            return Err(
+                "The hinting limit must be 0 (no limit) or at least the largest hinted size."
+                    .into(),
+            );
+        }
+    }
+    if let Some(m) = &hinting.stem_width_mode {
+        if m.len() != 3 || !m.chars().all(|c| matches!(c, 'n' | 'q' | 's')) {
+            return Err(format!(
+                "Stem width mode \"{m}\" needs three letters, each n (natural), q (quantized) or s (strong), such as qsq."
+            ));
+        }
+    }
+    for s in [&hinting.default_script, &hinting.fallback_script]
+        .into_iter()
+        .flatten()
+    {
+        if !(s.len() == 4 && s.chars().all(|c| c.is_ascii_lowercase())) {
+            return Err(format!(
+                "\"{s}\" isn't a script tag; use four lowercase letters such as latn, or none."
+            ));
+        }
+    }
+    if let Some(x) = &hinting.x_height_snapping_exceptions {
+        crate::hinting::parse_ppem_ranges(x)?;
+    }
     let mut f = font.clone();
     f.info.hinting = (hinting != crate::Hinting::default()).then_some(hinting);
+    Ok(f)
+}
+
+/// Sets the gasp table ("gasp Table"). Ranges must rise, end at 65535 and use the
+/// four flags only; an empty list clears it.
+pub fn set_gasp(font: &Font, gasp: Vec<crate::GaspRange>) -> R<Font> {
+    crate::hinting::check_gasp(&gasp)?;
+    let mut f = font.clone();
+    f.info.gasp = gasp;
     Ok(f)
 }
 
@@ -883,6 +932,54 @@ mod tests {
     }
 
     #[test]
+    fn hinting_options_and_gasp_are_checked() {
+        // SMO-30
+        use crate::{GaspRange, Hinting};
+        let f = sample_font();
+        let with = |h: Hinting| set_hinting(&f, h);
+        assert!(with(Hinting {
+            stem_width_mode: Some("qsx".into()),
+            ..Hinting::default()
+        })
+        .unwrap_err()
+        .contains("three letters"));
+        assert!(with(Hinting {
+            default_script: Some("Latin".into()),
+            ..Hinting::default()
+        })
+        .unwrap_err()
+        .contains("script tag"));
+        assert!(with(Hinting {
+            hinting_limit: Some(20),
+            ..Hinting::default()
+        })
+        .unwrap_err()
+        .contains("hinting limit"));
+        assert!(with(Hinting {
+            x_height_snapping_exceptions: Some("12-8".into()),
+            ..Hinting::default()
+        })
+        .unwrap_err()
+        .contains("backwards"));
+        // Blank text fields are stored as unset.
+        let g = with(Hinting {
+            default_script: Some("  ".into()),
+            hinting_limit: Some(0),
+            ..Hinting::default()
+        })
+        .unwrap();
+        assert_eq!(g.info.hinting.unwrap().default_script, None);
+        let r = |max_ppem, flags| GaspRange { max_ppem, flags };
+        assert!(set_gasp(&f, vec![r(8, 2), r(8, 15)]).is_err());
+        assert!(set_gasp(&f, vec![r(8, 2), r(100, 15)])
+            .unwrap_err()
+            .contains("65535"));
+        assert!(set_gasp(&f, vec![r(65535, 16)]).is_err());
+        let g = set_gasp(&f, vec![r(8, 2), r(65535, 15)]).unwrap();
+        assert_eq!(g.info.gasp.len(), 2);
+    }
+
+    #[test]
     fn hinting_settings() {
         use crate::Hinting;
         let f = sample_font();
@@ -890,7 +987,7 @@ mod tests {
             range_min: 10,
             ..Hinting::default()
         };
-        let g = set_hinting(&f, h).unwrap();
+        let g = set_hinting(&f, h.clone()).unwrap();
         assert_eq!(g.info.hinting, Some(h));
         assert_eq!(
             set_hinting(&g, Hinting::default()).unwrap().info.hinting,
@@ -1145,6 +1242,7 @@ mod tests {
     fn instances_and_info() {
         let f = set_axes(&sample_font(), vec![wght()]).unwrap();
         let i = |n: &str, v: f64| Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),

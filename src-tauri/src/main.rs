@@ -70,6 +70,7 @@ fn main() {
             fontinfo::set_stems,
             fontinfo::set_control_instructions,
             fontinfo::set_ps_hinting,
+            fontinfo::set_gasp,
             fontinfo::set_grid,
             fontinfo::set_master_guides,
             fontinfo::set_vertical_metrics,

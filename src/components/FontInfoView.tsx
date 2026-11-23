@@ -1,5 +1,5 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { backend, errorMessage, nameRecordText, type Axis, type CustomParameter, type GlyphProcessing, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type Instance, type Location, type MasterView, type Metrics, type NameOverrides, type NameRecord, type VariableFontSetting, type VerticalMetrics, type VirtualMaster } from "../lib/backend";
+import { backend, errorMessage, nameRecordText, type Axis, type CustomParameter, type GlyphProcessing, type AxisValue, type DocStatus, type FontInfo, type ForeignMasterPreview, type GaspRange, type Hinting, type Instance, type Location, type MasterView, type Metrics, type NameOverrides, type NameRecord, type VariableFontSetting, type VerticalMetrics, type VirtualMaster } from "../lib/backend";
 import { designBounds, designToUser, hasMap, userToDesign } from "../lib/axisMap";
 import { hasLabels, statStyleName } from "../lib/statName";
 import { pickMasterSource } from "../lib/desktop";
@@ -293,6 +293,72 @@ function GlyphProcessingFields({ value, rename, remove, owner, variable, onChang
       )}
     </details>
   );
+}
+
+/** ttfautohint's own defaults, shown as placeholders (option values, not prose). */
+const TTFA_DEFAULTS = { stemWidthMode: "qsq", defaultScript: "latn", fallbackScript: "none" };
+
+/** The gasp flags, in bit order. */
+const GASP_FLAGS: [number, string, string][] = [
+  [1, "Gridfit", "Snap outlines to the pixel grid (hinting) at these sizes"],
+  [2, "Grayscale", "Smooth edges with grayscale at these sizes"],
+  [4, "Symmetric gridfit", "ClearType: gridfit in both directions"],
+  [8, "Symmetric smoothing", "ClearType: smooth in both directions"],
+];
+
+/** Editor for the gasp table ("gasp Table"): one row per size range, with its flags. */
+function GaspEditor({ gasp, onApply }: { gasp: GaspRange[]; onApply: (gasp: GaspRange[]) => Promise<boolean> }) {
+  const [draft, setDraft] = useState<GaspRange[] | null>(null);
+  const rows = draft ?? gasp;
+  const set = (i: number, p: Partial<GaspRange>) => setDraft(rows.map((r, j) => (j === i ? { ...r, ...p } : r)));
+  const add = () => {
+    if (rows.length === 0) { setDraft([{ maxPpem: 8, flags: 2 }, { maxPpem: 65535, flags: 15 }]); return; }
+    const before = rows.length > 1 ? rows[rows.length - 2].maxPpem : 0;
+    const next = [...rows];
+    next.splice(rows.length - 1, 0, { maxPpem: Math.min(before + 8, 65534), flags: 15 });
+    setDraft(next);
+  };
+  return (
+    <div className="fi-gasp">
+      {rows.length === 0 && <p className="k-caption muted">{t("No gasp table: the autohinter writes its own, and unhinted fonts have none.")}</p>}
+      {rows.map((r, i) => (
+        <div key={i} className="fi-row fi-gasp-row">
+          <label className="info-field" title={t("This range covers sizes up to this many pixels per em. The last range must end at 65535.")}><span className="k-caption muted">{t("Up to (px)")}</span>
+            <Field label={t("gasp range {n} size", { n: i + 1 })} value={r.maxPpem} onCommit={(v) => {
+              const n = Number(v);
+              if (!Number.isInteger(n) || n < 0 || n > 65535) return false;
+              set(i, { maxPpem: n });
+            }} />
+          </label>
+          {GASP_FLAGS.map(([bit, en, hintEn]) => (
+            <label key={bit} className="check-row" title={t(hintEn)}>
+              <input type="checkbox" checked={(r.flags & bit) !== 0} aria-label={t("{flag} for gasp range {n}", { flag: t(en), n: i + 1 })}
+                onChange={(e) => set(i, { flags: e.target.checked ? r.flags | bit : r.flags & ~bit })} />
+              <span className="k-caption">{t(en)}</span>
+            </label>
+          ))}
+          <button className="icon-btn" aria-label={t("Remove gasp range {n}", { n: i + 1 })} onClick={() => setDraft(rows.filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
+        </div>
+      ))}
+      <div className="fi-actions">
+        <button className="btn btn-secondary btn-sm" onClick={add}><AddIcon size={14} /> {t("Add range")}</button>
+        <span className="spacer" />
+        {draft && (
+          <>
+            <button className="btn btn-secondary btn-sm" onClick={() => setDraft(null)}>{t("Discard")}</button>
+            <button className="btn btn-primary btn-sm" onClick={async () => { if (await onApply(draft)) setDraft(null); }}>{t("Apply gasp table")}</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Numbers typed as a list ("50, 80") or empty; `null` when something isn't a number. */
+function numberList(v: string): number[] | null {
+  const parts = v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+  const nums = parts.map(Number);
+  return nums.every(Number.isFinite) ? nums : null;
 }
 
 function Field({ value, onCommit, width = 72, mono = true, label, numeric = true, placeholder }: {
@@ -990,6 +1056,11 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                   onChange={(e) => patch({ export: e.target.checked })} />
                 <span className="k-caption">{t("Export")}</span>
               </label>
+              <label className="check-row fi-export" title={t("Autohint this instance's TrueType fonts when the export turns hinting on (Autohint). Off exports it unhinted.")}>
+                <input type="checkbox" checked={it.autohint !== false} aria-label={t("Autohint {name}", { name: it.name })}
+                  onChange={(e) => patch({ autohint: e.target.checked ? undefined : false })} />
+                <span className="k-caption">{t("Autohint")}</span>
+              </label>
               <span className="spacer" />
               <SwapFields rename={it.renameGlyphs} remove={it.removeGlyphs} onChange={(renameGlyphs, removeGlyphs) => patch({ renameGlyphs, removeGlyphs })} />
               <button className="icon-btn" aria-label={t("Remove {name}", { name: it.name })} title={t("Remove instance")} onClick={() => setInstances(curInst().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
@@ -1235,6 +1306,62 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
               <span className="k-body">{t("Hint composites as whole glyphs")}</span>
             </label>
           </div>
+          {(() => {
+            const h = info.hinting;
+            const setH = (p: Partial<Hinting>) => apply(() => backend.setHinting({ ...h, ...p }));
+            const optNum = (key: "hintingLimit" | "fallbackStemWidth", label: string) => (v: string) => {
+              if (v.trim() === "") return setH({ [key]: undefined });
+              const n = Number(v);
+              if (!Number.isInteger(n) || n < 0 || n > 65535) { onError(t("{name}: enter a whole number.", { name: label })); return false; }
+              return setH({ [key]: n });
+            };
+            const text = (key: "stemWidthMode" | "defaultScript" | "fallbackScript" | "xHeightSnappingExceptions") => (v: string) => setH({ [key]: v.trim() === "" ? undefined : v.trim() });
+            const more = [h.hintingLimit, h.fallbackStemWidth, h.stemWidthMode, h.defaultScript, h.fallbackScript, h.xHeightSnappingExceptions].filter((x) => x != null).length
+              + [h.windowsCompatibility, h.symbol, h.adjustSubglyphs, h.fallbackScaling, h.ttfaTable, h.noInfo].filter(Boolean).length;
+            return (
+              <details className="fi-processing fi-autohint-more">
+                <summary className="k-caption">{more > 0 ? tn(more, "More autohint options ({n} set)", "More autohint options ({n} set)", { n: more }) : t("More autohint options")}</summary>
+                <div className="fi-row">
+                  <label className="info-field" title={t("Above this size no hinting instructions run at all (-G). 0 means no limit.")}><span className="k-caption muted">{t("Hinting limit (px)")}</span>
+                    <Field label={t("Hinting limit (px)")} value={h.hintingLimit ?? ""} placeholder="200" onCommit={optNum("hintingLimit", t("Hinting limit (px)"))} />
+                  </label>
+                  <label className="info-field" title={t("Stem width for glyphs the autohinter can't measure (-H). Empty uses the default master's first horizontal stem.")}><span className="k-caption muted">{t("Fallback stem width")}</span>
+                    <Field label={t("Fallback stem width")} value={h.fallbackStemWidth ?? ""} placeholder={t("From stems")} onCommit={optNum("fallbackStemWidth", t("Fallback stem width"))} />
+                  </label>
+                  <label className="info-field" title={t("Three letters for grayscale, GDI ClearType and DirectWrite ClearType: n natural, q quantized, s strong (-a). Kernest's autohinter always uses qsq.")}><span className="k-caption muted">{t("Stem width mode")}</span>
+                    <Field label={t("Stem width mode")} value={h.stemWidthMode ?? ""} placeholder={TTFA_DEFAULTS.stemWidthMode} numeric={false} onCommit={text("stemWidthMode")} />
+                  </label>
+                  <label className="info-field" title={t("The script whose rules hint glyphs no script covers (-D).")}><span className="k-caption muted">{t("Default script")}</span>
+                    <Field label={t("Default script")} value={h.defaultScript ?? ""} placeholder={TTFA_DEFAULTS.defaultScript} numeric={false} onCommit={text("defaultScript")} />
+                  </label>
+                  <label className="info-field" title={t("The script used for glyphs no script rules cover (-f). Empty leaves them unhinted.")}><span className="k-caption muted">{t("Fallback script")}</span>
+                    <Field label={t("Fallback script")} value={h.fallbackScript ?? ""} placeholder={TTFA_DEFAULTS.fallbackScript} numeric={false} onCommit={text("fallbackScript")} />
+                  </label>
+                  <label className="info-field" title={t("Sizes where the x-height isn't snapped, such as 8-12, 15 (-X). Empty lets Kernest pick them from the x-height zone.")}><span className="k-caption muted">{t("X-height snapping exceptions")}</span>
+                    <Field label={t("X-height snapping exceptions")} value={h.xHeightSnappingExceptions ?? ""} width={140} placeholder={t("Automatic")} numeric={false} onCommit={text("xHeightSnappingExceptions")} />
+                  </label>
+                </div>
+                <div className="fi-row">
+                  {([
+                    ["windowsCompatibility", "Windows compatibility", "Adds zones for usWinAscent and usWinDescent so nothing is clipped on Windows (-W)"],
+                    ["symbol", "Symbol font", "Hints the font without script rules (-s)"],
+                    ["adjustSubglyphs", "Adjust components", "Lets the hinter move the components of composite glyphs (-p)"],
+                    ["fallbackScaling", "Fallback scaling", "Scales glyphs of the fallback script instead of hinting them (-S)"],
+                    ["ttfaTable", "TTFA table", "Adds a table that records the autohint options used (-t)"],
+                    ["noInfo", "No version info", "Leaves the autohinter's details out of the version string (-n)"],
+                  ] as const).map(([key, en, hintEn]) => (
+                    <label key={key} className="check-row" title={t(hintEn)}>
+                      <input type="checkbox" checked={h[key] === true} onChange={(e) => setH({ [key]: e.target.checked || undefined })} />
+                      <span className="k-body">{t(en)}</span>
+                    </label>
+                  ))}
+                </div>
+              </details>
+            );
+          })()}
+          <h3 className="k-label fi-sub">{t("gasp table")}</h3>
+          <p className="k-caption muted">{t("How TrueType exports are rendered at each size range (gasp Table). It replaces the autohinter's own table.")}</p>
+          <GaspEditor gasp={info.gasp} onApply={(gasp) => apply(() => backend.setGasp(gasp))} />
           <h3 className="k-label fi-sub">{t("PostScript hints")}</h3>
           <div className="fi-row">
             {([
@@ -1244,6 +1371,22 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
             ] as const).map(([key, en, hintEn]) => { const label = t(en), hint = t(hintEn); return (
               <label key={key} className="info-field" title={hint}><span className="k-caption muted">{label}</span>
                 <Field label={label} value={info.psHinting[key]} onCommit={(v) => apply(() => backend.setPsHinting({ ...info.psHinting, [key]: num(v) }))} />
+              </label>
+            ); })}
+          </div>
+          <div className="fi-row">
+            {([
+              ["familyBlues", "Family blues", "The family's top zones and baseline as bottom, top pairs, such as -10, 0, 700, 710. All styles then round them alike at small sizes."],
+              ["familyOtherBlues", "Family other blues", "The family's zones below the baseline as bottom, top pairs."],
+              ["stemSnapH", "Stem snap H", "Horizontal stem widths for StemSnapH. Empty uses the masters' horizontal stems."],
+              ["stemSnapV", "Stem snap V", "Vertical stem widths for StemSnapV. Empty uses the masters' vertical stems."],
+            ] as const).map(([key, en, hintEn]) => { const label = t(en); return (
+              <label key={key} className="info-field" title={t(hintEn)}><span className="k-caption muted">{label}</span>
+                <Field label={label} value={(info.psHinting[key] ?? []).join(", ")} width={150} numeric={false} placeholder={key.startsWith("stem") ? t("From stems") : ""} onCommit={(v) => {
+                  const list = numberList(v);
+                  if (!list) { onError(t("{name}: enter numbers separated by commas.", { name: label })); return false; }
+                  return apply(() => backend.setPsHinting({ ...info.psHinting, [key]: list.length ? list : undefined }));
+                }} />
               </label>
             ); })}
           </div>

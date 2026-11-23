@@ -139,6 +139,7 @@ pub fn import_designspace(path: &Path) -> Result<Imported, String> {
         .iter()
         .enumerate()
         .map(|(i, inst)| Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
@@ -428,6 +429,7 @@ fn ps_hinting(fi: &norad::FontInfo) -> Option<kernest_core::PsHinting> {
         blue_scale: fi.postscript_blue_scale.unwrap_or(d.blue_scale),
         blue_shift: fi.postscript_blue_shift.unwrap_or(d.blue_shift),
         blue_fuzz: fi.postscript_blue_fuzz.unwrap_or(d.blue_fuzz),
+        ..Default::default()
     };
     (ps != d).then_some(ps)
 }
@@ -456,6 +458,7 @@ fn build(
     let def = sources[default_idx].2;
     let fi = &def.font_info;
     let info = FontInfo {
+        gasp: Vec::new(),
         family_name: fi.family_name.clone().unwrap_or_else(|| "Untitled".into()),
         units_per_em: fi
             .units_per_em

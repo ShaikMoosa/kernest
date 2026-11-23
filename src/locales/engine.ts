@@ -607,4 +607,22 @@ export const ENGINE_MESSAGES = [
   // SMO-29 · Variable font parameters
   "Variable Font Origin \"{name}\" isn't one of this variable font's masters; the default master stays.",
   "Variable Font Origin \"{name}\" sits outside the \"{axis}\" range of this variable font; the default master stays.",
+  // SMO-30 · Hinting parameters
+  "The hinting limit must be 0 (no limit) or at least the largest hinted size.",
+  "Stem width mode \"{mode}\" needs three letters, each n (natural), q (quantized) or s (strong), such as qsq.",
+  "\"{name}\" isn't a script tag; use four lowercase letters such as latn, or none.",
+  "\"{part}\" isn't a size or a range of sizes, such as 8-12.",
+  "\"{part}\" runs backwards; write the smaller size first.",
+  "gasp ranges must go up in size, each larger than the one before.",
+  "The last gasp range must end at 65535, so it covers every size.",
+  "gasp flags go from 0 to 15.",
+  "{name} needs pairs of numbers: each zone's bottom and top.",
+  "{name} can hold at most {n} zones.",
+  "{name} must be numbers in rising order.",
+  "{name} can hold at most 12 widths.",
+  "{name} widths must be greater than 0.",
+  "Stem width mode \"{mode}\" isn't supported by Kernest's autohinter; qsq was used.",
+  "The autohinter has no script \"{tag}\"; its default was used.",
+  "TTFAutohint options: {list} isn't supported and was left out.",
+  "gasp Table: {e} It was left out.",
 ];

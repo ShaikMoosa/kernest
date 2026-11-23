@@ -626,6 +626,7 @@ mod tests {
 
     fn inst(name: &str, wght: f64) -> Instance {
         Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),

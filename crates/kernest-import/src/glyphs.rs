@@ -101,6 +101,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         .collect();
 
     let info = FontInfo {
+        gasp: Vec::new(),
         family_name: g
             .get_default_name("familyNames")
             .unwrap_or("Untitled")
@@ -430,6 +431,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         .iter()
         .filter(|i| i.type_ == InstanceType::Single)
         .map(|i| Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
@@ -500,7 +502,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         Ok(keys) => apply_metrics_keys(&mut font, &keys, &master_ids, &mut warnings),
         Err(e) => warnings.push(format!("Metrics keys couldn't be read: {e}")),
     }
-    font.info.hinting = read_hinting(path);
+    font.info.hinting = read_hinting(path, &mut warnings);
     match read_source_hinting(path) {
         Ok(h) => {
             for m in &mut font.masters {
@@ -520,6 +522,10 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                 font.info.control_instructions = text;
             }
             font.info.ps_hinting = h.ps.filter(|p| *p != kernest_core::PsHinting::default());
+            match kernest_core::hinting::check_gasp(&h.gasp) {
+                Ok(()) => font.info.gasp = h.gasp,
+                Err(e) => warnings.push(format!("gasp Table: {e} It was left out.")),
+            }
         }
         Err(e) => warnings.push(format!("Alignment zones and stems couldn't be read: {e}")),
     }
@@ -1227,6 +1233,7 @@ fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font, warnings: &
                 Some("Remove Overlap" | "Remove overlap" | "removeOverlap") => {
                     target.processing.keep_overlaps = is_off(p)
                 }
+                Some("Autohint") => target.autohint = !is_off(p),
                 Some("Elidable STAT Axis Value Name") => {
                     if let Some(tag) = text() {
                         if !target.names.elidable_stat_axes.contains(&tag) {
@@ -1524,6 +1531,16 @@ pub(crate) const HANDLED_PARAMETERS: &[&str] = &[
     "BlueScale",
     "BlueShift",
     "BlueFuzz",
+    "familyBlues",
+    "Family Blues",
+    "familyOtherBlues",
+    "Family Other Blues",
+    "stemSnapH",
+    "Stem Snap H",
+    "stemSnapV",
+    "Stem Snap V",
+    "gasp Table",
+    "GASP Table",
     "Axis Mappings",
     "Axis Location",
     "Use Typo Metrics",
@@ -2139,8 +2156,9 @@ fn read_metrics_keys(path: &Path) -> Result<HashMap<String, GlyphKeys>, String> 
 }
 
 /// Autohinting settings from the "TTFAutohint options" custom parameter (on the font,
-/// or else on the first instance that has it).
-fn read_hinting(path: &Path) -> Option<kernest_core::Hinting> {
+/// or else on the first instance that has it), with warnings for options Kernest
+/// doesn't keep.
+fn read_hinting(path: &Path, warnings: &mut Vec<String>) -> Option<kernest_core::Hinting> {
     let file = if path.is_dir() {
         path.join("fontinfo.plist")
     } else {
@@ -2155,41 +2173,193 @@ fn read_hinting(path: &Path) -> Option<kernest_core::Hinting> {
     };
     let text =
         option(&root).or_else(|| root.get("instances")?.as_array()?.iter().find_map(option))?;
-    parse_ttfautohint_options(&text)
+    let (h, unsupported) = ttfautohint_options(&text);
+    if !unsupported.is_empty() {
+        warnings.push(format!(
+            "TTFAutohint options: {} isn't supported and was left out.",
+            unsupported.join(", ")
+        ));
+    }
+    h
 }
 
-/// Reads the ttfautohint options Kernest keeps (`-l`, `-r`, `-x`, `-c` and their long
-/// forms) from a command line such as `-l 8 -r 50 -x 14 -D latn`.
-pub fn parse_ttfautohint_options(text: &str) -> Option<kernest_core::Hinting> {
-    let mut h = kernest_core::Hinting::default();
-    let mut found = false;
-    let mut words = text.split_whitespace().peekable();
-    while let Some(w) = words.next() {
-        let (flag, inline) = match w.split_once('=') {
-            Some((f, v)) if f.starts_with("--") => (f.to_string(), Some(v.to_string())),
-            _ if w.len() > 2 && w.starts_with('-') && !w.starts_with("--") => {
-                (w[..2].to_string(), Some(w[2..].to_string()))
+/// Splits a command line on spaces, keeping quoted values whole.
+fn command_words(text: &str) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    for c in text.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            c if c.is_whitespace() && !quoted => {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
             }
-            _ => (w.to_string(), None),
-        };
-        let slot = match flag.as_str() {
-            "-l" | "--hinting-range-min" => &mut h.range_min,
-            "-r" | "--hinting-range-max" => &mut h.range_max,
-            "-x" | "--increase-x-height" => &mut h.increase_x_height,
-            "-c" | "--composites" => {
-                h.hint_composites = true;
-                found = true;
-                continue;
-            }
-            _ => continue,
-        };
-        let value = inline.or_else(|| words.next().map(str::to_string));
-        if let Some(v) = value.and_then(|v| v.trim_matches('"').parse().ok()) {
-            *slot = v;
-            found = true;
+            c => cur.push(c),
         }
     }
-    found.then_some(h)
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    words
+}
+
+/// ttfautohint's long option names as their short forms.
+fn short_option(long: &str) -> Option<&'static str> {
+    Some(match long {
+        "--hinting-range-min" => "-l",
+        "--hinting-range-max" => "-r",
+        "--increase-x-height" => "-x",
+        "--hinting-limit" => "-G",
+        "--fallback-stem-width" => "-H",
+        "--stem-width-mode" => "-a",
+        "--default-script" => "-D",
+        "--fallback-script" => "-f",
+        "--x-height-snapping-exceptions" => "-X",
+        "--strong-stem-width" => "-w",
+        "--family-suffix" => "-F",
+        "--reference" => "-R",
+        "--reference-index" => "-Z",
+        "--control-file" => "-m",
+        "--composites" => "-c",
+        "--windows-compatibility" => "-W",
+        "--symbol" => "-s",
+        "--adjust-subglyphs" | "--pre-hinting" => "-p",
+        "--fallback-scaling" => "-S",
+        "--ttfa-table" => "-t",
+        "--no-info" => "-n",
+        "--detailed-info" => "-I",
+        "--ignore-restrictions" => "-i",
+        "--dehint" => "-d",
+        _ => return None,
+    })
+}
+
+/// The settings in a ttfautohint command line (short or long options, values
+/// separate, attached or after `=`), and the options Kernest can't keep. `None`
+/// when no option was recognised.
+pub fn ttfautohint_options(text: &str) -> (Option<kernest_core::Hinting>, Vec<String>) {
+    // Options taking a value; the rest are switches.
+    const VALUED: &[&str] = &[
+        "-l", "-r", "-x", "-G", "-H", "-a", "-D", "-f", "-X", "-w", "-F", "-R", "-Z", "-m",
+    ];
+    let mut h = kernest_core::Hinting::default();
+    let mut found = false;
+    let mut unsupported: Vec<String> = Vec::new();
+    let mut words = command_words(text).into_iter();
+    while let Some(w) = words.next() {
+        // The option as written, for the warning when Kernest can't keep it.
+        let mut shown = w.clone();
+        let (flag, mut value): (String, Option<String>) = if w.starts_with("--") {
+            let (name, v) = match w.split_once('=') {
+                Some((n, v)) => (n.to_string(), Some(v.to_string())),
+                None => (w.clone(), None),
+            };
+            shown.clone_from(&name);
+            match short_option(&name) {
+                Some(short) => (short.to_string(), v),
+                None => {
+                    unsupported.push(name);
+                    continue;
+                }
+            }
+        } else if w.starts_with('-') && w.len() > 2 && VALUED.contains(&&w[..2]) {
+            shown = w[..2].to_string();
+            (w[..2].to_string(), Some(w[2..].to_string()))
+        } else {
+            (w.clone(), None)
+        };
+        if VALUED.contains(&flag.as_str()) && value.is_none() {
+            value = words.next();
+        }
+        let v = value.unwrap_or_default();
+        let v = v.trim();
+        let int = |v: &str| v.parse::<u16>().ok();
+        let known = match flag.as_str() {
+            "-l" => int(v).map(|n| h.range_min = n).is_some(),
+            "-r" => int(v).map(|n| h.range_max = n).is_some(),
+            "-x" => int(v).map(|n| h.increase_x_height = n).is_some(),
+            "-G" => int(v).map(|n| h.hinting_limit = Some(n)).is_some(),
+            "-H" => int(v).map(|n| h.fallback_stem_width = Some(n)).is_some(),
+            "-a" => {
+                h.stem_width_mode = Some(v.to_string());
+                true
+            }
+            // The old strong-stem-width letters: g, G and D pick strong stems for
+            // grayscale, GDI and DirectWrite; the rest stay quantized.
+            "-w" => {
+                let m = |c: char| if v.contains(c) { 's' } else { 'q' };
+                h.stem_width_mode = Some([m('g'), m('G'), m('D')].iter().collect());
+                true
+            }
+            "-D" => {
+                h.default_script = Some(v.to_string());
+                true
+            }
+            "-f" => {
+                h.fallback_script = Some(v.to_string());
+                true
+            }
+            "-X" => {
+                h.x_height_snapping_exceptions = Some(v.to_string());
+                true
+            }
+            "-c" => {
+                h.hint_composites = true;
+                true
+            }
+            "-W" => {
+                h.windows_compatibility = true;
+                true
+            }
+            "-s" => {
+                h.symbol = true;
+                true
+            }
+            "-p" => {
+                h.adjust_subglyphs = true;
+                true
+            }
+            "-S" => {
+                h.fallback_scaling = true;
+                true
+            }
+            "-t" => {
+                h.ttfa_table = true;
+                true
+            }
+            "-n" => {
+                h.no_info = true;
+                true
+            }
+            // Kernest always writes the details and ignores fsType for its own fonts.
+            "-I" | "-i" => true,
+            _ => false,
+        };
+        if known {
+            found = true;
+        } else if flag.starts_with('-') {
+            unsupported.push(shown);
+        }
+    }
+    // Values that are ttfautohint's defaults are stored as unset.
+    if h.fallback_script.as_deref() == Some("none") {
+        h.fallback_script = None;
+    }
+    if h.default_script.as_deref() == Some("latn") {
+        h.default_script = None;
+    }
+    if h.stem_width_mode.as_deref() == Some("qsq") {
+        h.stem_width_mode = None;
+    }
+    if h.hinting_limit == Some(200) {
+        h.hinting_limit = None;
+    }
+    if h.x_height_snapping_exceptions.as_deref() == Some("") {
+        h.x_height_snapping_exceptions = None;
+    }
+    (found.then_some(h), unsupported)
 }
 
 /// Alignment zones, stems and hinting settings read straight from the source
@@ -2198,6 +2368,7 @@ struct SourceHinting {
     masters: HashMap<String, (Vec<kernest_core::Zone>, Vec<kernest_core::Stem>)>,
     control_instructions: Option<String>,
     ps: Option<kernest_core::PsHinting>,
+    gasp: Vec<kernest_core::GaspRange>,
 }
 
 fn read_source_hinting(path: &Path) -> Result<SourceHinting, String> {
@@ -2219,6 +2390,7 @@ fn read_source_hinting(path: &Path) -> Result<SourceHinting, String> {
         masters: HashMap::new(),
         control_instructions: None,
         ps: None,
+        gasp: Vec::new(),
     };
     let empty = Vec::new();
     let masters = root
@@ -2354,7 +2526,64 @@ fn read_source_hinting(path: &Path) -> Result<SourceHinting, String> {
             any = true;
         }
     }
+    // Number lists: FamilyBlues, FamilyOtherBlues and stem snaps (either spelling).
+    let list = |names: &[&str]| -> Option<Vec<f64>> {
+        root.get("customParameters")?
+            .as_array()?
+            .iter()
+            .find(|p| {
+                p.get("name")
+                    .and_then(|n| n.as_str())
+                    .is_some_and(|n| names.contains(&n))
+            })?
+            .get("value")?
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_f64()).collect())
+    };
+    for (names, slot) in [
+        (&["familyBlues", "Family Blues"][..], &mut ps.family_blues),
+        (
+            &["familyOtherBlues", "Family Other Blues"][..],
+            &mut ps.family_other_blues,
+        ),
+        (&["stemSnapH", "Stem Snap H"][..], &mut ps.stem_snap_h),
+        (&["stemSnapV", "Stem Snap V"][..], &mut ps.stem_snap_v),
+    ] {
+        if let Some(v) = list(names).filter(|v| !v.is_empty()) {
+            *slot = v;
+            any = true;
+        }
+    }
     out.ps = any.then_some(ps);
+    // "gasp Table": a dictionary of maximum size → flags.
+    if let Some(dict) = root
+        .get("customParameters")
+        .and_then(|p| p.as_array())
+        .unwrap_or(&[])
+        .iter()
+        .find(|p| {
+            matches!(
+                p.get("name").and_then(|n| n.as_str()),
+                Some("gasp Table" | "GASP Table")
+            )
+        })
+        .and_then(|p| p.get("value")?.as_dict())
+    {
+        let mut gasp: Vec<kernest_core::GaspRange> = dict
+            .iter()
+            .filter_map(|(k, v)| {
+                Some(kernest_core::GaspRange {
+                    max_ppem: k.trim().parse().ok()?,
+                    flags: v
+                        .as_i64()
+                        .or_else(|| v.as_str()?.trim().parse().ok())
+                        .and_then(|f| u16::try_from(f).ok())?,
+                })
+            })
+            .collect();
+        gasp.sort_by_key(|r| r.max_ppem);
+        out.gasp = gasp;
+    }
     Ok(out)
 }
 

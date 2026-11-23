@@ -603,6 +603,8 @@ export interface Instance extends GlyphProcessing {
   localizedFamilyNames?: Record<string, string>;
   /** Masters (by name) this instance is interpolated without ("Disable Masters"). */
   disabledMasters?: string[];
+  /** False exports this instance without TrueType autohinting ("Autohint"); unset means hinted. */
+  autohint?: boolean;
   /** Export-specific feature code (Replace Feature, Remove Features…), applied in order. */
   featureParameters?: CustomParameter[];
   /** Naming overrides (Glyphs naming parameters); omitted when none are set. */
@@ -726,6 +728,36 @@ export interface Hinting {
   increaseXHeight: number;
   /** Hint composite glyphs as a whole. */
   hintComposites: boolean;
+  /** Above this size no hinting runs (-G); unset is 200, 0 means no limit. */
+  hintingLimit?: number;
+  /** Stem width for glyphs the hinter can't measure (-H); unset uses the first horizontal stem. */
+  fallbackStemWidth?: number;
+  /** Stem width mode for grayscale, GDI and DirectWrite (-a), such as "qsq". */
+  stemWidthMode?: string;
+  /** Script for glyphs no script covers (-D), such as "latn". */
+  defaultScript?: string;
+  /** Fallback script (-f); unset is none. */
+  fallbackScript?: string;
+  /** Sizes where the x-height isn't snapped (-X), such as "8-12, 15"; unset is automatic. */
+  xHeightSnappingExceptions?: string;
+  /** Blue zones for usWinAscent/Descent (-W). */
+  windowsCompatibility?: boolean;
+  /** Hint as a symbol font (-s). */
+  symbol?: boolean;
+  /** Let the hinter move components (-p). */
+  adjustSubglyphs?: boolean;
+  /** Scale fallback-script glyphs instead of hinting them (-S). */
+  fallbackScaling?: boolean;
+  /** Add the TTFA table (-t). */
+  ttfaTable?: boolean;
+  /** Leave the hinter's details out of the version string (-n). */
+  noInfo?: boolean;
+}
+
+/** One gasp range: sizes up to `maxPpem` use `flags` (1 gridfit, 2 grayscale, 4 symmetric gridfit, 8 symmetric smoothing). */
+export interface GaspRange {
+  maxPpem: number;
+  flags: number;
 }
 
 export const DEFAULT_HINTING: Hinting = { rangeMin: 8, rangeMax: 50, increaseXHeight: 14, hintComposites: false };
@@ -758,6 +790,14 @@ export interface PsHinting {
   blueScale: number;
   blueShift: number;
   blueFuzz: number;
+  /** FamilyBlues: bottom/top pairs for the family's top zones and baseline. */
+  familyBlues?: number[];
+  /** FamilyOtherBlues: bottom/top pairs below the baseline. */
+  familyOtherBlues?: number[];
+  /** StemSnapH in place of the masters' horizontal stems. */
+  stemSnapH?: number[];
+  /** StemSnapV in place of the masters' vertical stems. */
+  stemSnapV?: number[];
 }
 
 export const DEFAULT_PS_HINTING: PsHinting = { blueScale: 0.039625, blueShift: 7, blueFuzz: 1 };
@@ -804,6 +844,8 @@ export interface FontInfo {
   controlInstructions: string;
   /** PostScript blue zone controls. */
   psHinting: PsHinting;
+  /** The gasp table for TrueType exports; empty leaves it to the autohinter. */
+  gasp: GaspRange[];
   /** The edit view's snap grid, if set. */
   grid: Grid | null;
   /** Applications use the typo metrics for line spacing (OS/2 fsSelection bit 7). */
@@ -1076,6 +1118,7 @@ export interface Backend {
   setControlInstructions(text: string): Promise<FontInfo>;
   /** Sets or clears (null restores defaults) the PostScript blue zone controls. */
   setPsHinting(ps: PsHinting | null): Promise<FontInfo>;
+  setGasp(gasp: GaspRange[]): Promise<FontInfo>;
   /** Sets (or clears, with null) the edit view's snap grid. */
   setGrid(grid: Grid | null): Promise<FontInfo>;
   /** Replaces a master's global guides, drawn in every glyph of that master. */
@@ -1624,6 +1667,7 @@ const tauriBackend: Backend = {
   setStems: (masterId, stems) => invoke("set_stems", { masterId, stems }),
   setControlInstructions: (text) => invoke("set_control_instructions", { text }),
   setPsHinting: (ps) => invoke("set_ps_hinting", { psHinting: ps }),
+  setGasp: (gasp) => invoke("set_gasp", { gasp }),
   setGrid: (grid) => invoke("set_grid", { grid }),
   setMasterGuides: (masterId, guides) => invoke("set_master_guides", { masterId, guides }),
   setVerticalMetrics: (masterId, vertical) => invoke("set_vertical_metrics", { masterId, vertical }),
@@ -1845,6 +1889,7 @@ interface MockMeta {
   hinting?: Hinting;
   controlInstructions?: string;
   psHinting?: PsHinting | null;
+  gasp?: GaspRange[];
   grid?: Grid | null;
 }
 
@@ -2027,7 +2072,7 @@ function undoStep(d: MockDoc, c: MockChange, forward: boolean): UndoResult {
 
 const metaCopy = (m: MockMeta): MockMeta => JSON.parse(JSON.stringify({
   familyName: m.familyName, unitsPerEm: m.unitsPerEm, versionMajor: m.versionMajor, versionMinor: m.versionMinor,
-  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, variableFonts: m.variableFonts, exportPresets: m.exportPresets, hinting: m.hinting, controlInstructions: m.controlInstructions, psHinting: m.psHinting, grid: m.grid,
+  names: m.names, notes: m.notes, axes: m.axes, masters: m.masters, instances: m.instances, variableFonts: m.variableFonts, exportPresets: m.exportPresets, hinting: m.hinting, controlInstructions: m.controlInstructions, psHinting: m.psHinting, gasp: m.gasp, grid: m.grid,
 }));
 
 function mockInfo(d: MockDoc): FontInfo {
@@ -2036,7 +2081,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, grid: d.grid ?? null, useTypoMetrics: false, customParameters: [], virtualMasters: [], numbers: {}, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, gasp: d.gasp ?? [], grid: d.grid ?? null, useTypoMetrics: false, customParameters: [], virtualMasters: [], numbers: {}, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -2216,6 +2261,12 @@ const mockBackend: Backend = {
     return editMeta(need(), (m) => {
       m.psHinting = ps && JSON.stringify(ps) !== JSON.stringify(DEFAULT_PS_HINTING) ? { ...ps } : null;
     });
+  },
+  async setGasp(gasp) {
+    if (gasp.some((r, i) => i > 0 && r.maxPpem <= gasp[i - 1].maxPpem)) throw "gasp ranges must go up in size, each larger than the one before.";
+    if (gasp.length > 0 && gasp[gasp.length - 1].maxPpem !== 65535) throw "The last gasp range must end at 65535, so it covers every size.";
+    if (gasp.some((r) => r.flags < 0 || r.flags > 15)) throw "gasp flags go from 0 to 15.";
+    return editMeta(need(), (m) => { m.gasp = gasp.map((r) => ({ ...r })); });
   },
   async pixelPreview() {
     throw "The pixel preview needs the desktop app (npm run tauri dev).";

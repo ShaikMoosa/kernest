@@ -381,6 +381,7 @@ fn named_instances(font: &FontRef, kernest_axes: &[Axis]) -> Vec<Instance> {
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "Instance".into());
             Instance {
+                autohint: true,
                 processing: Default::default(),
                 feature_parameters: Vec::new(),
                 names: Default::default(),
@@ -455,6 +456,7 @@ fn font_info(font: &FontRef, upem: u16) -> FontInfo {
         .map(|o| o.ach_vend_id().to_string())
         .filter(|v| !v.trim().is_empty() && v != "\0\0\0\0");
     FontInfo {
+        gasp: Vec::new(),
         family_name: s(StringId::FAMILY_NAME).unwrap_or_else(|| "Untitled".into()),
         units_per_em: upem,
         version_major,

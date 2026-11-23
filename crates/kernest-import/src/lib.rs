@@ -14,6 +14,7 @@ mod svg;
 mod ufo;
 mod woff2;
 
+pub use glyphs::ttfautohint_options;
 pub use glyphs_write::{glyphs_source, write_glyphs};
 pub use metrics::{apply_metrics, from_font, parse_afm, KeepSide, SourceMetrics};
 pub use svg::{svg_shapes, Placement};
