@@ -238,7 +238,7 @@ pub fn hint_preview(
         tempfile::tempdir().map_err(|e| format!("could not create a temporary folder: {e}"))?;
     hint::autohint(
         ttf,
-        &font.info.hinting.unwrap_or_default(),
+        &font.info.hinting.clone().unwrap_or_default(),
         font,
         location,
         tmp.path(),
@@ -691,16 +691,20 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
             }
         }
     };
-    let hinting = font.info.hinting.unwrap_or_default();
+    let hinting = font.info.hinting.clone().unwrap_or_default();
     // The TrueType bytes for TTF and WOFF2: hinted if asked (a failure is reported and
     // the unhinted font is used).
-    let truetype = |report: &mut ExportReport,
-                    label: &str,
-                    name: &str,
-                    bytes: &[u8],
-                    location: Option<&Location>|
+    if opts.autohint && (opts.ttf || opts.woff2) {
+        report.warnings.extend(hint::option_warnings(&hinting));
+    }
+    let hinted = |report: &mut ExportReport,
+                  label: &str,
+                  name: &str,
+                  bytes: &[u8],
+                  location: Option<&Location>,
+                  autohint: bool|
      -> Vec<u8> {
-        if !opts.autohint || !(opts.ttf || opts.woff2) {
+        if !opts.autohint || !autohint || !(opts.ttf || opts.woff2) {
             return bytes.to_vec();
         }
         match hint::autohint(bytes, &hinting, font, location, tmp.path(), name) {
@@ -723,6 +727,28 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     .push(format!("{label}: {e}; exported without hinting."));
                 bytes.to_vec()
             }
+        }
+    };
+    // The font's own gasp table ("gasp Table") replaces the autohinter's.
+    let gasp =
+        (!font.info.gasp.is_empty()).then(|| kernest_core::hinting::gasp_table(&font.info.gasp));
+    let truetype = |report: &mut ExportReport,
+                    label: &str,
+                    name: &str,
+                    bytes: &[u8],
+                    location: Option<&Location>,
+                    autohint: bool|
+     -> Vec<u8> {
+        let tt = hinted(report, label, name, bytes, location, autohint);
+        match &gasp {
+            Some(g) => match hint::put_table(&tt, b"gasp", g) {
+                Ok(b) => b,
+                Err(e) => {
+                    report.problems.push(format!("{label} (gasp): {e}"));
+                    tt
+                }
+            },
+            None => tt,
         }
     };
     let emit = |report: &mut ExportReport,
@@ -786,7 +812,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     bytes
                 }
             };
-            let tt = truetype(report, label, file_base, &bytes, None);
+            let tt = truetype(report, label, file_base, &bytes, None, true);
             let tt = colorize(report, label, &bytes, tt, true, None);
             if opts.ttf {
                 emit(
@@ -1052,6 +1078,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                         &format!("instance{i}"),
                         &bytes,
                         Some(location),
+                        inst.is_none_or(|i| i.autohint),
                     );
                     let tt = colorize(&mut report, style, &bytes, tt, false, Some(location));
                     if opts.ttf {
@@ -1938,6 +1965,7 @@ pub(crate) mod tests {
         f.instances = [400.0, 700.0]
             .into_iter()
             .map(|weight| Instance {
+                autohint: true,
                 processing: Default::default(),
                 feature_parameters: Vec::new(),
                 names: Default::default(),
@@ -2206,6 +2234,7 @@ pub(crate) mod tests {
     fn variable_and_interpolated_instance() {
         let mut f = two_masters();
         f.instances.push(Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
@@ -2443,6 +2472,7 @@ pub(crate) mod tests {
         // An instance at the brace location picks up the brace layer's extra width.
         let mut f2 = f.clone();
         f2.instances.push(Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
@@ -2648,6 +2678,7 @@ pub(crate) mod tests {
         // With a weight axis: the location.
         let mut f = two_masters();
         f.instances.push(Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
@@ -2664,6 +2695,7 @@ pub(crate) mod tests {
             localized_family_names: Default::default(),
         });
         f.instances.push(Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
@@ -2725,6 +2757,7 @@ pub(crate) mod tests {
 
     fn instance(name: &str, wght: f64, family: Option<&str>) -> Instance {
         Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
@@ -2862,6 +2895,7 @@ pub(crate) mod tests {
     fn instance_naming_parameters_reach_names_and_file_names() {
         let mut f = two_masters();
         let inst = |name: &str, wght: f64| Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
@@ -3080,6 +3114,7 @@ pub(crate) mod tests {
     fn instance_class_overrides_and_style_map() {
         let mut f = two_masters();
         f.instances.push(Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
@@ -3096,6 +3131,7 @@ pub(crate) mod tests {
             localized_family_names: Default::default(),
         });
         f.instances.push(Instance {
+            autohint: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             names: Default::default(),
@@ -3288,6 +3324,7 @@ pub(crate) mod tests {
         f.features = "feature ss01 {\n  sub H by H.ss01;\n} ss01;\n".into();
         let inst =
             |name: &str, rename: Vec<[String; 2]>, remove: Vec<String>, processing| Instance {
+                autohint: true,
                 name: name.into(),
                 location: Default::default(),
                 export: true,
@@ -3456,6 +3493,7 @@ pub(crate) mod tests {
             disabled: false,
         };
         let inst = |name: &str, feature_parameters| Instance {
+            autohint: true,
             processing: Default::default(),
             name: name.into(),
             location: Default::default(),
@@ -3963,6 +4001,7 @@ pub(crate) mod tests {
             blue_scale: 0.05,
             blue_shift: 7.0,
             blue_fuzz: 2.0,
+            ..Default::default()
         });
         // Manual hints win over the automatic ones: a top ghost and one bar.
         f.glyph_mut("I").unwrap().layer_mut("m01").unwrap().hints = vec![
@@ -4209,6 +4248,7 @@ pub(crate) mod tests {
             blue_scale: 0.05,
             blue_shift: 7.0,
             blue_fuzz: 2.0,
+            ..Default::default()
         });
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(true, false, out.path())).unwrap();
@@ -4418,6 +4458,162 @@ pub(crate) mod tests {
         let out = tempfile::tempdir().unwrap();
         let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
         assert!(r.files.iter().all(|x| !fpgm(&x.path)));
+    }
+
+    #[test]
+    fn gasp_table_and_instance_autohint() {
+        // SMO-30: "gasp Table" lands in every TrueType file exactly; an instance with
+        // Autohint off is exported unhinted.
+        use write_fonts::types::Tag;
+        let mut f = two_masters();
+        f.info.gasp = vec![
+            kernest_core::GaspRange {
+                max_ppem: 8,
+                flags: 2,
+            },
+            kernest_core::GaspRange {
+                max_ppem: 65535,
+                flags: 15,
+            },
+        ];
+        let mut bold = instance("Bold", 700.0, None);
+        bold.autohint = false;
+        f.instances = vec![instance("Regular", 400.0, None), bold];
+        let out = tempfile::tempdir().unwrap();
+        let opts = ExportOptions {
+            autohint: true,
+            ..ExportOptions::ttf(true, true, out.path())
+        };
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let table = |style: &str, tag: &[u8; 4]| {
+            let file = r.files.iter().find(|x| x.style == style).unwrap();
+            let b = std::fs::read(&file.path).unwrap();
+            FontRef::new(&b)
+                .unwrap()
+                .table_data(Tag::new(tag))
+                .map(|d| d.as_bytes().to_vec())
+        };
+        let want = vec![0, 1, 0, 2, 0, 8, 0, 2, 0xFF, 0xFF, 0, 15];
+        for style in ["Variable", "Regular", "Bold"] {
+            assert_eq!(table(style, b"gasp"), Some(want.clone()), "{style}");
+        }
+        assert!(table("Regular", b"fpgm").is_some());
+        assert!(table("Bold", b"fpgm").is_none(), "Bold was hinted");
+        // Unhinted exports carry it too.
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let b = std::fs::read(&r.files[0].path).unwrap();
+        assert_eq!(
+            FontRef::new(&b)
+                .unwrap()
+                .table_data(Tag::new(b"gasp"))
+                .map(|d| d.as_bytes().to_vec()),
+            Some(want)
+        );
+    }
+
+    #[test]
+    fn unsupported_hinting_options_warn() {
+        // SMO-30: options the autohinter can't apply are named in the report.
+        let mut f = two_masters();
+        f.info.hinting = Some(kernest_core::Hinting {
+            stem_width_mode: Some("nnn".into()),
+            default_script: Some("zzzz".into()),
+            windows_compatibility: true,
+            ..Default::default()
+        });
+        let out = tempfile::tempdir().unwrap();
+        let opts = ExportOptions {
+            autohint: true,
+            ..ExportOptions::ttf(false, true, out.path())
+        };
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let has = |s: &str| r.warnings.iter().any(|w| w.contains(s));
+        assert!(
+            has("Stem width mode \"nnn\" isn't supported"),
+            "{:?}",
+            r.warnings
+        );
+        assert!(has("no script \"zzzz\""), "{:?}", r.warnings);
+    }
+
+    #[test]
+    fn private_dict_takes_family_blues_and_stem_snaps() {
+        // SMO-30: Blue Fuzz 0, FamilyBlues, FamilyOtherBlues and a StemSnapH
+        // override reach the static OTF's Private DICT.
+        use kernest_core::PsHinting;
+        use write_fonts::read::ps::cff::dict::{self, Entry};
+        use write_fonts::read::ps::cff::index::Index;
+        use write_fonts::types::{Fixed, Tag};
+        let mut f = two_masters();
+        f.info.ps_hinting = Some(PsHinting {
+            blue_fuzz: 0.0,
+            family_blues: vec![-10.0, 0.0, 700.0, 710.0],
+            family_other_blues: vec![-220.0, -210.0],
+            stem_snap_h: vec![55.0, 90.0],
+            ..Default::default()
+        });
+        f.instances = vec![instance("Regular", 400.0, None)];
+        let out = tempfile::tempdir().unwrap();
+        let opts = ExportOptions {
+            otf: true,
+            ttf: false,
+            ..ExportOptions::ttf(false, true, out.path())
+        };
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let b = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&b).unwrap();
+        let table = font
+            .table_data(Tag::new(b"CFF "))
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let hdr = usize::from(table[2]);
+        let names = Index::new(&table[hdr..], false).unwrap();
+        let top_at = hdr + names.size_in_bytes().unwrap();
+        let top_index = Index::new(&table[top_at..], false).unwrap();
+        let top = top_index.get(0).unwrap();
+        let range = dict::entries(top, None)
+            .filter_map(|e| e.ok())
+            .find_map(|e| match e {
+                Entry::PrivateDictRange(r) => Some(r),
+                _ => None,
+            })
+            .expect("a Private DICT");
+        let entries: Vec<Entry> = dict::entries(&table[range], None)
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(
+            entries.contains(&Entry::BlueFuzz(Fixed::ZERO)),
+            "{entries:?}"
+        );
+        assert!(entries.contains(&Entry::StdHw(Fixed::from_i32(55))));
+        let pairs = |e: &Entry| match e {
+            Entry::FamilyBlues(b) | Entry::FamilyOtherBlues(b) => Some(b.values().to_vec()),
+            _ => None,
+        };
+        let family: Vec<_> = entries.iter().filter_map(pairs).collect();
+        assert_eq!(
+            family,
+            vec![
+                vec![
+                    (Fixed::from_i32(-10), Fixed::ZERO),
+                    (Fixed::from_i32(700), Fixed::from_i32(710))
+                ],
+                vec![(Fixed::from_i32(-220), Fixed::from_i32(-210))]
+            ]
+        );
+        let snap = entries
+            .iter()
+            .find_map(|e| match e {
+                Entry::StemSnapH(s) => Some(s.values().to_vec()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(snap, [Fixed::from_i32(55), Fixed::from_i32(90)]);
     }
 
     #[test]

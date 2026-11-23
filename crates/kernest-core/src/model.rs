@@ -113,6 +113,10 @@ pub struct FontInfo {
     /// the autohinter. Empty means none.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub control_instructions: String,
+    /// The gasp table written into TrueType exports ("gasp Table"), in rising
+    /// sizes. Empty leaves the table to the autohinter (or out when unhinted).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gasp: Vec<GaspRange>,
     /// Snap grid for the edit view; `None` (or spacing 0) means no grid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grid: Option<Grid>,
@@ -175,7 +179,7 @@ impl Grid {
 
 /// Settings for TrueType autohinting on export: the ttfautohint options that matter
 /// most. Kernest hints with tilvisan, a Rust port of ttfautohint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hinting {
     /// Smallest text size, in pixels per em, that gets hinting instructions.
@@ -188,6 +192,49 @@ pub struct Hinting {
     /// Hint composite glyphs as a whole rather than through their components.
     #[serde(default)]
     pub hint_composites: bool,
+    /// Above this size (pixels per em) no hinting instructions run at all (`-G`);
+    /// `None` is 200, 0 means no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hinting_limit: Option<u16>,
+    /// Stem width for glyphs the hinter can't measure (`-H`, font units); `None`
+    /// uses the default master's first horizontal stem.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_stem_width: Option<u16>,
+    /// Stem width mode for grayscale, GDI ClearType and DirectWrite ClearType
+    /// (`-a`): three letters of n (natural), q (quantized) and s (strong), such as
+    /// "qsq". `None` is "qsq".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stem_width_mode: Option<String>,
+    /// The script whose rules hint glyphs no script covers (`-D`), such as "latn".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_script: Option<String>,
+    /// The script used for glyphs no script rules cover (`-f`); "none" or `None`
+    /// leaves them unhinted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_script: Option<String>,
+    /// Sizes where the x-height isn't snapped (`-X`, such as "8-12, 15"); `None`
+    /// lets Kernest pick them from the x-height zone's overshoot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x_height_snapping_exceptions: Option<String>,
+    /// Add blue zones for usWinAscent and usWinDescent, so nothing is clipped on
+    /// Windows (`-W`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub windows_compatibility: bool,
+    /// Treat the font as a symbol font and hint it without script rules (`-s`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub symbol: bool,
+    /// Let the hinter move components of composite glyphs (`-p`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adjust_subglyphs: bool,
+    /// Scale glyphs of the fallback script instead of hinting them (`-S`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fallback_scaling: bool,
+    /// Add the TTFA table recording the options used (`-t`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ttfa_table: bool,
+    /// Leave the autohinter's details out of the version string (`-n`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_info: bool,
 }
 
 impl Default for Hinting {
@@ -197,13 +244,34 @@ impl Default for Hinting {
             range_max: 50,
             increase_x_height: 14,
             hint_composites: false,
+            hinting_limit: None,
+            fallback_stem_width: None,
+            stem_width_mode: None,
+            default_script: None,
+            fallback_script: None,
+            x_height_snapping_exceptions: None,
+            windows_compatibility: false,
+            symbol: false,
+            adjust_subglyphs: false,
+            fallback_scaling: false,
+            ttfa_table: false,
+            no_info: false,
         }
     }
 }
 
+/// One gasp range ("gasp Table"): sizes up to `max_ppem` pixels per em use `flags`
+/// (1 gridfit, 2 grayscale, 4 symmetric gridfit, 8 symmetric smoothing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GaspRange {
+    pub max_ppem: u16,
+    pub flags: u16,
+}
+
 /// PostScript hinting values shared by every CFF export (the Private DICT's
 /// blue zone controls). Defaults follow the CFF specification's recommendations.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PsHinting {
     /// Point size at which blue zones stop flattening overshoots (in points).
@@ -212,6 +280,19 @@ pub struct PsHinting {
     pub blue_shift: f64,
     /// Extra slack around blue zones so nearby edges snap together (units).
     pub blue_fuzz: f64,
+    /// FamilyBlues: the family's top zones and baseline (edge, overshoot pairs), so
+    /// every style rounds them alike at small sizes. Empty leaves it out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub family_blues: Vec<f64>,
+    /// FamilyOtherBlues: the family's bottom zones below the baseline.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub family_other_blues: Vec<f64>,
+    /// StemSnapH, in place of the masters' horizontal stems. Empty uses the stems.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stem_snap_h: Vec<f64>,
+    /// StemSnapV, in place of the masters' vertical stems. Empty uses the stems.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stem_snap_v: Vec<f64>,
 }
 
 impl Default for PsHinting {
@@ -220,6 +301,10 @@ impl Default for PsHinting {
             blue_scale: 0.039625,
             blue_shift: 7.0,
             blue_fuzz: 1.0,
+            family_blues: Vec::new(),
+            family_other_blues: Vec::new(),
+            stem_snap_h: Vec::new(),
+            stem_snap_v: Vec::new(),
         }
     }
 }
@@ -1422,6 +1507,7 @@ impl Font {
             .collect();
         Font {
             info: FontInfo {
+                gasp: Vec::new(),
                 family_name: family_name.into(),
                 units_per_em: 1000,
                 version_major: 1,
@@ -1644,6 +1730,10 @@ pub struct Instance {
     /// Masters (by name) this instance is interpolated without ("Disable Masters").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_masters: Vec<String>,
+    /// Whether TrueType autohinting runs for this instance when the export asks for
+    /// it ("Autohint"); off exports it unhinted.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub autohint: bool,
     /// Naming overrides: PostScript and full names, style-map family, file name and
     /// name table entries (Glyphs naming parameters).
     #[serde(default, skip_serializing_if = "NameOverrides::is_empty")]

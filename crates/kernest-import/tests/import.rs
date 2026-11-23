@@ -41,6 +41,7 @@ fn two_masters() -> Font {
         }],
     );
     f.instances.push(Instance {
+        autohint: true,
         processing: Default::default(),
         feature_parameters: Vec::new(),
         names: Default::default(),
@@ -525,6 +526,89 @@ value = {};",
     assert_eq!(f.instances[0].names.elidable_stat_axes, vec!["wght"]);
 }
 
+#[test]
+fn ttfautohint_options_parse_fully() {
+    // SMO-30: every option Kernest keeps, in short, attached and long forms; the
+    // rest are reported.
+    let (h, unsupported) = kernest_import::ttfautohint_options(
+        "-l 7 -r48 --hinting-limit=180 -H 60 -a nsn -D cyrl -f latn -x 0 \
+         -X \"8-12, 15\" -W -s -p -S -t -n -c -F Foo --reference=x.ttf -I",
+    );
+    let h = h.unwrap();
+    assert_eq!((h.range_min, h.range_max, h.increase_x_height), (7, 48, 0));
+    assert_eq!(h.hinting_limit, Some(180));
+    assert_eq!(h.fallback_stem_width, Some(60));
+    assert_eq!(h.stem_width_mode.as_deref(), Some("nsn"));
+    assert_eq!(h.default_script.as_deref(), Some("cyrl"));
+    assert_eq!(h.fallback_script.as_deref(), Some("latn"));
+    assert_eq!(h.x_height_snapping_exceptions.as_deref(), Some("8-12, 15"));
+    assert!(h.windows_compatibility && h.symbol && h.adjust_subglyphs);
+    assert!(h.fallback_scaling && h.ttfa_table && h.no_info && h.hint_composites);
+    assert_eq!(unsupported, vec!["-F", "--reference"]);
+    // The old strong stem letters become a stem width mode; defaults stay unset.
+    let (h, _) = kernest_import::ttfautohint_options("-w gD -G 200 -D latn -f none");
+    let h = h.unwrap();
+    assert_eq!(h.stem_width_mode.as_deref(), Some("sqs"));
+    assert_eq!(h.hinting_limit, None);
+    assert_eq!((h.default_script, h.fallback_script), (None, None));
+}
+
+#[test]
+fn glyphs_hinting_parameters_round_trip() {
+    // SMO-30: TTFAutohint options, PostScript family blues and stem snaps, the gasp
+    // table and Autohint off on an instance survive Save As .glyphs.
+    let mut src = two_masters();
+    src.info.hinting = Some(kernest_core::Hinting {
+        range_min: 9,
+        range_max: 45,
+        hinting_limit: Some(120),
+        fallback_stem_width: Some(70),
+        default_script: Some("grek".into()),
+        x_height_snapping_exceptions: Some("10-12".into()),
+        windows_compatibility: true,
+        ..Default::default()
+    });
+    src.info.ps_hinting = Some(PsHinting {
+        blue_fuzz: 0.0,
+        family_blues: vec![-10.0, 0.0, 500.0, 510.0],
+        family_other_blues: vec![-200.0, -190.0],
+        stem_snap_h: vec![40.0],
+        stem_snap_v: vec![80.0, 90.0],
+        ..Default::default()
+    });
+    src.info.gasp = vec![
+        kernest_core::GaspRange {
+            max_ppem: 8,
+            flags: 2,
+        },
+        kernest_core::GaspRange {
+            max_ppem: 65535,
+            flags: 15,
+        },
+    ];
+    src.instances[0].autohint = false;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Hinting.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains("name = Autohint;\nvalue = 0;"), "{text}");
+    let imp = import(&path).unwrap();
+    let f = imp.font;
+    assert_eq!(f.info.hinting, src.info.hinting);
+    assert_eq!(f.info.ps_hinting, src.info.ps_hinting);
+    assert_eq!(f.info.gasp, src.info.gasp);
+    assert!(!f.instances[0].autohint);
+    // They're Kernest settings now, not kept custom parameters.
+    assert!(
+        !f.info
+            .custom_parameters
+            .iter()
+            .any(|p| p.name.contains("gasp") || p.name.contains("Blues")),
+        "{:?}",
+        f.info.custom_parameters
+    );
+}
+
 /// The two-master font with vertical metrics: H's own advance and origin, a writing
 /// direction and vhea values on the default master.
 fn vertical_font() -> Font {
@@ -736,6 +820,7 @@ fn glyphs_round_trip() {
         range_max: 45,
         increase_x_height: 14,
         hint_composites: true,
+        ..Default::default()
     });
     src.features = "languagesystem DFLT dflt;\nfeature salt {\nsub A by A.alt;\n} salt;\n".into();
     src.glyph_mut("H")
@@ -1216,6 +1301,7 @@ fn check_glyphs_font(imp: &kernest_import::Imported) {
             range_max: 45,
             increase_x_height: 0,
             hint_composites: true,
+            ..Default::default()
         }),
         "from the TTFAutohint options custom parameter"
     );
@@ -1453,6 +1539,7 @@ fn hinted_font() -> Font {
         blue_scale: 0.05,
         blue_shift: 7.0,
         blue_fuzz: 2.0,
+        ..Default::default()
     });
     f
 }
@@ -1621,7 +1708,8 @@ fn glyphs_v3_hinting_import() {
         Some(PsHinting {
             blue_scale: 0.05,
             blue_shift: 7.0,
-            blue_fuzz: 2.0
+            blue_fuzz: 2.0,
+            ..Default::default()
         })
     );
 }

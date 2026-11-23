@@ -409,6 +409,19 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
         info.postscript_blue_scale = Some(ps.blue_scale);
         info.postscript_blue_shift = Some(ps.blue_shift);
         info.postscript_blue_fuzz = Some(ps.blue_fuzz);
+        if !ps.family_blues.is_empty() {
+            info.postscript_family_blues = Some(ps.family_blues.clone());
+        }
+        if !ps.family_other_blues.is_empty() {
+            info.postscript_family_other_blues = Some(ps.family_other_blues.clone());
+        }
+        // Stem snaps set in Font Info win over the masters' stems.
+        if !ps.stem_snap_h.is_empty() {
+            info.postscript_stem_snap_h = Some(ps.stem_snap_h.clone());
+        }
+        if !ps.stem_snap_v.is_empty() {
+            info.postscript_stem_snap_v = Some(ps.stem_snap_v.clone());
+        }
     }
 
     // Per-glyph stem hints: a glyph's manual hints win; otherwise they are generated

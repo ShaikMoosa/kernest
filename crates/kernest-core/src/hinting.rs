@@ -84,10 +84,92 @@ pub fn set_ps_hinting(font: &Font, ps: Option<PsHinting>) -> R<Font> {
         if !p.blue_fuzz.is_finite() || p.blue_fuzz < 0.0 {
             return Err("Blue fuzz must be 0 or more.".into());
         }
+        for (name, list, max) in [
+            ("Family blues", &p.family_blues, 14),
+            ("Family other blues", &p.family_other_blues, 10),
+        ] {
+            if list.len() % 2 != 0 {
+                return Err(format!(
+                    "{name} needs pairs of numbers: each zone's bottom and top."
+                ));
+            }
+            if list.len() > max {
+                return Err(format!("{name} can hold at most {} zones.", max / 2));
+            }
+            if list.iter().any(|v| !v.is_finite()) || list.windows(2).any(|w| w[1] < w[0]) {
+                return Err(format!("{name} must be numbers in rising order."));
+            }
+        }
+        for (name, list) in [
+            ("Stem snap H", &p.stem_snap_h),
+            ("Stem snap V", &p.stem_snap_v),
+        ] {
+            if list.len() > 12 {
+                return Err(format!("{name} can hold at most 12 widths."));
+            }
+            if list.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+                return Err(format!("{name} widths must be greater than 0."));
+            }
+        }
     }
     let mut f = font.clone();
     f.info.ps_hinting = ps.filter(|p| *p != PsHinting::default());
     Ok(f)
+}
+
+/// Pixel-per-em sizes and ranges such as "8-12, 15" (ttfautohint's `-X` syntax).
+pub fn parse_ppem_ranges(text: &str) -> R<Vec<(u16, u16)>> {
+    let mut out = Vec::new();
+    for part in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let num = |s: &str| {
+            s.trim()
+                .parse::<u16>()
+                .map_err(|_| format!("\"{part}\" isn't a size or a range of sizes, such as 8-12."))
+        };
+        let (a, b) = match part.split_once('-') {
+            Some((a, b)) => (num(a)?, num(b)?),
+            None => {
+                let n = num(part)?;
+                (n, n)
+            }
+        };
+        if a > b {
+            return Err(format!(
+                "\"{part}\" runs backwards; write the smaller size first."
+            ));
+        }
+        out.push((a, b));
+    }
+    Ok(out)
+}
+
+/// Checks a gasp table: sizes rising, the last range at 65535, flags 0–15.
+pub fn check_gasp(gasp: &[crate::GaspRange]) -> R<()> {
+    if gasp.is_empty() {
+        return Ok(());
+    }
+    if gasp.windows(2).any(|w| w[1].max_ppem <= w[0].max_ppem) {
+        return Err("gasp ranges must go up in size, each larger than the one before.".into());
+    }
+    if gasp.last().is_some_and(|r| r.max_ppem != 0xFFFF) {
+        return Err("The last gasp range must end at 65535, so it covers every size.".into());
+    }
+    if gasp.iter().any(|r| r.flags > 15) {
+        return Err("gasp flags go from 0 to 15.".into());
+    }
+    Ok(())
+}
+
+/// The bytes of a version 1 gasp table.
+pub fn gasp_table(gasp: &[crate::GaspRange]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + gasp.len() * 4);
+    out.extend_from_slice(&1u16.to_be_bytes());
+    out.extend_from_slice(&(gasp.len() as u16).to_be_bytes());
+    for r in gasp {
+        out.extend_from_slice(&r.max_ppem.to_be_bytes());
+        out.extend_from_slice(&r.flags.to_be_bytes());
+    }
+    out
 }
 
 /// BlueValues and OtherBlues from alignment zones, the way Glyphs splits them:

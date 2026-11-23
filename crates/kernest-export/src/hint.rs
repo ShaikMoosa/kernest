@@ -41,12 +41,17 @@ pub fn autohint(
         .unwrap_or_else(|| kernest_core::interpolate::default_master(font));
     // ttfautohint takes one fallback stem width, not a list: the first horizontal
     // stem stands in for the master's stem widths.
-    let fallback_stem_width = master
-        .stems
-        .iter()
-        .find(|s| s.horizontal)
-        .map(|s| s.value.round().max(0.0) as u32)
-        .unwrap_or(0);
+    let fallback_stem_width = hinting.fallback_stem_width.map_or_else(
+        || {
+            master
+                .stems
+                .iter()
+                .find(|s| s.horizontal)
+                .map(|s| s.value.round().max(0.0) as u32)
+                .unwrap_or(0)
+        },
+        u32::from,
+    );
     let control = tmp.join(format!("{name}-control.txt"));
     let has_control = !font.info.control_instructions.trim().is_empty();
     if has_control {
@@ -72,21 +77,40 @@ pub fn autohint(
     let input = tmp.join(format!("{name}-unhinted.ttf"));
     std::fs::write(&input, &input_bytes)
         .map_err(|e| format!("could not write a temporary font: {e}"))?;
+    let defaults = tilvisan::Args::default();
+    let script = |tag: &Option<String>, fallback| {
+        tag.as_deref()
+            .and_then(|t| tilvisan::ScriptClassIndex::from_tag(t).ok())
+            .unwrap_or(fallback)
+    };
     let args = tilvisan::Args {
         input: input.display().to_string(),
         hinting_range_min: u32::from(hinting.range_min),
         hinting_range_max: u32::from(hinting.range_max),
-        hinting_limit: u32::from(hinting.range_max).max(200),
+        hinting_limit: hinting
+            .hinting_limit
+            .map_or_else(|| u32::from(hinting.range_max).max(200), u32::from),
         increase_x_height: u32::from(hinting.increase_x_height),
         composites: hinting.hint_composites,
         fallback_stem_width,
-        x_height_snapping_exceptions: x_height_exceptions(font, master, hinting),
+        x_height_snapping_exceptions: hinting
+            .x_height_snapping_exceptions
+            .clone()
+            .unwrap_or_else(|| x_height_exceptions(font, master, hinting)),
         control_file: has_control.then(|| control.clone()),
+        default_script: script(&hinting.default_script, defaults.default_script),
+        fallback_script: script(&hinting.fallback_script, defaults.fallback_script),
+        windows_compatibility: hinting.windows_compatibility,
+        symbol: hinting.symbol,
+        adjust_subglyphs: hinting.adjust_subglyphs,
+        fallback_scaling: hinting.fallback_scaling,
+        ttfa_table: hinting.ttfa_table,
         // Record the settings in the version string, as ttfautohint does by default.
-        detailed_info: true,
+        detailed_info: !hinting.no_info,
+        no_info: hinting.no_info,
         // The designer is exporting their own font.
         ignore_restrictions: true,
-        ..Default::default()
+        ..defaults
     };
     let result = catch_unwind(AssertUnwindSafe(|| tilvisan::autohint(&args)));
     let _ = std::fs::remove_file(&input);
@@ -146,6 +170,44 @@ pub fn autohint(
         v2
     };
     replace_table(&hinted, b"post", &restored)
+}
+
+/// Warnings for hinting settings the autohinter can't use: a stem width mode other
+/// than qsq (tilvisan has no way to set it) and unknown script tags.
+pub fn option_warnings(hinting: &Hinting) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(m) = hinting.stem_width_mode.as_deref().filter(|m| *m != "qsq") {
+        out.push(format!(
+            "Stem width mode \"{m}\" isn't supported by Kernest's autohinter; qsq was used."
+        ));
+    }
+    for tag in [&hinting.default_script, &hinting.fallback_script]
+        .into_iter()
+        .flatten()
+    {
+        if tilvisan::ScriptClassIndex::from_tag(tag).is_err() {
+            out.push(format!(
+                "The autohinter has no script \"{tag}\"; its default was used."
+            ));
+        }
+    }
+    out
+}
+
+/// The font with a table set: replaced if it's there, added if not.
+pub(crate) fn put_table(font: &[u8], tag: &[u8; 4], data: &[u8]) -> Result<Vec<u8>, String> {
+    let f = FontRef::new(font).map_err(|e| format!("not a valid font: {e}"))?;
+    let mut b = FontBuilder::new();
+    for r in f.table_directory.table_records() {
+        let t = r.tag();
+        if t != Tag::new(tag) {
+            if let Some(d) = f.table_data(t) {
+                b.add_raw(t, d.as_bytes().to_vec());
+            }
+        }
+    }
+    b.add_raw(Tag::new(tag), data.to_vec());
+    Ok(b.build())
 }
 
 /// Sizes where the x-height zone's overshoot rounds to a pixel more than the flat

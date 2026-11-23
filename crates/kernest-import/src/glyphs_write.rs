@@ -959,6 +959,37 @@ fn hinting_options(h: &kernest_core::Hinting) -> String {
     if h.hint_composites {
         s.push_str(" -c");
     }
+    if let Some(n) = h.hinting_limit {
+        s.push_str(&format!(" -G {n}"));
+    }
+    if let Some(n) = h.fallback_stem_width {
+        s.push_str(&format!(" -H {n}"));
+    }
+    for (flag, v) in [
+        ("-a", &h.stem_width_mode),
+        ("-D", &h.default_script),
+        ("-f", &h.fallback_script),
+    ] {
+        if let Some(v) = v {
+            s.push_str(&format!(" {flag} {v}"));
+        }
+    }
+    if let Some(x) = &h.x_height_snapping_exceptions {
+        s.push_str(&format!(" -X \"{x}\""));
+    }
+    for (flag, on) in [
+        ("-W", h.windows_compatibility),
+        ("-s", h.symbol),
+        ("-p", h.adjust_subglyphs),
+        ("-S", h.fallback_scaling),
+        ("-t", h.ttfa_table),
+        ("-n", h.no_info),
+    ] {
+        if on {
+            s.push(' ');
+            s.push_str(flag);
+        }
+    }
     s
 }
 
@@ -1046,6 +1077,31 @@ pub fn glyphs_source(font: &Font) -> String {
         ] {
             params.push(format!("{{\nname = {name};\nvalue = {};\n}}", num(v)));
         }
+        for (name, list) in [
+            ("familyBlues", &ps.family_blues),
+            ("familyOtherBlues", &ps.family_other_blues),
+            ("stemSnapH", &ps.stem_snap_h),
+            ("stemSnapV", &ps.stem_snap_v),
+        ] {
+            if !list.is_empty() {
+                let v: Vec<String> = list.iter().map(|x| num(*x)).collect();
+                params.push(format!(
+                    "{{\nname = {name};\nvalue = (\n{}\n);\n}}",
+                    v.join(",\n")
+                ));
+            }
+        }
+    }
+    if !info.gasp.is_empty() {
+        let v: Vec<String> = info
+            .gasp
+            .iter()
+            .map(|r| format!("\"{}\" = {};", r.max_ppem, r.flags))
+            .collect();
+        params.push(format!(
+            "{{\nname = \"gasp Table\";\nvalue = {{\n{}\n}};\n}}",
+            v.join("\n")
+        ));
     }
     let mapped: Vec<&kernest_core::Axis> = font.axes.iter().filter(|a| !a.map.is_empty()).collect();
     if !mapped.is_empty() {
@@ -1360,6 +1416,9 @@ pub fn glyphs_source(font: &Font) -> String {
                     }
                     ip.extend(feature_parameters(&i.feature_parameters));
                     ip.extend(processing_parameters(&i.processing));
+                    if !i.autohint {
+                        ip.push("{\nname = Autohint;\nvalue = 0;\n}".into());
+                    }
                     for tag in &i.names.elidable_stat_axes {
                         ip.push(format!(
                             "{{

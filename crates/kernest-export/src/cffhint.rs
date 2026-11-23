@@ -155,6 +155,18 @@ pub(crate) fn private_hinting(info: &norad::FontInfo, out: &mut Vec<u8>) {
             op(7, out); // OtherBlues
         }
     }
+    if let Some(b) = &info.postscript_family_blues {
+        if !b.is_empty() {
+            deltas(b, out);
+            op(8, out); // FamilyBlues
+        }
+    }
+    if let Some(b) = &info.postscript_family_other_blues {
+        if !b.is_empty() {
+            deltas(b, out);
+            op(9, out); // FamilyOtherBlues
+        }
+    }
     let h = info.postscript_stem_snap_h.clone().unwrap_or_default();
     let v = info.postscript_stem_snap_v.clone().unwrap_or_default();
     if let Some(&first) = h.first() {
@@ -198,11 +210,20 @@ pub(crate) fn font_private_hinting(font: &kernest_core::Font, out: &mut Vec<u8>)
     let master = kernest_core::interpolate::default_master(font);
     let (blue, other) = kernest_core::hinting::blues_from_zones(&master.alignment_zones);
     let ps = font.info.ps_hinting.as_ref();
+    let snaps = |own: Option<&Vec<f64>>, horizontal: bool| {
+        Some(
+            own.filter(|s| !s.is_empty())
+                .cloned()
+                .unwrap_or_else(|| kernest_core::hinting::stem_snaps(&master.stems, horizontal)),
+        )
+    };
     let info = norad::FontInfo {
         postscript_blue_values: Some(blue),
         postscript_other_blues: Some(other),
-        postscript_stem_snap_h: Some(kernest_core::hinting::stem_snaps(&master.stems, true)),
-        postscript_stem_snap_v: Some(kernest_core::hinting::stem_snaps(&master.stems, false)),
+        postscript_family_blues: ps.map(|p| p.family_blues.clone()),
+        postscript_family_other_blues: ps.map(|p| p.family_other_blues.clone()),
+        postscript_stem_snap_h: snaps(ps.map(|p| &p.stem_snap_h), true),
+        postscript_stem_snap_v: snaps(ps.map(|p| &p.stem_snap_v), false),
         postscript_blue_scale: ps.map(|p| p.blue_scale),
         postscript_blue_shift: ps.map(|p| p.blue_shift),
         postscript_blue_fuzz: ps.map(|p| p.blue_fuzz),
