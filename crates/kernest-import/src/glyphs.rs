@@ -1227,6 +1227,13 @@ fn read_instance_swaps(root: &glyphs_reader::Plist, font: &mut Font, warnings: &
                 Some("Remove Overlap" | "Remove overlap" | "removeOverlap") => {
                     target.processing.keep_overlaps = is_off(p)
                 }
+                Some("Elidable STAT Axis Value Name") => {
+                    if let Some(tag) = text() {
+                        if !target.names.elidable_stat_axes.contains(&tag) {
+                            target.names.elidable_stat_axes.push(tag);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -1626,6 +1633,8 @@ fn variable_settings_from(
         let mut rename: Vec<[String; 2]> = Vec::new();
         let mut disabled: Vec<String> = Vec::new();
         let mut processing = kernest_core::GlyphProcessing::default();
+        let mut origin: Option<String> = None;
+        let mut export_stat = true;
         for p in inst
             .get("customParameters")
             .and_then(|p| p.as_array())
@@ -1685,8 +1694,16 @@ fn variable_settings_from(
                         .filter(|n| !remove.iter().any(|r| glob(r, n)))
                         .collect();
                 }
-                // The default master is the font's own origin in Kernest.
-                "Variable Font Origin" => {}
+                // The master this variable font uses as its default, by id or name.
+                "Variable Font Origin" => {
+                    origin = p.get("value").and_then(|v| v.as_str()).map(|v| {
+                        font.masters
+                            .iter()
+                            .find(|m| m.id == v || m.name == v)
+                            .map_or_else(|| v.to_string(), |m| m.name.clone())
+                    })
+                }
+                "Export STAT Table" => export_stat = !is_off(p),
                 "Rename Glyphs" => rename = swaps_in(p),
                 "Disable Masters" => disabled = list(),
                 n if kernest_core::featureedits::is_feature_parameter(n) => {}
@@ -1712,6 +1729,8 @@ fn variable_settings_from(
             }
         });
         out.push(kernest_core::VariableFontSetting {
+            origin,
+            export_stat,
             processing,
             feature_parameters: feature_parameters_of(inst),
             family_name: vf_family,
@@ -1742,6 +1761,8 @@ fn variable_settings_from(
         let vf_file = param("Variable Font File Name");
         if vf_family.is_some() || vf_file.is_some() {
             out.push(kernest_core::VariableFontSetting {
+                origin: None,
+                export_stat: true,
                 processing: Default::default(),
                 feature_parameters: Vec::new(),
                 name: "Variable".into(),

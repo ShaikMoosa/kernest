@@ -351,6 +351,8 @@ fn glyphs_disable_masters_round_trip() {
     let mut src = two_masters();
     src.instances[0].disabled_masters = vec!["Bold".into()];
     src.variable_fonts = vec![VariableFontSetting {
+        origin: None,
+        export_stat: true,
         processing: Default::default(),
         feature_parameters: Vec::new(),
         family_name: None,
@@ -392,6 +394,8 @@ fn glyphs_feature_parameters_round_trip() {
         param("Replace Class", "Figures; one.osf two.osf", true),
     ];
     src.variable_fonts = vec![VariableFontSetting {
+        origin: None,
+        export_stat: true,
         processing: Default::default(),
         feature_parameters: vec![param("Remove Prefixes", "Lookups", false)],
         family_name: None,
@@ -439,6 +443,8 @@ fn glyphs_processing_parameters_round_trip() {
         keep_overlaps: true,
     };
     src.variable_fonts = vec![VariableFontSetting {
+        origin: None,
+        export_stat: true,
         feature_parameters: Vec::new(),
         processing: kernest_core::GlyphProcessing {
             decompose_glyphs: vec!["O".into()],
@@ -470,6 +476,53 @@ fn glyphs_processing_parameters_round_trip() {
         f.variable_fonts[0].processing,
         src.variable_fonts[0].processing
     );
+}
+
+#[test]
+fn glyphs_variable_font_parameters_round_trip() {
+    // SMO-29: Variable Font Origin (by master id in Glyphs) and Export STAT Table off
+    // on a variable font; Elidable STAT Axis Value Name on an instance.
+    let mut src = two_masters();
+    let bold = src.masters[1].name.clone();
+    src.instances[0].names.elidable_stat_axes = vec!["wght".into()];
+    src.variable_fonts = vec![VariableFontSetting {
+        origin: Some(bold.clone()),
+        export_stat: false,
+        feature_parameters: Vec::new(),
+        processing: Default::default(),
+        family_name: None,
+        name_records: Vec::new(),
+        name: "Variable".into(),
+        file_name: "Sample-VF".into(),
+        axes: Vec::new(),
+        glyphs: Vec::new(),
+        rename_glyphs: Vec::new(),
+        remove_glyphs: Vec::new(),
+        disabled_masters: Vec::new(),
+    }];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("VariableParams.glyphs");
+    kernest_import::write_glyphs(&src, &path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(
+        text.contains(
+            "name = \"Export STAT Table\";
+value = 0;"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "name = \"Variable Font Origin\";
+value = {};",
+            src.masters[1].id
+        )),
+        "{text}"
+    );
+    let f = import(&path).unwrap().font;
+    assert_eq!(f.variable_fonts[0].origin.as_deref(), Some(bold.as_str()));
+    assert!(!f.variable_fonts[0].export_stat);
+    assert_eq!(f.instances[0].names.elidable_stat_axes, vec!["wght"]);
 }
 
 /// The two-master font with vertical metrics: H's own advance and origin, a writing
@@ -1837,6 +1890,8 @@ fn designspace_variable_fonts_round_trip() {
     let mut src = two_masters();
     src.variable_fonts = vec![
         VariableFontSetting {
+            origin: None,
+            export_stat: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,
@@ -1854,6 +1909,8 @@ fn designspace_variable_fonts_round_trip() {
             disabled_masters: Vec::new(),
         },
         VariableFontSetting {
+            origin: None,
+            export_stat: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,
@@ -2188,6 +2245,8 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
     ];
     src.variable_fonts = vec![
         VariableFontSetting {
+            origin: None,
+            export_stat: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,
@@ -2201,6 +2260,8 @@ fn glyphs_round_trip_keeps_custom_parameters_and_variable_settings() {
             disabled_masters: Vec::new(),
         },
         VariableFontSetting {
+            origin: None,
+            export_stat: true,
             processing: Default::default(),
             feature_parameters: Vec::new(),
             family_name: None,

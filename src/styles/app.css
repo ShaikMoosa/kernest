@@ -612,6 +612,8 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .fi-name-records textarea { width: 280px; min-height: 52px; padding: var(--k-space-4) var(--k-space-8); border: 1px solid var(--k-border-strong); border-radius: var(--k-radius-md); background: var(--k-bg-surface); color: var(--k-text-primary); font-size: 12px; resize: vertical; }
 .fi-vf-masters { margin: 0; padding: 0; border: 0; min-width: 0; flex-wrap: wrap; align-items: center; column-gap: var(--k-space-16); }
 .fi-vf-masters legend { float: left; margin-inline-end: var(--k-space-8); padding: 0; }
+.fi-elidable { display: flex; align-items: center; gap: var(--k-space-8); margin: 0; padding: 0; border: 0; min-width: 0; }
+.fi-elidable legend { float: left; padding: 0; }
 .fi-adding { border-style: dashed; border-color: var(--k-border-focus); }
 .fi-actions { display: flex; align-items: center; gap: var(--k-space-8); padding-top: var(--k-space-4); border-top: 1px solid var(--k-border-default); }
 .fm-master { display: flex; flex-direction: column; gap: var(--k-space-8); padding: var(--k-space-12); border: 1px solid var(--k-border-default); border-radius: var(--k-radius-lg); background: var(--k-bg-app); }

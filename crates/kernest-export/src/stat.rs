@@ -15,6 +15,49 @@ use write_fonts::tables::stat::{AxisRecord, AxisValue, AxisValueTableFlags, Stat
 use write_fonts::types::{Fixed, NameId, Tag};
 use write_fonts::{dump_table, FontBuilder};
 
+/// The font without its STAT table ("Export STAT Table" off).
+pub fn remove_stat(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let f = FontRef::new(bytes).map_err(|e| format!("not a valid font: {e}"))?;
+    let stat = Tag::new(b"STAT");
+    if f.table_data(stat).is_none() {
+        return Ok(bytes.to_vec());
+    }
+    let mut b = FontBuilder::new();
+    for r in f.table_directory.table_records() {
+        let t = r.tag();
+        if t == stat {
+            continue;
+        }
+        if let Some(d) = f.table_data(t) {
+            b.add_raw(t, d.as_bytes().to_vec());
+        }
+    }
+    Ok(b.build())
+}
+
+/// The (axis tag, user value) pairs whose labels instances mark elidable ("Elidable
+/// STAT Axis Value Name"): each instance's location on the axes it names.
+fn elidable_from_instances(font: &Font) -> Vec<(String, f64)> {
+    let mut out = Vec::new();
+    for i in &font.instances {
+        for tag in &i.names.elidable_stat_axes {
+            let Some(a) = font.axes.iter().find(|a| &a.tag == tag) else {
+                continue;
+            };
+            let design = i
+                .location
+                .get(tag)
+                .copied()
+                .unwrap_or_else(|| kernest_core::designspace::design_bounds(a).1);
+            out.push((
+                tag.clone(),
+                kernest_core::designspace::design_to_user(a, design),
+            ));
+        }
+    }
+    out
+}
+
 /// Adds a STAT table built from the axes' value labels. A font with no labels is
 /// returned unchanged.
 pub fn add_stat(font: &Font, bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -73,6 +116,7 @@ pub fn add_stat(font: &Font, bytes: &[u8]) -> Result<Vec<u8>, String> {
         }
     }
 
+    let elidable = elidable_from_instances(font);
     let mut design_axes = Vec::new();
     let mut axis_values = Vec::new();
     for (idx, a) in font.axes.iter().enumerate() {
@@ -86,7 +130,11 @@ pub fn add_stat(font: &Font, bytes: &[u8]) -> Result<Vec<u8>, String> {
         design_axes.push(AxisRecord::new(tag, axis_name_id, idx));
         for l in &a.labels {
             let name_id = intern(&l.name);
-            let flags = if l.elidable {
+            let elidable = l.elidable
+                || elidable
+                    .iter()
+                    .any(|(t, v)| t == &a.tag && (v - l.value).abs() < 1e-6);
+            let flags = if elidable {
                 AxisValueTableFlags::ELIDABLE_AXIS_VALUE_NAME
             } else {
                 AxisValueTableFlags::empty()

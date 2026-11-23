@@ -2486,4 +2486,16 @@ export const es: Dict = {
   "{filter}: \"{value}\" should be a setting such as Slant:10.": "{filter}: \"{value}\" debería ser un ajuste como Slant:10.",
   "{filter}: {setting} isn't supported; use OffsetX, OffsetY, Scale, ScaleX, ScaleY or Slant.": "{filter}: {setting} no es compatible; usa OffsetX, OffsetY, Scale, ScaleX, ScaleY o Slant.",
   "Glyph processing ({n} set)": { one: "Procesamiento de glifos ({n} ajuste)", other: "Procesamiento de glifos ({n} ajustes)" },
+  // SMO-29 · Variable font parameters
+  "Marks the axis value name at this instance's location as one apps may leave out, like Regular on the weight axis (Elidable STAT Axis Value Name).": "Marca el nombre del valor de eje en la posición de esta instancia como uno que las apps pueden omitir, como Regular en el eje de peso (Elidable STAT Axis Value Name).",
+  "Elidable {axis} name for {name}": "Nombre de {axis} elidible para {name}",
+  "The master this variable font uses as its default (Variable Font Origin). Apps show the default when no axis is set.": "El máster que esta fuente variable usa como predeterminado (Variable Font Origin). Las apps muestran el predeterminado cuando no se ajusta ningún eje.",
+  "Origin": "Origen",
+  "Origin of {name}": "Origen de {name}",
+  "Default master": "Máster predeterminado",
+  "Write a STAT table with the axis value names (Export STAT Table). Turn it off to leave the table out.": "Escribe una tabla STAT con los nombres de los valores de eje (Export STAT Table). Desactívalo para omitir la tabla.",
+  "Export STAT table for {name}": "Exportar tabla STAT para {name}",
+  "STAT table": "Tabla STAT",
+  "Variable Font Origin \"{name}\" isn't one of this variable font's masters; the default master stays.": "Variable Font Origin \"{name}\" no es uno de los másteres de esta fuente variable; se mantiene el máster predeterminado.",
+  "Variable Font Origin \"{name}\" sits outside the \"{axis}\" range of this variable font; the default master stays.": "Variable Font Origin \"{name}\" queda fuera del rango de \"{axis}\" de esta fuente variable; se mantiene el máster predeterminado.",
 };

@@ -480,6 +480,45 @@ pub fn reduce_for_variable(
 
 /// [`reduce_for_variable`], with the glyph processing warnings (SMO-28: patterns
 /// that match no glyph).
+/// "Variable Font Origin": moves each axis default to the named master's location,
+/// so that master becomes the variable font's default. A master that isn't in this
+/// variable font, or sits outside its axis ranges, leaves the defaults as they are
+/// with a warning.
+fn set_origin(font: &Font, axes: &mut [Axis], origin: &str, warnings: &mut Vec<String>) {
+    let Some(m) = font
+        .masters
+        .iter()
+        .find(|m| m.name == origin || m.id == origin)
+    else {
+        warnings.push(format!(
+            "Variable Font Origin \"{name}\" isn't one of this variable font's masters; the default master stays.",
+            name = origin
+        ));
+        return;
+    };
+    let mut defaults = Vec::with_capacity(axes.len());
+    for a in axes.iter() {
+        let design = m
+            .location
+            .get(&a.tag)
+            .copied()
+            .unwrap_or_else(|| design_bounds(a).1);
+        let user = design_to_user(a, design);
+        if user < a.min - 1e-6 || user > a.max + 1e-6 {
+            warnings.push(format!(
+                "Variable Font Origin \"{name}\" sits outside the \"{axis}\" range of this variable font; the default master stays.",
+                name = origin,
+                axis = a.name
+            ));
+            return;
+        }
+        defaults.push(user.clamp(a.min, a.max));
+    }
+    for (a, d) in axes.iter_mut().zip(defaults) {
+        a.default = d;
+    }
+}
+
 pub fn reduce_for_variable_with_warnings(
     font: &Font,
     setting: &crate::model::VariableFontSetting,
@@ -542,6 +581,10 @@ pub fn reduce_for_variable_with_warnings(
                 l.linked_value = None;
             }
         }
+    }
+    let mut warnings = warnings;
+    if let Some(origin) = setting.origin.as_deref().filter(|o| !o.trim().is_empty()) {
+        set_origin(&f, &mut narrowed, origin, &mut warnings);
     }
     if !setting.axes.is_empty() {
         let bounds: Vec<(String, (f64, f64, f64))> = narrowed
@@ -838,6 +881,8 @@ mod tests {
         let f = two_master_font();
         let setting =
             |min: Option<f64>, max: Option<f64>, glyphs: Vec<String>| VariableFontSetting {
+                origin: None,
+                export_stat: true,
                 processing: Default::default(),
                 feature_parameters: Vec::new(),
                 family_name: None,

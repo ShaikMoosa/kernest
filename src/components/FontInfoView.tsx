@@ -931,8 +931,26 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
               </label>
               {hasLabels(axesDraft) && (
                 <span className="k-caption muted axis-user" title={t("The style name apps show for this instance, from the axis value names.")}>
-                  {t("STAT name: {name}", { name: statStyleName(axesDraft, it) })}
+                  {t("STAT name: {name}", { name: statStyleName(axesDraft, it, instDraft) })}
                 </span>
+              )}
+              {hasLabels(axesDraft) && (
+                <fieldset className="fi-elidable" title={t("Marks the axis value name at this instance's location as one apps may leave out, like Regular on the weight axis (Elidable STAT Axis Value Name).")}>
+                  <legend className="k-caption muted">{t("Elidable")}</legend>
+                  {axesDraft.filter((a) => (a.labels?.length ?? 0) > 0).map((a) => {
+                    const on = (it.names?.elidableStatAxes ?? []).includes(a.tag);
+                    return (
+                      <label key={a.tag} className="check-row">
+                        <input type="checkbox" checked={on} aria-label={t("Elidable {axis} name for {name}", { axis: a.name, name: it.name })} onChange={(e) => {
+                          const rest = (it.names?.elidableStatAxes ?? []).filter((x) => x !== a.tag);
+                          const list = e.target.checked ? [...rest, a.tag] : rest;
+                          patch({ names: { ...it.names, elidableStatAxes: list.length ? list : undefined } });
+                        }} />
+                        <span className="k-caption">{a.name}</span>
+                      </label>
+                    );
+                  })}
+                </fieldset>
               )}
               {locFields(it.location, (loc) => patch({ location: loc }), it.name)}
               <label className="info-field" title={t("OS/2 weight class, 100 (Thin) to 900 (Black). Empty picks it from the weight axis.")}><span className="k-caption muted">{t("Weight class")}</span>
@@ -1030,6 +1048,19 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                   }} />
                 </label>
                 <NameRecordsField records={vf.nameRecords} label={t("Name table entries for {name}", { name: vf.name })} onChange={(nameRecords) => patch({ nameRecords: nameRecords.length ? nameRecords : undefined })} />
+                {info.masters.length > 1 && (
+                  <label className="info-field" title={t("The master this variable font uses as its default (Variable Font Origin). Apps show the default when no axis is set.")}><span className="k-caption muted">{t("Origin")}</span>
+                    <select className="select" value={vf.origin ?? ""} aria-label={t("Origin of {name}", { name: vf.name })} onChange={(e) => patch({ origin: e.target.value === "" ? undefined : e.target.value })}>
+                      <option value="">{t("Default master")}</option>
+                      {info.masters.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+                    </select>
+                  </label>
+                )}
+                <label className="check-row fi-export" title={t("Write a STAT table with the axis value names (Export STAT Table). Turn it off to leave the table out.")}>
+                  <input type="checkbox" checked={vf.exportStat !== false} aria-label={t("Export STAT table for {name}", { name: vf.name })}
+                    onChange={(e) => patch({ exportStat: e.target.checked ? undefined : false })} />
+                  <span className="k-caption">{t("STAT table")}</span>
+                </label>
                 <span className="spacer" />
                 <button className="icon-btn" aria-label={t("Remove {name}", { name: vf.name })} title={t("Remove variable font")} onClick={() => setVariableFonts(curVf().filter((_, j) => j !== i))}><CloseIcon size={14} /></button>
               </div>
