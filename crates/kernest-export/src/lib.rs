@@ -2943,6 +2943,38 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn fraction_ligature_and_figure_features_compile_into_gsub() {
+        // SMO-21: frac, numr, dnom, dlig, zero, pnum and friends from glyph names.
+        let mut f = Font::new("Feat", [0x30, 0x31, 0x32, 0x2F, 0x2044, 0x66, 0x69]);
+        let mid = f.masters[0].id.clone();
+        for n in [
+            "one.numr",
+            "one.dnom",
+            "two.numr",
+            "two.dnom",
+            "f_f_i.dlig",
+            "zero.zero",
+            "one.tf",
+            "one.osf",
+            "one.tosf",
+        ] {
+            let mut g = kernest_core::Glyph::new(n, vec![]);
+            g.layers.push(Layer::new(&mid, 600.0));
+            f.glyphs.push(g);
+        }
+        f.feature_settings.automatic = kernest_core::features::available(&f);
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let tags = gsub_tags(&std::fs::read(&r.files[0].path).unwrap());
+        for t in [
+            "frac", "numr", "dnom", "dlig", "zero", "pnum", "tnum", "onum", "lnum",
+        ] {
+            assert!(tags.contains(&t.to_string()), "{t} in {tags:?}");
+        }
+    }
+
+    #[test]
     fn hand_written_and_generated_features_compile_together() {
         let mut f = feature_font();
         f.feature_settings.automatic = kernest_core::features::available(&f);
