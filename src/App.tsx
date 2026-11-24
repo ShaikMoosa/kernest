@@ -5,7 +5,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { emit, listen } from "@tauri-apps/api/event";
 import { PREVIEW_EVENTS, type PreviewSource } from "./lib/previewEvents";
 import { defaultPreviewText } from "./lib/previewPane";
-import { backend, errorMessage, initialSettings, isTauri, type Appearance, type Milestone, type Onboarding, type UpdateInfo, type BatchOperation, type ClipGlyph, type CompareView, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PasteMode, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement } from "./lib/backend";
+import { backend, errorMessage, initialSettings, isTauri, type Appearance, type Milestone, type Onboarding, type UpdateInfo, type BatchOperation, type ClipGlyph, type CompareView, type DocStatus, type FeatureImportPreview, type FilterName, type FilterParams, type FontView, type GlyphSetInfo, type KeepSide, type MetricsSourceInfo, type OutputLine, type PasteMode, type PluginInfo, type ScriptEntry, type Settings, type SvgPlacement, type UndoStep } from "./lib/backend";
 import { classifyPath, forgetRecent, kernestRoot, HANDBOOK_URL, REPO_URL, loadRecents, openExternal, pickCompareSource, pickFeaFile, pickFontToOpen, pickGlyphsSavePath, pickMetricsSource, pickSavePath, pickScript, pickSourceToImport, pickSvgFiles, rememberRecent, showStartAtLaunch, type RecentFont } from "./lib/desktop";
 import { TitleBar, type Menu, type MenuItem } from "./components/TitleBar";
 import { SHORTCUT_ACTIONS, effectiveShortcut, matchShortcut, parseShortcut } from "./lib/shortcuts";
@@ -45,6 +45,15 @@ import { copyGlyphsToClipboard } from "./lib/glyphClipboard";
 import { formatGlyphNames, NAME_FORMATS, type NameFormat } from "./lib/glyphNames";
 
 const CLEAN: DocStatus = { dirty: false, canUndo: false, canRedo: false };
+
+/** "Undo Edit Outlines in “a”", "Undo Change Metrics in 5 glyphs", or plain "Undo". */
+function undoLabel(redo: boolean, step: UndoStep | null | undefined): string {
+  if (!step) return redo ? t("Redo") : t("Undo");
+  const action = t(step.action);
+  if (step.glyph) return redo ? t("Redo {action} in “{name}”", { action, name: step.glyph }) : t("Undo {action} in “{name}”", { action, name: step.glyph });
+  if (step.glyphs > 1) return redo ? tn(step.glyphs, "Redo {action} in {n} glyph", "Redo {action} in {n} glyphs", { action }) : tn(step.glyphs, "Undo {action} in {n} glyph", "Undo {action} in {n} glyphs", { action });
+  return redo ? t("Redo {action}", { action }) : t("Undo {action}", { action });
+}
 
 const REPORTERS_KEY = "kernest.reporters";
 const loadReporters = (): string[] => {
@@ -962,6 +971,13 @@ export default function App() {
     }
   }, [font, active, show, fail, refreshAll]);
 
+  // Undo history in use (SMO-83): the glyph's own in its Edit View tab, the font's elsewhere.
+  const undoGlyph = font && active?.startsWith("g:") ? active.slice(2) : null;
+  useEffect(() => {
+    if (!font) return;
+    backend.setUndoContext(undoGlyph).then(setStatus, () => {});
+  }, [font, undoGlyph]);
+
   const openInfo = useCallback(() => openTab("info"), [openTab]);
 
   const inGlyph = font !== null && active !== null && active.startsWith("g:");
@@ -1164,8 +1180,8 @@ export default function App() {
     {
       label: t("Edit"),
       items: [
-        { label: t("Undo"), shortcut: shortcutText("undo"), onSelect: status.canUndo ? () => undoRedo(false) : undefined },
-        { label: t("Redo"), shortcut: shortcutText("redo"), onSelect: status.canRedo ? () => undoRedo(true) : undefined },
+        { label: undoLabel(false, status.undo), shortcut: shortcutText("undo"), onSelect: status.canUndo ? () => undoRedo(false) : undefined },
+        { label: undoLabel(true, status.redo), shortcut: shortcutText("redo"), onSelect: status.canRedo ? () => undoRedo(true) : undefined },
         { label: t("Cut"), shortcut: "Ctrl+X", onSelect: inGlyph ? () => sendEditCommand("cut") : undefined, separatorBefore: true },
         { label: t("Copy"), shortcut: "Ctrl+C", onSelect: inGlyph ? () => sendEditCommand("copy") : undefined },
         { label: t("Paste"), shortcut: "Ctrl+V", onSelect: inGlyph ? () => sendEditCommand("paste") : undefined },

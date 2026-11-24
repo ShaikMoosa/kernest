@@ -54,6 +54,7 @@ fn main() {
             commands::set_metric,
             commands::set_glyph_hints,
             preview::pixel_preview,
+            commands::set_undo_context,
             commands::undo,
             commands::redo,
             spacing::text_layout,

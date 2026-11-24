@@ -5,6 +5,8 @@
 
 use crate::error::{Error, Result};
 use crate::geometry::bounds;
+use std::collections::HashMap;
+
 use crate::model::{Font, KernPair, Layer, Shape};
 
 /// Moves everything in a layer horizontally (outlines, components, anchors).
@@ -169,22 +171,315 @@ pub enum Affected {
     Font,
 }
 
-/// Undo/redo stacks for a document.
-#[derive(Debug, Default)]
-pub struct History {
-    undo: Vec<Change>,
-    redo: Vec<Change>,
+/// Which undo history Undo and Redo use (SMO-83): a glyph's own, in that glyph's
+/// Edit View tab, or the font's, in Font View, Font Info and text tabs.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Scope {
+    #[default]
+    Font,
+    Glyph(String),
 }
 
-/// Maximum undo steps kept per document.
+/// One undo step: the changes one action made, and what to call it in the Edit menu.
+#[derive(Debug, Clone)]
+struct Step {
+    changes: Vec<Change>,
+    action: &'static str,
+}
+
+impl Step {
+    /// The distinct glyphs whose layers the step changed.
+    fn glyphs(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = Vec::new();
+        for c in &self.changes {
+            if let Change::Layer { glyph, .. } = c {
+                if !out.contains(&glyph.as_str()) {
+                    out.push(glyph);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// What the next Undo or Redo would do, for the Edit menu: an action such as
+/// "Edit Outlines", the glyph it's in (glyph scope) and how many glyphs a font-level
+/// group covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepInfo {
+    pub action: &'static str,
+    pub glyph: Option<String>,
+    pub glyphs: usize,
+}
+
+/// Undo/redo for a document (SMO-83). Each glyph keeps its own history of layer
+/// edits; font-level edits (Font Info, kerning, features, glyph set) have the font's.
+/// Layer edits made while the font-level history is in use (Font View actions,
+/// filters, text tabs), or that touch several glyphs at once, are also kept as one
+/// font-level group, so Font View can undo all of them in one step.
+#[derive(Debug, Default)]
+pub struct History {
+    context: Scope,
+    font_undo: Vec<Step>,
+    font_redo: Vec<Step>,
+    glyph_undo: HashMap<String, Vec<Step>>,
+    glyph_redo: HashMap<String, Vec<Step>>,
+}
+
+/// Maximum undo steps kept in the font's history.
 const MAX_UNDO: usize = 500;
+/// Maximum undo steps kept per glyph; the oldest go first.
+const MAX_GLYPH_UNDO: usize = 200;
+
+fn push_capped(stack: &mut Vec<Step>, step: Step, max: usize) {
+    stack.push(step);
+    if stack.len() > max {
+        stack.remove(0);
+    }
+}
+
+/// What a layer edit changed, for the Edit menu.
+fn layer_action(before: &Layer, after: &Layer) -> &'static str {
+    if before.shapes != after.shapes || before.parts != after.parts {
+        "Edit Outlines"
+    } else if before.anchors != after.anchors {
+        "Edit Anchors"
+    } else if before.width != after.width
+        || before.vert_width != after.vert_width
+        || before.vert_origin != after.vert_origin
+        || before.metrics_keys != after.metrics_keys
+    {
+        "Change Metrics"
+    } else if before.hints != after.hints {
+        "Edit Hints"
+    } else if before.guides != after.guides {
+        "Edit Guides"
+    } else if before.background != after.background {
+        "Edit Background"
+    } else {
+        "Edit Layer"
+    }
+}
+
+/// What a font-level edit changed, for the Edit menu.
+fn font_action(before: &Font, after: &Font) -> &'static str {
+    let names = |f: &Font| f.glyphs.iter().map(|g| g.name.clone()).collect::<Vec<_>>();
+    let (b, a) = (names(before), names(after));
+    if a.len() > b.len() {
+        "Add Glyphs"
+    } else if a.len() < b.len() {
+        "Remove Glyphs"
+    } else if b != a {
+        let mut bs = b.clone();
+        let mut as_ = a.clone();
+        bs.sort();
+        as_.sort();
+        if bs == as_ {
+            "Reorder Glyphs"
+        } else {
+            "Rename Glyphs"
+        }
+    } else if before.info != after.info {
+        "Font Info"
+    } else if before.axes != after.axes {
+        "Axes"
+    } else if before.masters != after.masters {
+        "Masters"
+    } else if before.instances != after.instances || before.variable_fonts != after.variable_fonts {
+        "Exports"
+    } else if before.features != after.features || before.feature_settings != after.feature_settings
+    {
+        "Features"
+    } else if before.kerning != after.kerning {
+        "Kerning"
+    } else if before.glyphs != after.glyphs {
+        "Glyph Info"
+    } else {
+        "Font Change"
+    }
+}
+
+/// The layer changes between two fonts that differ only in glyph layers (same
+/// glyphs, same layer keys, nothing else changed). `None` when anything else
+/// differs. The fonts are compared in place, without copying them.
+fn layer_only_changes(cur: &mut Font, after: &mut Font) -> Option<Vec<Change>> {
+    if cur.glyphs.len() != after.glyphs.len() {
+        return None;
+    }
+    let cg = std::mem::take(&mut cur.glyphs);
+    let ag = std::mem::take(&mut after.glyphs);
+    let rest_same = *cur == *after;
+    cur.glyphs = cg;
+    after.glyphs = ag;
+    if !rest_same {
+        return None;
+    }
+    let mut out = Vec::new();
+    for (c, a) in cur.glyphs.iter_mut().zip(after.glyphs.iter_mut()) {
+        if c.layers.len() != a.layers.len()
+            || c.layers
+                .iter()
+                .zip(&a.layers)
+                .any(|(x, y)| x.key() != y.key())
+        {
+            return None;
+        }
+        let cl = std::mem::take(&mut c.layers);
+        let al = std::mem::take(&mut a.layers);
+        let meta_same = *c == *a;
+        c.layers = cl;
+        a.layers = al;
+        if !meta_same {
+            return None;
+        }
+        for (x, y) in c.layers.iter().zip(&a.layers) {
+            if x != y {
+                out.push(Change::Layer {
+                    glyph: c.name.clone(),
+                    master_id: x.key().to_string(),
+                    before: Box::new(x.clone()),
+                    after: Box::new(y.clone()),
+                });
+            }
+        }
+    }
+    Some(out)
+}
 
 impl History {
+    /// Picks the history Undo and Redo use: `Scope::Glyph` in a glyph's Edit View
+    /// tab, `Scope::Font` everywhere else.
+    pub fn set_context(&mut self, scope: Scope) {
+        self.context = scope;
+    }
+
+    pub fn context(&self) -> &Scope {
+        &self.context
+    }
+
+    fn undo_stack(&self) -> Option<&Vec<Step>> {
+        match &self.context {
+            Scope::Font => Some(&self.font_undo),
+            Scope::Glyph(g) => self.glyph_undo.get(g),
+        }
+    }
+
+    fn redo_stack(&self) -> Option<&Vec<Step>> {
+        match &self.context {
+            Scope::Font => Some(&self.font_redo),
+            Scope::Glyph(g) => self.glyph_redo.get(g),
+        }
+    }
+
     pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
+        self.undo_stack().is_some_and(|s| !s.is_empty())
     }
     pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
+        self.redo_stack().is_some_and(|s| !s.is_empty())
+    }
+
+    fn info(&self, step: Option<&Step>) -> Option<StepInfo> {
+        let step = step?;
+        let glyphs = step.glyphs();
+        Some(StepInfo {
+            action: step.action,
+            glyph: match &self.context {
+                Scope::Glyph(g) => Some(g.clone()),
+                Scope::Font if glyphs.len() == 1 => Some(glyphs[0].to_string()),
+                Scope::Font => None,
+            },
+            glyphs: glyphs.len(),
+        })
+    }
+
+    /// What Undo would do now, for the Edit menu.
+    pub fn undo_info(&self) -> Option<StepInfo> {
+        self.info(self.undo_stack().and_then(|s| s.last()))
+    }
+
+    /// What Redo would do now, for the Edit menu.
+    pub fn redo_info(&self) -> Option<StepInfo> {
+        self.info(self.redo_stack().and_then(|s| s.last()))
+    }
+
+    /// Records layer changes from one action: each glyph's part goes on its own
+    /// history; the whole also goes on the font's history when the font's history is
+    /// in use or the action touched more than one glyph.
+    fn record_layers(&mut self, changes: Vec<Change>) {
+        let Some(Change::Layer { before, after, .. }) = changes.first() else {
+            return;
+        };
+        let action = layer_action(before, after);
+        let mut by_glyph: Vec<(String, Vec<Change>)> = Vec::new();
+        for c in &changes {
+            if let Change::Layer { glyph, .. } = c {
+                match by_glyph.iter_mut().find(|(g, _)| g == glyph) {
+                    Some((_, list)) => list.push(c.clone()),
+                    None => by_glyph.push((glyph.clone(), vec![c.clone()])),
+                }
+            }
+        }
+        let many = by_glyph.len() > 1;
+        for (glyph, list) in by_glyph {
+            self.glyph_redo.remove(&glyph);
+            push_capped(
+                self.glyph_undo.entry(glyph).or_default(),
+                Step {
+                    changes: list,
+                    action,
+                },
+                MAX_GLYPH_UNDO,
+            );
+        }
+        if many || self.context == Scope::Font {
+            self.font_redo.clear();
+            push_capped(&mut self.font_undo, Step { changes, action }, MAX_UNDO);
+        }
+    }
+
+    /// Records a font-level change.
+    fn record_font(&mut self, change: Change, action: &'static str) {
+        self.font_redo.clear();
+        push_capped(
+            &mut self.font_undo,
+            Step {
+                changes: vec![change],
+                action,
+            },
+            MAX_UNDO,
+        );
+    }
+
+    /// Moves glyphs' histories to their new names after a rename.
+    pub fn rename_glyphs(&mut self, renames: &std::collections::BTreeMap<String, String>) {
+        let rename_steps = |steps: &mut Vec<Step>| {
+            for s in steps {
+                for c in &mut s.changes {
+                    if let Change::Layer { glyph, .. } | Change::Groups { glyph, .. } = c {
+                        if let Some(new) = renames.get(glyph.as_str()) {
+                            *glyph = new.clone();
+                        }
+                    }
+                }
+            }
+        };
+        for map in [&mut self.glyph_undo, &mut self.glyph_redo] {
+            let moved: Vec<(String, Vec<Step>)> = renames
+                .iter()
+                .filter_map(|(old, new)| map.remove(old).map(|s| (new.clone(), s)))
+                .collect();
+            for (new, steps) in moved {
+                map.insert(new, steps);
+            }
+            map.values_mut().for_each(rename_steps);
+        }
+        rename_steps(&mut self.font_undo);
+        rename_steps(&mut self.font_redo);
+        if let Scope::Glyph(g) = &mut self.context {
+            if let Some(new) = renames.get(g.as_str()) {
+                *g = new.clone();
+            }
+        }
     }
 
     /// Replaces a layer and records the change. No-op edits are not recorded.
@@ -213,12 +508,12 @@ impl History {
             return Ok(false);
         }
         let before = std::mem::replace(slot, after.clone());
-        self.record(Change::Layer {
+        self.record_layers(vec![Change::Layer {
             glyph: glyph.into(),
             master_id: master_id.into(),
             before: Box::new(before),
             after: Box::new(after),
-        });
+        }]);
         Ok(true)
     }
 
@@ -240,11 +535,14 @@ impl History {
         if font.kerning.get(master_id).is_some_and(Vec::is_empty) {
             font.kerning.remove(master_id);
         }
-        self.record(Change::Kerning {
-            master_id: master_id.into(),
-            before,
-            after,
-        });
+        self.record_font(
+            Change::Kerning {
+                master_id: master_id.into(),
+                before,
+                after,
+            },
+            "Kerning",
+        );
         Ok(true)
     }
 
@@ -271,22 +569,50 @@ impl History {
         }
         g.left_group = after.0.clone();
         g.right_group = after.1.clone();
-        self.record(Change::Groups {
-            glyph: glyph.into(),
-            before,
-            after,
-        });
+        self.record_font(
+            Change::Groups {
+                glyph: glyph.into(),
+                before,
+                after,
+            },
+            "Kerning Groups",
+        );
         Ok(true)
     }
 
-    fn record(&mut self, c: Change) {
-        self.undo.push(c);
-        if self.undo.len() > MAX_UNDO {
-            self.undo.remove(0);
+    /// Replaces the whole font and records the change. When only glyph layers
+    /// changed, the change is recorded per glyph (see [`History`]); otherwise it's
+    /// a font-level step, and the histories of glyphs that are gone are dropped.
+    pub fn apply_font(&mut self, font: &mut Font, after: Font) -> Result<bool> {
+        after.validate()?;
+        if *font == after {
+            return Ok(false);
         }
-        self.redo.clear();
+        let mut after = after;
+        if let Some(changes) = layer_only_changes(font, &mut after) {
+            *font = after;
+            self.record_layers(changes);
+            return Ok(true);
+        }
+        let action = font_action(font, &after);
+        let before = std::mem::replace(font, after.clone());
+        let kept: std::collections::HashSet<&str> =
+            font.glyphs.iter().map(|g| g.name.as_str()).collect();
+        self.glyph_undo.retain(|g, _| kept.contains(g.as_str()));
+        self.glyph_redo.retain(|g, _| kept.contains(g.as_str()));
+        self.record_font(
+            Change::Font {
+                before: Box::new(before),
+                after: Box::new(after),
+            },
+            action,
+        );
+        Ok(true)
     }
 
+    /// Puts one change back (`forward` false) or forward again. A layer is only
+    /// touched while it's still as the change left it, so a step can't overwrite a
+    /// later edit; a whole-font step keeps the layers edited since.
     fn restore(font: &mut Font, c: &Change, forward: bool) -> Option<Affected> {
         match c {
             Change::Layer {
@@ -295,8 +621,16 @@ impl History {
                 before,
                 after,
             } => {
+                let (from, to) = if forward {
+                    (before, after)
+                } else {
+                    (after, before)
+                };
                 let slot = font.glyph_mut(glyph)?.layer_mut(master_id)?;
-                *slot = (**if forward { after } else { before }).clone();
+                if *slot != **from {
+                    return None;
+                }
+                *slot = (**to).clone();
                 Some(Affected::Layer {
                     glyph: glyph.clone(),
                     master_id: master_id.clone(),
@@ -331,41 +665,119 @@ impl History {
                 })
             }
             Change::Font { before, after } => {
-                *font = (**if forward { after } else { before }).clone();
+                let (from, to) = if forward {
+                    (before, after)
+                } else {
+                    (after, before)
+                };
+                let mut target = (**to).clone();
+                // Layers edited since this step (in their own glyph's history) stay.
+                for g in &mut target.glyphs {
+                    let (Some(cur), Some(old)) = (font.glyph(&g.name), from.glyph(&g.name)) else {
+                        continue;
+                    };
+                    for l in &mut g.layers {
+                        let key = l.key().to_string();
+                        if let Some(now) = cur.layer(&key) {
+                            if old.layer(&key) != Some(now) {
+                                *l = now.clone();
+                            }
+                        }
+                    }
+                }
+                *font = target;
                 Some(Affected::Font)
             }
         }
     }
 
-    /// Replaces the whole font (structural edits: axes, masters, instances, info)
-    /// and records the change.
-    pub fn apply_font(&mut self, font: &mut Font, after: Font) -> Result<bool> {
-        after.validate()?;
-        if *font == after {
-            return Ok(false);
+    /// Undoes or redoes one step of the history in use; returns what it touched.
+    fn step(&mut self, font: &mut Font, forward: bool) -> Option<Affected> {
+        match self.context.clone() {
+            Scope::Font => {
+                let mut undo = std::mem::take(&mut self.font_undo);
+                let mut redo = std::mem::take(&mut self.font_redo);
+                let hit = if forward {
+                    Self::run(font, &mut redo, &mut undo, true, false)
+                } else {
+                    Self::run(font, &mut undo, &mut redo, false, false)
+                };
+                self.font_undo = undo;
+                self.font_redo = redo;
+                hit
+            }
+            Scope::Glyph(g) => {
+                let mut undo = self.glyph_undo.remove(&g).unwrap_or_default();
+                let mut redo = self.glyph_redo.remove(&g).unwrap_or_default();
+                let hit = if forward {
+                    Self::run(font, &mut redo, &mut undo, true, true)
+                } else {
+                    Self::run(font, &mut undo, &mut redo, false, true)
+                };
+                if !undo.is_empty() {
+                    self.glyph_undo.insert(g.clone(), undo);
+                }
+                if !redo.is_empty() {
+                    self.glyph_redo.insert(g, redo);
+                }
+                hit
+            }
         }
-        let before = std::mem::replace(font, after.clone());
-        self.record(Change::Font {
-            before: Box::new(before),
-            after: Box::new(after),
-        });
-        Ok(true)
     }
 
-    /// Undoes the last change; returns what it touched.
+    /// Moves the top step of `from` to `to`, restoring it. With `skip_spent`, a step
+    /// with nothing left to restore (already put back from the font's history) is
+    /// dropped and the next one is tried.
+    fn run(
+        font: &mut Font,
+        from: &mut Vec<Step>,
+        to: &mut Vec<Step>,
+        forward: bool,
+        skip_spent: bool,
+    ) -> Option<Affected> {
+        loop {
+            let s = from.pop()?;
+            let hits: Vec<Affected> = if forward {
+                s.changes
+                    .iter()
+                    .filter_map(|c| Self::restore(font, c, true))
+                    .collect()
+            } else {
+                s.changes
+                    .iter()
+                    .rev()
+                    .filter_map(|c| Self::restore(font, c, false))
+                    .collect()
+            };
+            if hits.is_empty() && skip_spent {
+                continue;
+            }
+            to.push(s);
+            return Some(match hits.as_slice() {
+                [one] => one.clone(),
+                [Affected::Layer { glyph, master_id }, rest @ ..]
+                    if rest
+                        .iter()
+                        .all(|h| matches!(h, Affected::Layer { glyph: g, .. } if g == glyph)) =>
+                {
+                    Affected::Layer {
+                        glyph: glyph.clone(),
+                        master_id: master_id.clone(),
+                    }
+                }
+                _ => Affected::Font,
+            });
+        }
+    }
+
+    /// Undoes the last change of the history in use; returns what it touched.
     pub fn undo(&mut self, font: &mut Font) -> Option<Affected> {
-        let c = self.undo.pop()?;
-        let hit = Self::restore(font, &c, false);
-        self.redo.push(c);
-        hit
+        self.step(font, false)
     }
 
-    /// Redoes the last undone change; returns what it touched.
+    /// Redoes the last undone change of the history in use; returns what it touched.
     pub fn redo(&mut self, font: &mut Font) -> Option<Affected> {
-        let c = self.redo.pop()?;
-        let hit = Self::restore(font, &c, true);
-        self.undo.push(c);
-        hit
+        self.step(font, true)
     }
 }
 
@@ -545,5 +957,153 @@ mod font_history_tests {
         let mut broken = f.clone();
         broken.masters.clear();
         assert!(h.apply_font(&mut f, broken).is_err());
+    }
+}
+
+#[cfg(test)]
+mod glyph_history_tests {
+    //! SMO-83: per-glyph undo histories next to the font's.
+    use super::*;
+    use crate::sample::sample_font;
+
+    fn widen(f: &Font, g: &str, by: f64) -> Layer {
+        let mut l = f.glyph(g).unwrap().layer("m01").unwrap().clone();
+        l.width += by;
+        l
+    }
+
+    fn width(f: &Font, g: &str) -> f64 {
+        f.glyph(g).unwrap().layer("m01").unwrap().width
+    }
+
+    #[test]
+    fn each_glyph_undoes_its_own_edits() {
+        let mut f = sample_font();
+        let (a0, h0) = (width(&f, "A"), width(&f, "H"));
+        let mut h = History::default();
+        h.set_context(Scope::Glyph("A".into()));
+        let l = widen(&f, "A", 10.0);
+        h.apply(&mut f, "A", "m01", l).unwrap();
+        h.set_context(Scope::Glyph("H".into()));
+        let l = widen(&f, "H", 20.0);
+        h.apply(&mut f, "H", "m01", l).unwrap();
+        // Back in A: Undo reverts A and leaves H alone.
+        h.set_context(Scope::Glyph("A".into()));
+        assert_eq!(
+            h.undo_info(),
+            Some(StepInfo {
+                action: "Change Metrics",
+                glyph: Some("A".into()),
+                glyphs: 1
+            })
+        );
+        assert!(matches!(h.undo(&mut f), Some(Affected::Layer { ref glyph, .. }) if glyph == "A"));
+        assert_eq!((width(&f, "A"), width(&f, "H")), (a0, h0 + 20.0));
+        assert!(!h.can_undo());
+        assert!(h.can_redo());
+        h.redo(&mut f);
+        assert_eq!(width(&f, "A"), a0 + 10.0);
+        // Edits in a glyph tab stay off the font's history.
+        h.set_context(Scope::Font);
+        assert!(!h.can_undo());
+    }
+
+    #[test]
+    fn batch_edits_undo_per_glyph_or_all_at_once() {
+        let mut f = sample_font();
+        let original = f.clone();
+        let names = ["A", "H", "I", "O", "T"];
+        let mut h = History::default();
+        // A Font View action on five glyphs: one whole-font change.
+        let mut next = f.clone();
+        for n in names {
+            *next.glyph_mut(n).unwrap().layer_mut("m01").unwrap() = widen(&f, n, 5.0);
+        }
+        h.apply_font(&mut f, next).unwrap();
+        assert_eq!(
+            h.undo_info(),
+            Some(StepInfo {
+                action: "Change Metrics",
+                glyph: None,
+                glyphs: 5
+            })
+        );
+        // In I's tab only I reverts.
+        h.set_context(Scope::Glyph("I".into()));
+        h.undo(&mut f);
+        assert_eq!(width(&f, "I"), width(&original, "I"));
+        assert_eq!(width(&f, "A"), width(&original, "A") + 5.0);
+        // Font View undoes the rest in one step; I's own undo isn't repeated.
+        h.set_context(Scope::Font);
+        assert_eq!(h.undo(&mut f), Some(Affected::Font));
+        assert_eq!(f, original);
+        // Redo from Font View brings all five back, I included.
+        h.redo(&mut f);
+        for n in names {
+            assert_eq!(width(&f, n), width(&original, n) + 5.0, "{n}");
+        }
+        // After the group is undone again, H's own step has nothing left to undo.
+        h.undo(&mut f);
+        h.set_context(Scope::Glyph("H".into()));
+        assert_eq!(h.undo(&mut f), None);
+        assert_eq!(f, original);
+    }
+
+    #[test]
+    fn font_steps_keep_later_glyph_edits() {
+        let mut f = sample_font();
+        let mut h = History::default();
+        let next = crate::structure::set_info(&f, "Renamed", 1000, 2, 0).unwrap();
+        h.apply_font(&mut f, next).unwrap();
+        h.set_context(Scope::Glyph("H".into()));
+        let l = widen(&f, "H", 30.0);
+        h.apply(&mut f, "H", "m01", l).unwrap();
+        h.set_context(Scope::Font);
+        assert_eq!(h.undo_info().map(|i| i.action), Some("Font Info"));
+        h.undo(&mut f);
+        assert_ne!(f.info.family_name, "Renamed");
+        assert_eq!(width(&f, "H"), width(&sample_font(), "H") + 30.0);
+    }
+
+    #[test]
+    fn rename_moves_the_history_and_delete_drops_it() {
+        let mut f = sample_font();
+        let mut h = History::default();
+        h.set_context(Scope::Glyph("A".into()));
+        let l = widen(&f, "A", 10.0);
+        h.apply(&mut f, "A", "m01", l).unwrap();
+        let renames = std::collections::BTreeMap::from([("A".to_string(), "A.alt".to_string())]);
+        let (next, _) = crate::rename::rename_glyphs(&f, &renames).unwrap();
+        h.rename_glyphs(&renames);
+        h.apply_font(&mut f, next).unwrap();
+        assert_eq!(h.context(), &Scope::Glyph("A.alt".into()));
+        assert!(h.can_undo());
+        h.undo(&mut f);
+        assert_eq!(width(&f, "A.alt"), width(&sample_font(), "A"));
+        // Deleting the glyph drops its history.
+        h.redo(&mut f);
+        let mut next = f.clone();
+        next.glyphs.retain(|g| g.name != "A.alt");
+        h.set_context(Scope::Font);
+        h.apply_font(&mut f, next).unwrap();
+        h.set_context(Scope::Glyph("A.alt".into()));
+        assert!(!h.can_undo());
+    }
+
+    #[test]
+    fn glyph_histories_are_capped() {
+        let mut f = sample_font();
+        let mut h = History::default();
+        h.set_context(Scope::Glyph("H".into()));
+        for _ in 0..(MAX_GLYPH_UNDO + 20) {
+            let l = widen(&f, "H", 1.0);
+            h.apply(&mut f, "H", "m01", l).unwrap();
+        }
+        let mut n = 0;
+        while h.undo(&mut f).is_some() {
+            n += 1;
+        }
+        assert_eq!(n, MAX_GLYPH_UNDO);
+        assert_eq!(width(&f, "H"), width(&sample_font(), "H") + 20.0);
     }
 }

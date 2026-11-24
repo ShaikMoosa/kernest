@@ -542,10 +542,11 @@ mod tests {
                 original.glyph("H").unwrap().layer(m).unwrap()
             );
         }
-        assert_eq!(
+        // One step for every master of H; it reports H's layers (SMO-83).
+        assert!(matches!(
             doc.history.undo(&mut doc.font),
-            Some(kernest_core::edit::Affected::Font)
-        );
+            Some(kernest_core::edit::Affected::Layer { ref glyph, .. }) if glyph == "H"
+        ));
         assert_eq!(doc.font, original);
     }
 

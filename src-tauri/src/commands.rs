@@ -225,6 +225,28 @@ pub struct DocStatus {
     pub(crate) dirty: bool,
     pub(crate) can_undo: bool,
     pub(crate) can_redo: bool,
+    /// What Undo and Redo would do, for the Edit menu (SMO-83).
+    pub(crate) undo: Option<StepView>,
+    pub(crate) redo: Option<StepView>,
+}
+
+/// One undo step as the Edit menu names it: "Undo Edit Outlines in “a”".
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StepView {
+    action: &'static str,
+    glyph: Option<String>,
+    glyphs: usize,
+}
+
+impl From<kernest_core::edit::StepInfo> for StepView {
+    fn from(i: kernest_core::edit::StepInfo) -> Self {
+        Self {
+            action: i.action,
+            glyph: i.glyph,
+            glyphs: i.glyphs,
+        }
+    }
 }
 
 pub(crate) fn status(doc: &Document) -> DocStatus {
@@ -232,6 +254,8 @@ pub(crate) fn status(doc: &Document) -> DocStatus {
         dirty: doc.dirty(),
         can_undo: doc.history.can_undo(),
         can_redo: doc.history.can_redo(),
+        undo: doc.history.undo_info().map(StepView::from),
+        redo: doc.history.redo_info().map(StepView::from),
     }
 }
 
@@ -2310,6 +2334,19 @@ fn step(state: &AppState, redo: bool) -> CmdResult<Option<UndoResult>> {
     }))
 }
 
+/// Picks the undo history Undo and Redo use (SMO-83): a glyph's own while its
+/// Edit View tab is in front, the font's otherwise. Returns the new status.
+#[tauri::command]
+pub fn set_undo_context(state: State<AppState>, glyph: Option<String>) -> CmdResult<DocStatus> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    doc.history.set_context(match glyph {
+        Some(g) if doc.font.glyph(&g).is_some() => kernest_core::edit::Scope::Glyph(g),
+        _ => kernest_core::edit::Scope::Font,
+    });
+    Ok(status(doc))
+}
+
 #[tauri::command]
 pub fn undo(state: State<AppState>) -> CmdResult<Option<UndoResult>> {
     step(&state, false)
@@ -2323,6 +2360,33 @@ pub fn redo(state: State<AppState>) -> CmdResult<Option<UndoResult>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_names_the_step_of_the_history_in_use() {
+        // SMO-83: Edit View tabs use the glyph's own history; the status says what
+        // Undo would do there.
+        use kernest_core::edit::Scope;
+        let mut doc = Document::new(sample::sample_font(), None);
+        doc.history.set_context(Scope::Glyph("H".into()));
+        let mut l = doc.font.glyph("H").unwrap().layer("m01").unwrap().clone();
+        l.width += 10.0;
+        doc.history.apply(&mut doc.font, "H", "m01", l).unwrap();
+        let s = status(&doc);
+        assert!(s.can_undo);
+        assert_eq!(
+            s.undo,
+            Some(StepView {
+                action: "Change Metrics",
+                glyph: Some("H".into()),
+                glyphs: 1
+            })
+        );
+        doc.history.set_context(Scope::Glyph("A".into()));
+        let s = status(&doc);
+        assert!(!s.can_undo && s.undo.is_none());
+        doc.history.set_context(Scope::Font);
+        assert!(!status(&doc).can_undo);
+    }
 
     #[test]
     fn glyph_hints_replace_auto_stems_and_undo() {

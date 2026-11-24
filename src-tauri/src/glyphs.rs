@@ -511,6 +511,8 @@ pub fn rename_glyphs(
         ensure_glyph_unlocked(&doc.font, old)?;
     }
     let (next, changed) = rename::rename_glyphs(&doc.font, &renames)?;
+    // The glyphs' undo histories follow their new names (SMO-83).
+    doc.history.rename_glyphs(&renames);
     if doc
         .history
         .apply_font(&mut doc.font, next)
