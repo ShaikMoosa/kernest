@@ -8,6 +8,7 @@ import { ColorGlyph } from "./ColorGlyph";
 import { GlyphListView, type DragHandlers, type ListEdit } from "./GlyphListView";
 import { SmartFilterDialog } from "./SmartFilterDialog";
 import { BatchMenu } from "./BatchMenu";
+import { clickSelection, commandSelection } from "../lib/glyphSelection";
 
 const CATEGORY_ORDER = ["Uppercase", "Lowercase", "Letter", "Number", "Punctuation", "Symbol", "Separator", "Mark", "Other"];
 
@@ -219,9 +220,7 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
   useEffect(() => {
     const on = (e: Event) => {
       const cmd = (e as CustomEvent<string>).detail;
-      if (cmd === "select-all") setSelection(new Set(shown.map((g) => g.name)));
-      else if (cmd === "deselect-all") setSelection(new Set());
-      else if (cmd === "invert-selection") setSelection(new Set(shown.filter((g) => !selection.has(g.name)).map((g) => g.name)));
+      if (cmd === "select-all" || cmd === "deselect-all" || cmd === "invert-selection") setSelection(commandSelection(cmd, selection, shown.map((g) => g.name)));
       else if (cmd === "find") { searchRef.current?.focus(); searchRef.current?.select(); }
     };
     window.addEventListener("kernest:fontview", on);
@@ -276,21 +275,7 @@ export function FontViewScreen({ font, onOpenGlyph, onSelectionChange, onAddGlyp
   }
 
   function select(g: GlyphSummary, e: React.MouseEvent) {
-    setSelection((prev) => {
-      if (e.ctrlKey) {
-        const next = new Set(prev);
-        if (next.has(g.name)) next.delete(g.name);
-        else next.add(g.name);
-        return next;
-      }
-      if (e.shiftKey && prev.size > 0) {
-        const names = shown.map((x) => x.name);
-        const last = [...prev].pop()!;
-        const [a, b] = [names.indexOf(last), names.indexOf(g.name)].sort((x, y) => x - y);
-        if (a >= 0) return new Set([...prev, ...names.slice(a, b + 1)]);
-      }
-      return new Set([g.name]);
-    });
+    setSelection((prev) => clickSelection(prev, shown.map((x) => x.name), g.name, { ctrl: e.ctrlKey, shift: e.shiftKey }));
   }
 
   const fmt = (v: number | null) => (v === null ? "—" : String(Math.round(v)));

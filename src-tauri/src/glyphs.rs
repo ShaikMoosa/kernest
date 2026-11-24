@@ -149,8 +149,17 @@ pub fn set_glyph_export(
 ) -> CmdResult<DocStatus> {
     let mut guard = lock(&state)?;
     let doc = doc_mut(&mut guard)?;
+    set_glyph_export_in(doc, &names, export)?;
+    Ok(status(doc))
+}
+
+fn set_glyph_export_in(
+    doc: &mut crate::commands::Document,
+    names: &[String],
+    export: bool,
+) -> CmdResult<()> {
     let mut next = doc.font.clone();
-    for n in &names {
+    for n in names {
         next.glyph_mut(n)
             .ok_or_else(|| format!("There is no glyph named \"{n}\"."))?
             .export = export;
@@ -162,7 +171,7 @@ pub fn set_glyph_export(
     {
         doc.revision += 1;
     }
-    Ok(status(doc))
+    Ok(())
 }
 
 /// Sets a glyph's tags, as typed comma-separated in the info box or the list view.
@@ -530,6 +539,31 @@ pub fn rename_glyphs(
 mod tests {
     use super::*;
     use kernest_core::sample::sample_font;
+
+    /// Handbook 5.3.4 (Exports): the export switch over a large selection is one
+    /// undo step, and a bad name changes nothing.
+    #[test]
+    fn export_switch_over_a_large_selection_is_one_step() {
+        let mut doc = crate::commands::Document::new(sample_font(), None);
+        let original = doc.font.clone();
+        let all: Vec<String> = doc.font.glyphs.iter().map(|g| g.name.clone()).collect();
+        assert!(all.len() > 50);
+        set_glyph_export_in(&mut doc, &all, false).unwrap();
+        assert!(doc.font.glyphs.iter().all(|g| !g.export));
+        assert!(doc.history.can_undo());
+        // Switching it again to the same value records nothing.
+        let rev = doc.revision;
+        set_glyph_export_in(&mut doc, &all, false).unwrap();
+        assert_eq!(doc.revision, rev);
+        doc.history.undo(&mut doc.font);
+        assert_eq!(doc.font, original);
+        assert!(!doc.history.can_undo());
+
+        let bad = vec!["H".to_string(), "nope".to_string()];
+        let err = set_glyph_export_in(&mut doc, &bad, false).unwrap_err();
+        assert_eq!(err, "There is no glyph named \"nope\".");
+        assert_eq!(doc.font, original);
+    }
 
     #[test]
     fn tags_are_trimmed_deduped_and_clearable() {

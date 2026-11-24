@@ -2754,6 +2754,55 @@ mod path_edit_tests {
         assert_eq!(doc.font, original);
     }
 
+    /// Handbook 5.5.4 (Filters): a filter over every drawn glyph, non-exporting ones
+    /// included, is one Font View step; in a glyph's tab Undo takes back only its part.
+    #[test]
+    fn filter_over_a_large_selection_undoes_per_glyph_and_as_one_step() {
+        let mut font = sample::sample_font();
+        font.glyph_mut("I").unwrap().export = false;
+        let mut doc = Document::new(font, None);
+        let original = doc.font.clone();
+        let drawn: Vec<String> = doc
+            .font
+            .glyphs
+            .iter()
+            .filter(|g| g.layer("m01").is_some_and(|l| !l.shapes.is_empty()))
+            .map(|g| g.name.clone())
+            .collect();
+        let params = FilterParams {
+            radius: 20.0,
+            ..Default::default()
+        };
+        let r = run_filter_in(
+            &mut doc,
+            "H",
+            "m01",
+            &drawn,
+            "round-corners",
+            &params,
+            false,
+        )
+        .unwrap();
+        assert!(r.changed.len() > 3, "{:?}", r.changed);
+        assert!(r.changed.contains(&"I".to_string()));
+        assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+
+        // In I's tab, Undo puts back I alone.
+        doc.history
+            .set_context(kernest_core::edit::Scope::Glyph("I".into()));
+        let info = doc.history.undo_info().unwrap();
+        assert_eq!(info.glyph.as_deref(), Some("I"));
+        doc.history.undo(&mut doc.font);
+        assert_eq!(doc.font.glyph("I"), original.glyph("I"));
+        assert_ne!(doc.font.glyph("H"), original.glyph("H"));
+
+        // In Font View, one Undo takes back the rest.
+        doc.history.set_context(kernest_core::edit::Scope::Font);
+        assert_eq!(doc.history.undo_info().unwrap().glyphs, r.changed.len());
+        doc.history.undo(&mut doc.font);
+        assert_eq!(doc.font, original);
+    }
+
     #[test]
     fn round_corners_filter_over_glyphs_with_locked_skip() {
         let mut doc = Document::new(sample::sample_font(), None);
