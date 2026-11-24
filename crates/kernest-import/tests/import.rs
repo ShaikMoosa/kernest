@@ -587,6 +587,8 @@ fn glyphs_hinting_parameters_round_trip() {
         },
     ];
     src.instances[0].autohint = false;
+    // SMO-31: the legacy kern table switch travels the same way.
+    src.info.export_kern_table = true;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("Hinting.glyphs");
     kernest_import::write_glyphs(&src, &path).unwrap();
@@ -598,6 +600,14 @@ fn glyphs_hinting_parameters_round_trip() {
     assert_eq!(f.info.ps_hinting, src.info.ps_hinting);
     assert_eq!(f.info.gasp, src.info.gasp);
     assert!(!f.instances[0].autohint);
+    assert!(f.info.export_kern_table);
+    assert!(
+        text.contains(
+            "name = \"Export kern Table\";
+value = 1;"
+        ),
+        "{text}"
+    );
     // They're Kernest settings now, not kept custom parameters.
     assert!(
         !f.info
@@ -1773,6 +1783,7 @@ fn ufo_hinting_round_trip() {
 /// Exports the font as one static file in the given format ("ttf", "otf", "woff2").
 fn export_static(src: &Font, dir: &Path, fmt: &str) -> std::path::PathBuf {
     let opts = kernest_export::ExportOptions {
+        woff: false,
         variable: false,
         statics: true,
         ttf: fmt == "ttf",
@@ -1871,6 +1882,7 @@ fn compiled_variable_avar_round_trip() {
     src.axes[0].map = vec![(400.0, 400.0), (550.0, 600.0), (700.0, 900.0)];
     let dir = tempfile::tempdir().unwrap();
     let opts = kernest_export::ExportOptions {
+        woff: false,
         variable: true,
         statics: false,
         ttf: true,
@@ -2058,6 +2070,7 @@ fn compiled_variable_stat_round_trip() {
     ];
     let dir = tempfile::tempdir().unwrap();
     let opts = kernest_export::ExportOptions {
+        woff: false,
         variable: true,
         statics: false,
         ttf: true,

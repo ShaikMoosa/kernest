@@ -75,6 +75,7 @@ fn main() {
             fontinfo::set_master_guides,
             fontinfo::set_vertical_metrics,
             fontinfo::set_use_typo_metrics,
+            fontinfo::set_export_kern_table,
             fontinfo::set_custom_parameters,
             fontinfo::set_virtual_masters,
             fontinfo::set_numbers,

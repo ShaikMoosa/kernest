@@ -292,6 +292,13 @@ pub fn set_use_typo_metrics(font: &Font, on: bool) -> R<Font> {
     Ok(f)
 }
 
+/// Turns the legacy kern table ("Export kern Table") on or off.
+pub fn set_export_kern_table(font: &Font, on: bool) -> R<Font> {
+    let mut f = font.clone();
+    f.info.export_kern_table = on;
+    Ok(f)
+}
+
 /// Moves one guide between a layer's local list and its master's global list,
 /// keeping its position, angle, name and lock. Appended to the target list.
 pub fn move_guide(font: &Font, glyph: &str, key: &str, index: usize, to_global: bool) -> R<Font> {

@@ -1359,6 +1359,12 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
               </details>
             );
           })()}
+          <h3 className="k-label fi-sub">{t("Tables")}</h3>
+          <label className="check-row" title={t("Adds a legacy kern table with the kerning as glyph pairs to static fonts, for apps that don't read GPOS kerning (Export kern Table). Variable fonts never get one.")}>
+            <input type="checkbox" checked={info.exportKernTable} onChange={(e) => apply(() => backend.setExportKernTable(e.target.checked))} />
+            <span className="k-body">{t("Export kern table")}</span>
+            <span className="k-caption muted">{t("for older apps; static fonts only")}</span>
+          </label>
           <h3 className="k-label fi-sub">{t("gasp table")}</h3>
           <p className="k-caption muted">{t("How TrueType exports are rendered at each size range (gasp Table). It replaces the autohinter's own table.")}</p>
           <GaspEditor gasp={info.gasp} onApply={(gasp) => apply(() => backend.setGasp(gasp))} />

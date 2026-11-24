@@ -456,6 +456,7 @@ fn font_info(font: &FontRef, upem: u16) -> FontInfo {
         .map(|o| o.ach_vend_id().to_string())
         .filter(|v| !v.trim().is_empty() && v != "\0\0\0\0");
     FontInfo {
+        export_kern_table: false,
         gasp: Vec::new(),
         family_name: s(StringId::FAMILY_NAME).unwrap_or_else(|| "Untitled".into()),
         units_per_em: upem,

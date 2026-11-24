@@ -649,7 +649,7 @@ export const ar: Dict = {
   "Destination folder": "مجلد الوجهة",
   "Browse…": "استعراض…",
   "Compiling fonts… this can take a little while for large fonts.": "جارٍ بناء الخطوط… قد يستغرق ذلك بعض الوقت للخطوط الكبيرة.",
-  "Compiled with fontc · CFF and WOFF2 written by Kernest": "بُني باستخدام fontc · يكتب Kernest صيغتي CFF وWOFF2",
+  "Compiled with fontc · CFF, WOFF2 and WOFF written by Kernest": "بُني باستخدام fontc · يكتب Kernest صيغ CFF وWOFF2 وWOFF",
   "Done": "تم",
   "Exporting…": "جارٍ التصدير…",
   "{n} glyphs are incompatible and will block the variable font.": {
@@ -1127,7 +1127,7 @@ export const ar: Dict = {
   "could not write {path}: {e}": "تعذّرت كتابة {path}: {e}",
   "could not create {path}: {e}": "تعذّر إنشاء {path}: {e}",
   "could not create a temporary folder: {e}": "تعذّر إنشاء مجلد مؤقت: {e}",
-  "Choose at least one format: TTF, OTF or WOFF2.": "اختر صيغة واحدة على الأقل: TTF أو OTF أو WOFF2.",
+  "Choose at least one format: TTF, OTF, WOFF2 or WOFF.": "اختر صيغة واحدة على الأقل: TTF أو OTF أو WOFF2 أو WOFF.",
   "Metrics keys: {problem}": "مفاتيح المقاييس: {problem}",
   "{label}: {e}; exported without hinting.": "{label}: {e}؛ صُدّر دون تلميح.",
   "Variable font": "الخط المتغير",
@@ -2783,4 +2783,12 @@ export const ar: Dict = {
   "The autohinter has no script \"{tag}\"; its default was used.": "لا يملك المُلمِّح التلقائي نظام الكتابة \"{tag}\"؛ استُخدم الافتراضي.",
   "TTFAutohint options: {list} isn't supported and was left out.": "TTFAutohint options: {list} غير مدعوم وتُرك.",
   "gasp Table: {e} It was left out.": "gasp Table: {e} تُرك.",
+  // SMO-31 · Table and format parameters
+  "web fonts for older browsers (WOFF 1.0)": "خطوط ويب للمتصفحات القديمة (WOFF 1.0)",
+  "Tables": "الجداول",
+  "Adds a legacy kern table with the kerning as glyph pairs to static fonts, for apps that don't read GPOS kerning (Export kern Table). Variable fonts never get one.": "يضيف إلى الخطوط الثابتة جدول kern قديمًا فيه التقنين كأزواج حروف، للتطبيقات التي لا تقرأ التقنين من GPOS (Export kern Table). الخطوط المتغيرة لا تحصل عليه أبدًا.",
+  "Export kern table": "تصدير جدول kern",
+  "for older apps; static fonts only": "للتطبيقات القديمة؛ للخطوط الثابتة فقط",
+  "{name} isn't supported; that table wasn't written.": "{name} غير مدعوم؛ لم يُكتب ذلك الجدول.",
+  "{style}: the kern table holds at most 10920 pairs; {n} were left out.": "{style}: يتسع جدول kern لـ 10920 زوجًا على الأكثر؛ تُرك {n}.",
 };
