@@ -141,7 +141,7 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
 | Hand | H or hold Space | Drag to move around the canvas. |
 
 - **Moving points:**
-  - arrow keys nudge the selection by 1 unit, Shift+arrows by 10;
+  - arrow keys nudge the selection by 1 unit, Shift+arrows by 10 and Ctrl+arrows by 100;
   - Enter switches the selected nodes between smooth and corner;
   - Delete removes them.
 - **Magnetic snapping:** a node or anchor you drag snaps when it comes within a few pixels of:
