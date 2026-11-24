@@ -35,6 +35,17 @@ export interface DocStatus {
   dirty: boolean;
   canUndo: boolean;
   canRedo: boolean;
+  /** What Undo and Redo would do in the history in use, for the Edit menu. */
+  undo?: UndoStep | null;
+  redo?: UndoStep | null;
+}
+
+/** One undo step as the Edit menu names it (SMO-83): an action such as "Edit Outlines",
+ * the glyph it's in, and how many glyphs a Font View group covers. */
+export interface UndoStep {
+  action: string;
+  glyph: string | null;
+  glyphs: number;
 }
 
 export interface GlyphSummary {
@@ -1079,6 +1090,8 @@ export interface Backend {
   setMetric(glyph: string, masterId: string, metric: MetricName | "shift", value: number): Promise<LayerView>;
   /** Replaces a layer's manual PostScript hints (empty restores the auto stems). */
   setGlyphHints(glyph: string, masterId: string, hints: Hint[]): Promise<LayerView>;
+  /** Picks the undo history: the glyph's own in its Edit View tab (a name), the font's otherwise (null). */
+  setUndoContext(glyph: string | null): Promise<DocStatus>;
   undo(): Promise<UndoResult | null>;
   redo(): Promise<UndoResult | null>;
   /** Lays out text for a master, or at an interpolated `location` (axis tag → value). */
@@ -1647,6 +1660,7 @@ const tauriBackend: Backend = {
     invoke("update_layer", { glyph, masterId, width, paths, components: components ?? null }),
   setMetric: (glyph, masterId, metric, value) => invoke("set_metric", { glyph, masterId, metric, value }),
   setGlyphHints: (glyph, masterId, hints) => invoke("set_glyph_hints", { glyph, masterId, hints }),
+  setUndoContext: (glyph) => invoke("set_undo_context", { glyph }),
   undo: () => invoke("undo"),
   redo: () => invoke("redo"),
   textLayout: (text, masterId, location, direction) => invoke("text_layout", { text, masterId, location: location ?? null, direction: direction ?? null }),
@@ -2780,6 +2794,10 @@ const mockBackend: Backend = {
     }
     mockApply(d, g, { ...snap(g), hints: hints.map((h) => ({ ...h })) });
     return mockLayer(d, g);
+  },
+  async setUndoContext() {
+    // The browser mock keeps one history for the whole font.
+    return status(need());
   },
   async undo() {
     const d = need();

@@ -176,7 +176,12 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
   - **Glyph › Update Metrics** re-applies every key in the font, and export applies them too.
 - **View › Show Metrics** (Ctrl+Shift+M): shows or hides the metric lines (ascender, cap height, x-height, baseline, descender) and the advance box.
 
-Every edit can be undone with **Ctrl+Z** and redone with **Ctrl+Y**.
+Every edit can be undone with **Ctrl+Z** and redone with **Ctrl+Y**. **Each glyph keeps its own undo history**, as in Glyphs:
+
+- In a glyph's tab, Undo and Redo only touch that glyph. Edit `a`, then `b`, go back to `a` and press Ctrl+Z: the last change to `a` is undone and `b` stays as it is. The Edit menu says what will be undone, such as **Undo Edit Outlines in “a”**.
+- Font View, Font Info and text tabs use the font's history: Font Info, kerning, features, adding, removing and renaming glyphs, and edits made there (metrics in a text tab, Font View actions, filters on several glyphs).
+- An action on several glyphs at once (a batch, a filter on a selection, Paste Special) is one step in the font's history, **Undo Change Metrics in 10 glyphs** for example, and each glyph also gets its part in its own history. Undo in Font View puts all of them back; undo in glyph `c`'s tab puts back only `c`. A glyph edited again since is left alone when the font's history goes back.
+- A glyph's history lasts while the font is open, even if you close and reopen its tab; it follows the glyph when you rename it and goes away when you remove the glyph or close the font. Each glyph keeps its last 200 steps, and the font its last 500.
 
 ### Intermediate and alternate layers
 
