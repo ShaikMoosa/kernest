@@ -1326,7 +1326,7 @@ export function FontInfoView({ version, onChanged, onError, onGenerateInstances 
                     <Field label={t("Hinting limit (px)")} value={h.hintingLimit ?? ""} placeholder="200" onCommit={optNum("hintingLimit", t("Hinting limit (px)"))} />
                   </label>
                   <label className="info-field" title={t("Stem width for glyphs the autohinter can't measure (-H). Empty uses the default master's first horizontal stem.")}><span className="k-caption muted">{t("Fallback stem width")}</span>
-                    <Field label={t("Fallback stem width")} value={h.fallbackStemWidth ?? ""} placeholder={t("From stems")} onCommit={optNum("fallbackStemWidth", t("Fallback stem width"))} />
+                    <Field label={t("Fallback stem width")} value={h.fallbackStemWidth ?? ""} width={96} placeholder={t("From stems")} onCommit={optNum("fallbackStemWidth", t("Fallback stem width"))} />
                   </label>
                   <label className="info-field" title={t("Three letters for grayscale, GDI ClearType and DirectWrite ClearType: n natural, q quantized, s strong (-a). Kernest's autohinter always uses qsq.")}><span className="k-caption muted">{t("Stem width mode")}</span>
                     <Field label={t("Stem width mode")} value={h.stemWidthMode ?? ""} placeholder={TTFA_DEFAULTS.stemWidthMode} numeric={false} onCommit={text("stemWidthMode")} />
