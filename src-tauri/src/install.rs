@@ -492,6 +492,27 @@ const PAGE: &str = include_str!("web_preview.html");
 mod tests {
     use super::*;
 
+    /// Handbook 3.14.6 (Previewing in Adobe Applications): the Export dialog offers
+    /// the Adobe Fonts folder in Common Files, which Adobe apps read without installing.
+    #[test]
+    fn adobe_fonts_folder_is_a_quick_destination() {
+        let all = export_destinations();
+        let adobe = all
+            .iter()
+            .find(|d| d.id == "adobe")
+            .expect("an Adobe entry");
+        let path = std::path::Path::new(&adobe.path);
+        assert!(path.ends_with("Adobe/Fonts"), "{}", adobe.path);
+        let common = std::env::var_os("CommonProgramFiles")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("C:\\Program Files\\Common Files"));
+        assert!(path.starts_with(&common));
+        assert_eq!(adobe.exists, path.is_dir());
+        // Every destination has its own id.
+        let ids: std::collections::BTreeSet<_> = all.iter().map(|d| d.id).collect();
+        assert_eq!(ids.len(), all.len());
+    }
+
     #[test]
     fn routes_stay_inside_the_preview_folder() {
         let dir = std::env::temp_dir().join("kernest-route-test");

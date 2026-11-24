@@ -594,6 +594,38 @@ mod tests {
         assert!(parse_manifest("not json").is_err());
     }
 
+    /// Handbook 5.5.6 (Plug-ins & Scripts): scripts in subfolders become submenus,
+    /// other files are ignored, and a script sees the selection and the master.
+    #[test]
+    fn scripts_menu_follows_folders_and_scripts_get_the_selection() {
+        let dir = std::env::temp_dir().join(format!("kernest-menu-{}", std::process::id()));
+        let deep = dir.join("Spacing").join("Metrics");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(dir.join("top.py"), "print(1)\n").unwrap();
+        std::fs::write(deep.join("deep.py"), "# MenuTitle: Check Widths\n").unwrap();
+        std::fs::write(deep.join("notes.txt"), "not a script").unwrap();
+        let mut out = Vec::new();
+        walk_scripts(&dir, &dir, &mut out);
+        out.sort_by(|a, b| a.folder.cmp(&b.folder));
+        let got: Vec<(&str, &str)> = out
+            .iter()
+            .map(|e| (e.folder.as_str(), e.name.as_str()))
+            .collect();
+        assert_eq!(got, [("", "top"), ("Spacing/Metrics", "Check Widths")]);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let font = kernest_core::sample::sample_font();
+        let names = vec!["H".to_string(), "O".to_string()];
+        let s = selection(&font, Some("H".into()), None, names.clone());
+        assert_eq!(s.glyphs, names);
+        assert_eq!(s.current_glyph.as_deref(), Some("H"));
+        assert_eq!(s.master_id, font.masters[0].id);
+        assert_eq!(s.layers, [font.masters[0].id.clone()]);
+        let s = selection(&font, None, Some("m09".into()), Vec::new());
+        assert_eq!(s.master_id, "m09");
+        assert!(s.glyphs.is_empty());
+    }
+
     #[test]
     fn menu_title_from_comment_or_stem() {
         let dir = std::env::temp_dir().join(format!("kernest-scripts-{}", std::process::id()));

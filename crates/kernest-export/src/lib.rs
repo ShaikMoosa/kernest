@@ -2036,6 +2036,124 @@ pub(crate) mod tests {
         assert_eq!(h_origin.map(f64::from), Some((asc + 40.0).round()));
     }
 
+    fn weight_instance(name: &str, weight: f64, export: bool) -> Instance {
+        Instance {
+            autohint: true,
+            processing: Default::default(),
+            feature_parameters: Vec::new(),
+            names: Default::default(),
+            name: name.into(),
+            location: BTreeMap::from([("wght".into(), weight)]),
+            export,
+            weight_class: None,
+            width_class: None,
+            style_link: None,
+            rename_glyphs: Vec::new(),
+            remove_glyphs: Vec::new(),
+            disabled_masters: Vec::new(),
+            family_name: None,
+            localized_family_names: Default::default(),
+        }
+    }
+
+    /// Handbook 6.3.1 (Active): only active instances export; with none active the
+    /// masters export instead.
+    #[test]
+    fn only_active_instances_export() {
+        let mut f = two_masters();
+        f.instances = vec![
+            weight_instance("Regular", 400.0, true),
+            weight_instance("Medium", 550.0, false),
+            weight_instance("Bold", 700.0, true),
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let styles: Vec<&str> = r.files.iter().map(|x| x.style.as_str()).collect();
+        assert_eq!(styles, ["Regular", "Bold"]);
+
+        for i in &mut f.instances {
+            i.export = false;
+        }
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let styles: Vec<&str> = r.files.iter().map(|x| x.style.as_str()).collect();
+        let masters: Vec<&str> = f.masters.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(styles, masters);
+    }
+
+    /// Handbook 5.3.4 (Exports): a glyph that doesn't export is left out of the font,
+    /// and components that use it are decomposed so their outlines stay.
+    #[test]
+    fn non_exporting_glyphs_are_left_out_and_their_components_decomposed() {
+        let mut f = sample_font();
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let all = FontRef::new(&std::fs::read(&r.files[0].path).unwrap())
+            .unwrap()
+            .maxp()
+            .unwrap()
+            .num_glyphs() as usize;
+        f.glyph_mut("I").unwrap().export = false;
+        f.glyph_mut("l").unwrap().layer_mut("m01").unwrap().shapes = vec![Shape::Component {
+            base: "I".into(),
+            transform: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            smart: BTreeMap::new(),
+            align: false,
+        }];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let cmap = font.cmap().unwrap();
+        assert!(cmap.map_codepoint('I').is_none());
+        assert_eq!(font.maxp().unwrap().num_glyphs() as usize, all - 1);
+        let (glyf, loca) = (font.glyf().unwrap(), font.loca(None).unwrap());
+        let l = loca
+            .get_glyf(cmap.map_codepoint('l').unwrap(), &glyf)
+            .unwrap()
+            .unwrap();
+        assert_eq!(l.y_max(), 700);
+        assert!(matches!(
+            l,
+            write_fonts::read::tables::glyf::Glyph::Simple(_)
+        ));
+    }
+
+    /// Handbook 6.4.4 (Naming Stylistic Sets): a featureNames block in ss01 gives the
+    /// set a name apps show, stored in the name table and linked from GSUB.
+    #[test]
+    fn stylistic_set_names_reach_the_font() {
+        use write_fonts::read::tables::layout::FeatureParams;
+        let mut f = sample_font();
+        f.features = "feature ss01 {\n  featureNames {\n    name \"Straight H\";\n  };\n  sub H by I;\n} ss01;\n"
+            .into();
+        assert!(kernest_core::features::check(&f).is_empty());
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let gsub = font.gsub().unwrap();
+        let list = gsub.feature_list().unwrap();
+        let rec = list
+            .feature_records()
+            .iter()
+            .find(|r| r.feature_tag() == write_fonts::types::Tag::new(b"ss01"))
+            .expect("an ss01 feature");
+        let feature = rec.feature(list.offset_data()).unwrap();
+        let Some(Ok(FeatureParams::StylisticSet(ss))) = feature.feature_params() else {
+            panic!("ss01 has no stylistic set name");
+        };
+        let id = u16::from_be_bytes(ss.ui_name_id().to_be_bytes());
+        assert!(id >= 256);
+        assert_eq!(
+            name_strings(&bytes).get(&id).map(String::as_str),
+            Some("Straight H")
+        );
+    }
+
     #[test]
     fn preset_exports_only_selected_instances_and_honours_destination() {
         let mut f = two_masters();
