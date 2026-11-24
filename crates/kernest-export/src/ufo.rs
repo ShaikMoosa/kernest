@@ -364,25 +364,28 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
     }
 
     // PostScript hinting: zones become blue values and stems become stem snaps. The
-    // master at this location supplies them; an interpolated instance uses the default
-    // master's (UFO sources carry one set of hinting values).
-    let master = font
-        .masters
-        .iter()
-        .find(|m| m.location == src.location)
-        .unwrap_or_else(|| kernest_core::interpolate::default_master(font));
+    // master at this location supplies them; an instance between masters gets them
+    // interpolated (Handbook 13.3.3), or the default master's when the masters'
+    // zones or stems don't match up.
+    let at_master = font.masters.iter().find(|m| m.location == src.location);
+    let master = at_master.unwrap_or_else(|| kernest_core::interpolate::default_master(font));
     if !master.guides.is_empty() {
         info.guidelines = Some(guidelines(&master.guides));
     }
-    let (blue, other) = kernest_core::hinting::blues_from_zones(&master.alignment_zones);
+    let (zones, stems) = match at_master {
+        Some(m) => (m.alignment_zones.clone(), m.stems.clone()),
+        None => interpolated_hinting(font, &src.location)
+            .unwrap_or_else(|| (master.alignment_zones.clone(), master.stems.clone())),
+    };
+    let (blue, other) = kernest_core::hinting::blues_from_zones(&zones);
     if !blue.is_empty() {
         info.postscript_blue_values = Some(blue);
     }
     if !other.is_empty() {
         info.postscript_other_blues = Some(other);
     }
-    let h = kernest_core::hinting::stem_snaps(&master.stems, true);
-    let v = kernest_core::hinting::stem_snaps(&master.stems, false);
+    let h = kernest_core::hinting::stem_snaps(&stems, true);
+    let v = kernest_core::hinting::stem_snaps(&stems, false);
     if !h.is_empty() {
         info.postscript_stem_snap_h = Some(h);
     }
@@ -517,6 +520,10 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
         "public.glyphOrder".into(),
         plist::Value::Array(order.into_iter().map(plist::Value::String).collect()),
     );
+    ufo.lib.insert(
+        "com.github.googlei18n.ufo2ft.featureWriters".into(),
+        feature_writers(),
+    );
     let skip: Vec<plist::Value> = font
         .glyphs
         .iter()
@@ -630,6 +637,79 @@ pub fn to_ufo(src: &UfoSource) -> Result<norad::Font, String> {
 /// vhea and vmtx (and VVAR for variable fonts). Defaults follow glyphsLib: the
 /// advance is typo ascender − typo descender and the origin sits at the typo
 /// ascender; vhea is half the em above and below.
+/// The compiler's automatic feature writers. The kerning writer appends: kerning from
+/// the Kerning window goes after any hand-written `kern` code instead of being dropped
+/// when the feature code has a `kern` feature (Handbook 8.2.7). The others keep the
+/// compiler's defaults.
+fn feature_writers() -> plist::Value {
+    let writer = |class: &str, append: bool| {
+        let mut d = plist::Dictionary::new();
+        d.insert("class".into(), plist::Value::String(class.into()));
+        if append {
+            let mut opts = plist::Dictionary::new();
+            opts.insert("mode".into(), plist::Value::String("append".into()));
+            d.insert("options".into(), plist::Value::Dictionary(opts));
+        }
+        plist::Value::Dictionary(d)
+    };
+    plist::Value::Array(vec![
+        writer("CursFeatureWriter", false),
+        writer("KernFeatureWriter", true),
+        writer("MarkFeatureWriter", false),
+        writer("GdefFeatureWriter", false),
+    ])
+}
+
+/// The masters' zones and stems interpolated at `location`, when every master has the
+/// same number of each, in the same order (stems also on the same axis).
+fn interpolated_hinting(
+    font: &Font,
+    location: &BTreeMap<String, f64>,
+) -> Option<(Vec<kernest_core::Zone>, Vec<kernest_core::Stem>)> {
+    let first = font.masters.first()?;
+    let compatible = font.masters.iter().all(|m| {
+        m.alignment_zones.len() == first.alignment_zones.len()
+            && m.stems.len() == first.stems.len()
+            && m.stems
+                .iter()
+                .zip(&first.stems)
+                .all(|(a, b)| a.horizontal == b.horizontal)
+    });
+    if font.masters.len() < 2 || !compatible {
+        return None;
+    }
+    let interp = kernest_core::interpolate::Interpolator::new(font, location).ok()?;
+    let per: Vec<Vec<f64>> = font
+        .masters
+        .iter()
+        .map(|m| {
+            m.alignment_zones
+                .iter()
+                .flat_map(|z| [z.position, z.size])
+                .chain(m.stems.iter().map(|s| s.value))
+                .collect()
+        })
+        .collect();
+    let v = interp.values(&per);
+    let n = first.alignment_zones.len();
+    let zones = (0..n)
+        .map(|i| kernest_core::Zone {
+            position: v[2 * i],
+            size: v[2 * i + 1],
+        })
+        .collect();
+    let stems = first
+        .stems
+        .iter()
+        .enumerate()
+        .map(|(i, s)| kernest_core::Stem {
+            value: v[2 * n + i],
+            ..s.clone()
+        })
+        .collect();
+    Some((zones, stems))
+}
+
 fn add_vertical_metrics(src: &UfoSource, ufo: &mut norad::Font) {
     let font = src.font;
     if !font.uses_vertical_metrics() {

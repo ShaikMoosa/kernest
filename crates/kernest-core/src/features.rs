@@ -490,13 +490,18 @@ pub fn generate(font: &Font) -> String {
     if declares_language_systems(&font.features) {
         out
     } else {
-        // Joining scripts the positional features use need their own language system.
-        let mut header = String::from("languagesystem DFLT dflt;\nlanguagesystem latn dflt;\n");
-        for s in positional_scripts(font) {
-            header.push_str(&format!("languagesystem {s} dflt;\n"));
-        }
-        format!("{header}{out}")
+        format!("{}{out}", language_header(font))
     }
+}
+
+/// The language systems Kernest declares when the designer's code doesn't: DFLT and
+/// latn, plus the joining scripts the positional features use.
+fn language_header(font: &Font) -> String {
+    let mut header = String::from("languagesystem DFLT dflt;\nlanguagesystem latn dflt;\n");
+    for s in positional_scripts(font) {
+        header.push_str(&format!("languagesystem {s} dflt;\n"));
+    }
+    header
 }
 
 /// True when the text has a top-level `languagesystem` statement.
@@ -512,7 +517,12 @@ fn declares_language_systems(text: &str) -> bool {
 pub fn combined(font: &Font) -> String {
     let generated = generate(font);
     if generated.is_empty() {
-        return font.features.clone();
+        // Hand-written code without language systems would land only under DFLT,
+        // and shapers skip it for Latin text once kerning adds latn (Handbook 8.2.7).
+        if font.features.trim().is_empty() || declares_language_systems(&font.features) {
+            return font.features.clone();
+        }
+        return format!("{}{}", language_header(font), font.features);
     }
     if font.features.trim().is_empty() {
         return generated;
@@ -859,6 +869,23 @@ mod tests {
         let code = combined(&f);
         assert!(code.starts_with("languagesystem DFLT dflt;\nlanguagesystem latn dflt;\n"));
         assert!(code.contains("feature ss01") && code.contains("feature salt"));
+    }
+
+    #[test]
+    fn hand_written_code_alone_gets_language_systems() {
+        // Without automatic features, hand-written code still needs latn, or kerning
+        // (which the compiler registers under latn) hides it from Latin text.
+        let mut f = font_with(&["a", "b"]);
+        f.features = "feature kern {\n  pos a b -20;\n} kern;\n".into();
+        assert!(generate(&f).is_empty());
+        let code = combined(&f);
+        assert!(code.starts_with("languagesystem DFLT dflt;\nlanguagesystem latn dflt;\n"));
+        assert!(code.ends_with(&f.features));
+        // Code that declares its own is left as written; no code stays empty.
+        f.features = format!("languagesystem DFLT dflt;\n{}", f.features);
+        assert_eq!(combined(&f), f.features);
+        f.features.clear();
+        assert_eq!(combined(&f), "");
     }
 
     #[test]

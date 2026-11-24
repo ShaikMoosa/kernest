@@ -1511,12 +1511,20 @@ pub fn hoi_view(
     master_id: String,
     axis: String,
 ) -> CmdResult<HoiView> {
-    use kernest_core::hoi::{next_down, next_up};
     let mut guard = lock(&state)?;
     let doc = doc_mut(&mut guard)?;
-    let f = &doc.font;
-    let g = f.glyph(&glyph).ok_or("That glyph doesn't exist.")?;
-    let layer = g.layer(&master_id).ok_or("That layer doesn't exist.")?;
+    hoi_view_in(&doc.font, &glyph, &master_id, axis)
+}
+
+fn hoi_view_in(
+    f: &kernest_core::Font,
+    glyph: &str,
+    master_id: &str,
+    axis: String,
+) -> CmdResult<HoiView> {
+    use kernest_core::hoi::{next_down, next_up};
+    let g = f.glyph(glyph).ok_or("That glyph doesn't exist.")?;
+    let layer = g.layer(master_id).ok_or("That layer doesn't exist.")?;
     let axes: Vec<String> = f
         .axes
         .iter()
@@ -2360,6 +2368,85 @@ pub fn redo(state: State<AppState>) -> CmdResult<Option<UndoResult>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Handbook 10.9.1 (Node Visualization): the Interpolation curves tool shows each
+    /// node in the next master up and down the axis, and only where they match.
+    #[test]
+    fn interpolation_curves_view_shows_the_neighbouring_masters() {
+        use kernest_core::hoi::HoiKind;
+        use kernest_core::{structure, Axis, Shape};
+        let wght = Axis {
+            name: "Weight".into(),
+            tag: "wght".into(),
+            min: 100.0,
+            default: 400.0,
+            max: 900.0,
+            hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
+        };
+        let f = structure::set_axes(&sample::sample_font(), vec![wght]).unwrap();
+        let at = |w: f64| std::collections::BTreeMap::from([("wght".to_string(), w)]);
+        let (f, thin) = structure::add_master(&f, "m01", "Thin", &at(100.0)).unwrap();
+        let (mut f, black) = structure::add_master(&f, "m01", "Black", &at(900.0)).unwrap();
+        // H's first node sits 40 units further right in Black.
+        if let Some(Shape::Path(p)) = f
+            .glyph_mut("H")
+            .unwrap()
+            .layer_mut(&black)
+            .unwrap()
+            .shapes
+            .first_mut()
+        {
+            p.nodes[0].x += 40.0;
+        }
+        let regular = f.glyph("H").unwrap().layer("m01").unwrap().clone();
+        let mine = path_nodes(&regular);
+
+        // An unknown axis falls back to the first axis with a neighbour.
+        let v = hoi_view_in(&f, "H", "m01", "XXXX".into()).unwrap();
+        assert_eq!(
+            (v.axes.clone(), v.axis.as_str()),
+            (vec!["wght".to_string()], "wght")
+        );
+        assert_eq!(v.up_name.as_deref(), Some("Black"));
+        assert_eq!(v.down_name.as_deref(), Some("Thin"));
+        let up = v.up.unwrap();
+        assert_eq!(up[0][0], [mine[0][0][0] + 40.0, mine[0][0][1]]);
+        assert_eq!(up[0][1..], mine[0][1..]);
+        assert_eq!(v.down.unwrap(), mine);
+        assert!(v.curves.is_empty());
+
+        // The ends of the axis have one neighbour each.
+        let v = hoi_view_in(&f, "H", &black, String::new()).unwrap();
+        assert_eq!((v.up_name, v.down_name.as_deref()), (None, Some("Regular")));
+        let v = hoi_view_in(&f, "H", &thin, String::new()).unwrap();
+        assert_eq!(v.up_name.as_deref(), Some("Regular"));
+        assert!(v.down_name.is_none());
+
+        // An incompatible neighbour is named but shows no nodes.
+        let mut g = f.clone();
+        g.glyph_mut("H")
+            .unwrap()
+            .layer_mut(&thin)
+            .unwrap()
+            .shapes
+            .pop();
+        let v = hoi_view_in(&g, "H", "m01", String::new()).unwrap();
+        assert_eq!(v.down_name.as_deref(), Some("Thin"));
+        assert!(v.down.is_none());
+        assert!(v.up.is_some());
+
+        // Curves on this layer and axis come with the view.
+        let kind = HoiKind::Through { x: 0.0, y: 0.0 };
+        let f =
+            kernest_core::hoi::set_curve(&f, "H", "m01", "wght", 0, 0, Some(kind.clone())).unwrap();
+        let v = hoi_view_in(&f, "H", "m01", "wght".into()).unwrap();
+        assert_eq!(v.curves.len(), 1);
+        assert_eq!((v.curves[0].path, v.curves[0].node), (0, 0));
+        assert_eq!(v.curves[0].kind, kind);
+        assert!(hoi_view_in(&f, "nope", "m01", String::new()).is_err());
+    }
 
     #[test]
     fn status_names_the_step_of_the_history_in_use() {
