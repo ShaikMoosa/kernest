@@ -3091,6 +3091,296 @@ pub(crate) mod tests {
         );
     }
 
+    fn rect_path(x0: f64, y0: f64, x1: f64, y1: f64) -> kernest_core::Path {
+        kernest_core::Path {
+            closed: true,
+            nodes: [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+                .into_iter()
+                .map(|(x, y)| kernest_core::Node::new(x, y, NodeKind::Line))
+                .collect(),
+            locked: false,
+            stroke: None,
+            mask: false,
+        }
+    }
+
+    /// A non-exported glyph drawn with `shapes` in every master.
+    fn add_part_glyph(
+        f: &mut Font,
+        name: &str,
+        shapes: Vec<Shape>,
+        anchors: Vec<kernest_core::Anchor>,
+    ) {
+        let mut g = kernest_core::Glyph::new(name, vec![]);
+        g.export = false;
+        for m in f.masters.clone() {
+            let mut l = kernest_core::Layer::new(m.id.clone(), 0.0);
+            l.shapes = shapes.clone();
+            l.anchors = anchors.clone();
+            g.layers.push(l);
+        }
+        f.glyphs.push(g);
+    }
+
+    fn component(base: &str, transform: [f64; 6]) -> Shape {
+        Shape::Component {
+            base: base.into(),
+            transform,
+            smart: BTreeMap::new(),
+            align: false,
+        }
+    }
+
+    /// One static TTF of `f` and the bounds and contour count of the glyph for `ch`.
+    fn exported_glyph(f: &Font, chars: &[char]) -> Vec<((i16, i16, i16, i16), usize)> {
+        use write_fonts::read::tables::glyf::Glyph as G;
+        let out = tempfile::tempdir().unwrap();
+        let r = export(f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let (glyf, loca, cmap) = (
+            font.glyf().unwrap(),
+            font.loca(None).unwrap(),
+            font.cmap().unwrap(),
+        );
+        chars
+            .iter()
+            .map(|&c| {
+                let g = loca
+                    .get_glyf(cmap.map_codepoint(c).unwrap(), &glyf)
+                    .unwrap()
+                    .expect("an outline");
+                let contours = match &g {
+                    G::Simple(s) => s.end_pts_of_contours().len(),
+                    G::Composite(c) => c.components().count(),
+                };
+                ((g.x_min(), g.y_min(), g.x_max(), g.y_max()), contours)
+            })
+            .collect()
+    }
+
+    /// Handbook 9.1.4 (Editing Components): a moved, scaled, rotated or flipped
+    /// component exports with its transformation.
+    #[test]
+    fn transformed_components_export_as_placed() {
+        let mut f = sample_font();
+        add_part_glyph(
+            &mut f,
+            "_bar",
+            vec![Shape::Path(rect_path(0.0, 0.0, 100.0, 300.0))],
+            vec![],
+        );
+        let set = |f: &mut Font, ch: &str, t: [f64; 6]| {
+            f.glyph_mut(ch).unwrap().layer_mut("m01").unwrap().shapes = vec![component("_bar", t)];
+        };
+        set(&mut f, "A", [1.0, 0.0, 0.0, 1.0, 50.0, 20.0]); // moved
+        set(&mut f, "B", [2.0, 0.0, 0.0, 0.5, 0.0, 0.0]); // scaled
+        set(&mut f, "C", [0.0, 1.0, -1.0, 0.0, 400.0, 0.0]); // turned 90° anticlockwise
+        set(&mut f, "D", [-1.0, 0.0, 0.0, 1.0, 500.0, 0.0]); // flipped
+        let got: Vec<_> = exported_glyph(&f, &['A', 'B', 'C', 'D'])
+            .into_iter()
+            .map(|(b, _)| b)
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (50, 20, 150, 320),
+                (0, 0, 200, 150),
+                (100, 0, 400, 100),
+                (400, 0, 500, 300)
+            ]
+        );
+    }
+
+    /// Handbook 9.1.11 (Combining Paths and Components): a glyph can mix its own paths
+    /// with components; the export keeps both.
+    #[test]
+    fn paths_and_components_export_together() {
+        let mut f = sample_font();
+        add_part_glyph(
+            &mut f,
+            "_bar",
+            vec![Shape::Path(rect_path(0.0, 0.0, 100.0, 300.0))],
+            vec![],
+        );
+        f.glyph_mut("A").unwrap().layer_mut("m01").unwrap().shapes = vec![
+            Shape::Path(rect_path(0.0, 0.0, 100.0, 700.0)),
+            component("_bar", [1.0, 0.0, 0.0, 1.0, 300.0, 0.0]),
+            component("_bar", [1.0, 0.0, 0.0, 1.0, 500.0, 400.0]),
+        ];
+        let [(bounds, contours)] = exported_glyph(&f, &['A'])[..] else {
+            panic!()
+        };
+        assert_eq!(bounds, (0, 0, 600, 700));
+        assert_eq!(contours, 3, "the path and both components' outlines");
+    }
+
+    /// Handbook 9.1.12 (Nesting Components): components can hold components; every
+    /// level's placement adds up in the exported glyph.
+    #[test]
+    fn nested_components_export_with_every_level_applied() {
+        let mut f = sample_font();
+        add_part_glyph(
+            &mut f,
+            "dot",
+            vec![Shape::Path(rect_path(0.0, 0.0, 80.0, 80.0))],
+            vec![],
+        );
+        // A dieresis of two dots, then a letter with the dieresis above a stem.
+        add_part_glyph(
+            &mut f,
+            "dieresis.part",
+            vec![
+                component("dot", [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+                component("dot", [1.0, 0.0, 0.0, 1.0, 160.0, 0.0]),
+            ],
+            vec![],
+        );
+        f.glyph_mut("A").unwrap().layer_mut("m01").unwrap().shapes = vec![
+            Shape::Path(rect_path(100.0, 0.0, 200.0, 500.0)),
+            component("dieresis.part", [1.0, 0.0, 0.0, 1.0, 40.0, 600.0]),
+        ];
+        // Three levels: B uses A, scaled down by half.
+        f.glyph_mut("B").unwrap().layer_mut("m01").unwrap().shapes =
+            vec![component("A", [0.5, 0.0, 0.0, 0.5, 0.0, 0.0])];
+        let got = exported_glyph(&f, &['A', 'B']);
+        assert_eq!(got[0], ((40, 0, 280, 680), 3));
+        assert_eq!(got[1].0, (20, 0, 140, 340));
+        // Changing the innermost glyph changes every glyph built on it.
+        f.glyph_mut("dot").unwrap().layer_mut("m01").unwrap().shapes =
+            vec![Shape::Path(rect_path(0.0, 0.0, 80.0, 120.0))];
+        assert_eq!(exported_glyph(&f, &['B'])[0].0, (20, 0, 140, 360));
+    }
+
+    /// Handbook 9.4.1 (Cap), 9.5.1 (Segment) and 9.6.1 (Brush): parts placed on an
+    /// outline and brushes along a path are drawn into the exported glyphs.
+    #[test]
+    fn caps_segments_and_brushes_reach_the_export() {
+        use kernest_core::parts::{add_part, PartKind, PathPart};
+        use kernest_core::stroke::PathStroke;
+        let mut f = sample_font();
+        let open = |pts: &[(f64, f64)]| {
+            let mut p = rect_path(0.0, 0.0, 0.0, 0.0);
+            p.closed = false;
+            p.nodes = pts
+                .iter()
+                .map(|&(x, y)| kernest_core::Node::new(x, y, NodeKind::Line))
+                .collect();
+            Shape::Path(p)
+        };
+        add_part_glyph(
+            &mut f,
+            "_cap.point",
+            vec![open(&[(0.0, 0.0), (50.0, 40.0), (100.0, 0.0)])],
+            vec![],
+        );
+        add_part_glyph(
+            &mut f,
+            "_segment.notch",
+            vec![open(&[
+                (0.0, 0.0),
+                (40.0, 0.0),
+                (50.0, -10.0),
+                (60.0, 0.0),
+                (100.0, 0.0),
+            ])],
+            vec![],
+        );
+        let anchor = |name: &str, x: f64| kernest_core::Anchor {
+            name: name.into(),
+            x,
+            y: 0.0,
+        };
+        add_part_glyph(
+            &mut f,
+            "_brush.bar",
+            vec![Shape::Path(rect_path(0.0, -10.0, 100.0, 10.0))],
+            vec![anchor("start", 0.0), anchor("end", 100.0)],
+        );
+        for ch in ["A", "B"] {
+            f.glyph_mut(ch).unwrap().layer_mut("m01").unwrap().shapes =
+                vec![Shape::Path(rect_path(100.0, 0.0, 200.0, 300.0))];
+        }
+        // A: a pointed cap on the top edge (node 2 to node 3).
+        let f = add_part(
+            &f,
+            "A",
+            "m01",
+            PathPart::new(PartKind::Cap, "_cap.point", 0, 2),
+        )
+        .unwrap();
+        // B: a notch cut into the right edge (node 1 to node 2).
+        let mut f = add_part(
+            &f,
+            "B",
+            "m01",
+            PathPart::new(PartKind::Segment, "_segment.notch", 0, 1),
+        )
+        .unwrap();
+        // C: a 400-unit line drawn with the bar brush.
+        let Shape::Path(mut line) = open(&[(250.0, 0.0), (250.0, 400.0)]) else {
+            unreachable!()
+        };
+        line.stroke = Some(PathStroke {
+            brush: Some("_brush.bar".into()),
+            ..Default::default()
+        });
+        f.glyph_mut("C").unwrap().layer_mut("m01").unwrap().shapes = vec![Shape::Path(line)];
+        let got = exported_glyph(&f, &['A', 'B', 'C']);
+        assert_eq!(
+            got[0].0,
+            (100, 0, 200, 340),
+            "the cap's point rises 40 above the stem"
+        );
+        assert_eq!(got[1].0, (100, 0, 200, 300), "the notch cuts in, not out");
+        assert_eq!(
+            got[2].0,
+            (240, 0, 260, 400),
+            "the brush's 20-unit bar runs the line's length"
+        );
+        // The part glyphs themselves aren't exported.
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let n = FontRef::new(&bytes).unwrap().maxp().unwrap().num_glyphs() as usize;
+        assert_eq!(
+            n,
+            sample_font().glyphs.len() + 1,
+            "the sample's glyphs and .notdef"
+        );
+    }
+
+    /// Handbook 9.7.1 (Setup) and 9.7.3 (Pixel Shape): pixel glyphs are built from the
+    /// `pixel` glyph on the grid, and changing its shape restyles them all.
+    #[test]
+    fn pixel_glyphs_follow_the_pixel_shape() {
+        use kernest_core::pixel::{add_pixel_glyph, set_pixels};
+        let f = add_pixel_glyph(&sample_font(), 50.0).unwrap();
+        let mut f = set_pixels(
+            &f,
+            "A",
+            "m01",
+            &[(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)],
+            true,
+        )
+        .unwrap();
+        f.glyph_mut("A")
+            .unwrap()
+            .layer_mut("m01")
+            .unwrap()
+            .shapes
+            .retain(|s| matches!(s, Shape::Component { .. }));
+        assert_eq!(exported_glyph(&f, &['A'])[0], ((0, 0, 150, 100), 3));
+        // A smaller, centred dot as the pixel: every pixel shrinks with it.
+        f.glyph_mut("pixel")
+            .unwrap()
+            .layer_mut("m01")
+            .unwrap()
+            .shapes = vec![Shape::Path(rect_path(15.0, 15.0, 35.0, 35.0))];
+        assert_eq!(exported_glyph(&f, &['A'])[0], ((15, 15, 135, 85), 3));
+    }
+
     #[test]
     fn otf_and_woff2() {
         use write_fonts::read::ps::cff::CffFontRef;

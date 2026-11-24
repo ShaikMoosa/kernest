@@ -122,6 +122,9 @@ pub fn add_glyphs(font: &Font, glyphs: &[NewGlyph]) -> R<Added> {
             ng.name.clone(),
             ng.codepoint.map(Codepoint).into_iter().collect(),
         );
+        // Parts such as `_stem` or `_corner.serif` only serve other glyphs (Handbook
+        // 9.1.14), so they start out not exported.
+        g.export = !ng.name.starts_with('_');
         for m in &f.masters {
             let width = base
                 .and_then(|b| b.layer(&m.id))
@@ -452,6 +455,34 @@ mod tests {
     use super::*;
     use crate::model::{KernPair, NodeKind, IDENTITY};
     use crate::sample::sample_font;
+
+    /// Handbook 9.1.14 (Underscore Components): glyphs whose names start with an
+    /// underscore are parts for other glyphs, so they start out not exported.
+    #[test]
+    fn underscore_glyphs_start_out_not_exported() {
+        let new = |name: &str| NewGlyph {
+            name: name.into(),
+            codepoint: None,
+        };
+        let r = add_glyphs(
+            &sample_font(),
+            &[
+                new("_part.shoulder"),
+                new("_corner.serif"),
+                new("f_f"),
+                new("a.ss01"),
+            ],
+        )
+        .unwrap();
+        let export = |n: &str| r.font.glyph(n).unwrap().export;
+        assert!(!export("_part.shoulder") && !export("_corner.serif"));
+        // Underscores elsewhere in the name, as in ligatures, export as usual.
+        assert!(export("f_f") && export("a.ss01"));
+        // The part can still be switched on by hand.
+        let mut f = r.font;
+        f.glyph_mut("_part.shoulder").unwrap().export = true;
+        assert!(f.validate().is_ok());
+    }
 
     #[test]
     fn swaps_trade_drawings_and_removals_drop_glyphs() {
