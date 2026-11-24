@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { backend, errorMessage, type AlignOp, type Annotation, type HoiKind, type HoiView, type GlyphPicture, type ImageData, type LayerImage, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
+import { backend, errorMessage, type GlyphUse, type AlignOp, type Annotation, type HoiKind, type HoiView, type GlyphPicture, type ImageData, type LayerImage, type PathPart, type SmartHandle, type Axis, type BackgroundEdit, type ComponentEdit, type ComponentView, type DocStatus, type DrawItem, type Guide, type Hint, type LayerInfo, type LayerView, type Measurement, type MetricName, type Paint, type PathEditOperation, type Selection } from "../lib/backend";
 import { VariationPreview } from "./VariationPreview";
 import { LayerDialog, type LayerDialogMode } from "./LayerDialog";
 import { SmartDialog, type SmartDialogMode } from "./SmartDialog";
@@ -155,8 +155,8 @@ function MetricField({ label, value, disabled, onCommit, metricKey, onKey, onInv
   );
 }
 
-/** Picker for Glyph › Add Component. */
-function ComponentPicker({ names, exclude, onPick, onCancel }: { names: string[]; exclude: string; onPick: (name: string) => void; onCancel: () => void }) {
+/** Picker for Glyph › Add Component, also used to list the glyphs that use this one. */
+function ComponentPicker({ names, exclude, onPick, onCancel, title }: { names: string[]; exclude: string; onPick: (name: string) => void; onCancel: () => void; title?: string }) {
   const [q, setQ] = useState("");
   const [index, setIndex] = useState(0);
   const shown = useMemo(() => {
@@ -176,7 +176,7 @@ function ComponentPicker({ names, exclude, onPick, onCancel }: { names: string[]
     <div className="scrim" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
       <div className="dialog dialog-sm" role="dialog" aria-modal="true" aria-labelledby="add-comp-title">
         <header className="dialog-header">
-          <h2 id="add-comp-title" className="k-subtitle">{t("Add Component")}</h2>
+          <h2 id="add-comp-title" className="k-subtitle">{title ?? t("Add Component")}</h2>
           <button type="button" className="icon-btn" aria-label={t("Close")} onClick={onCancel}><CloseIcon /></button>
         </header>
         <div className="dialog-body">
@@ -511,6 +511,14 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
   const fitted = useRef(false);
   const drag = useRef<null | { mode: string; startScreen: Pt; startWorld: Pt; base: EditPath[]; baseComps: Comp[]; baseAnchors: LayerView["anchors"]; moved: boolean; anchor?: string; selMode?: SelectMode; lasso?: LassoPt[]; pi?: number; ni?: number; startView?: View; lastPaths?: EditPath[]; lastComps?: Comp[]; lastAnchors?: LayerView["anchors"]; scope?: GuideScope; gi?: number; angle?: number; baseLocal?: Guide[]; baseGlobal?: Guide[]; lastGuide?: Guide }>(null);
   const pen = useRef<{ path: number | null; pendingOut: Pt | null }>({ path: null, pendingOut: null });
+  // Glyphs Using… (Handbook 9.1.5): the composites built from this glyph.
+  const [users, setUsers] = useState<GlyphUse[] | null>(null);
+  const showUsers = () => {
+    backend.glyphsUsing(glyph).then((list) => {
+      if (list.length) setUsers(list);
+      else onWarning?.(t("No glyph uses “{name}” as a component.", { name: glyph }));
+    }, onError);
+  };
   const chain = useRef(Promise.resolve());
   const measureSeq = useRef(0);
   const latest = useRef({ layer, paths, comps, anchors, selection, compSel, anchorSel, view, editingBackground, localGuides, globalGuides, guideSel });
@@ -2137,7 +2145,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               return;
             }
             const hit = hitNode(sp);
-            if (!hit) return;
+            if (!hit) {
+              // Double-clicking a component opens its base glyph (Handbook 9.1.5).
+              const c = editingBackground ? null : hitComponent(toWorld(sp.x, sp.y));
+              if (c !== null && comps[c] && onOpenGlyph) onOpenGlyph(comps[c].base);
+              return;
+            }
             const [pi, ni] = parseKey(hit);
             if (e.shiftKey && isOn(paths[pi].nodes[ni]) && !layer.glyphLocked) {
               // Shift+double-click: the node becomes super-smooth, or back to smooth.
@@ -2674,6 +2687,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               <button type="button" role="menuitem" onClick={() => { addGuideAt(ctxMenu.wx, ctxMenu.wy, 0); setCtxMenu(null); }}>{t("Add Horizontal Guide")}</button>
               <button type="button" role="menuitem" onClick={() => { addGuideAt(ctxMenu.wx, ctxMenu.wy, 90); setCtxMenu(null); }}>{t("Add Vertical Guide")}</button>
             </>}
+            {onOpenGlyph && <>
+              <span className="ctx-sep" />
+              <button type="button" role="menuitem" onClick={() => { showUsers(); setCtxMenu(null); }}>{t("Glyphs Using “{name}”…", { name: glyph })}</button>
+            </>}
           </div>
         )}
         {editingBackground && (
@@ -2748,7 +2765,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
             </>
           ) : oneComp ? (
             <>
-              <span className="info-comp k-label" title={t("Selected component")}>◇ {oneComp.base}</span>
+              {onOpenGlyph ? (
+                <button type="button" className="info-comp info-comp-link k-label" title={t("Open “{name}” (or double-click the component)", { name: oneComp.base })}
+                  onClick={() => onOpenGlyph(oneComp.base)}>◇ {oneComp.base} ↗</button>
+              ) : <span className="info-comp k-label" title={t("Selected component")}>◇ {oneComp.base}</span>}
               <button type="button" className={`align-toggle${oneComp.align ? " is-auto" : " is-manual"}`} aria-pressed={oneComp.align}
                 title={oneComp.align ? t("Placed by its anchors. Click to place it by hand.") : t("Placed by hand. Click to place it by its anchors.")}
                 onClick={() => setComponentAlign([...compSel][0], !oneComp.align)}>
@@ -3281,6 +3301,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         </span>
       </footer>
       {picking && <ComponentPicker names={glyphs.map((g) => g.name)} exclude={glyph} onPick={addComponent} onCancel={() => setPicking(false)} />}
+      {users && onOpenGlyph && <ComponentPicker title={t("Glyphs Using “{name}”", { name: glyph })} names={users.map((u) => u.name)} exclude={glyph}
+        onPick={(name) => { setUsers(null); onOpenGlyph(name); }} onCancel={() => setUsers(null)} />}
       {partPick && (() => {
         const prefix = partPick.kind === "corner" ? "_corner" : partPick.kind === "cap" ? "_cap" : "_segment";
         const names = glyphs.map((g) => g.name).filter((n) => n.startsWith(prefix));

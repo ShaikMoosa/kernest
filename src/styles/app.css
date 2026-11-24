@@ -390,6 +390,8 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .component-label { font: 500 11px var(--k-font-ui); fill: var(--k-text-accent); pointer-events: none; }
 .toolbar-sep { width: 1px; height: 20px; background: var(--k-border-default); margin: 0 var(--k-space-6); }
 .info-comp { align-self: center; color: var(--k-text-accent); white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.info-comp-link { background: none; border: 0; padding: 0 var(--k-space-4); border-radius: var(--k-radius-sm); cursor: pointer; font: inherit; }
+.info-comp-link:hover, .info-comp-link:focus-visible { text-decoration: underline; }
 
 /* ---------- Anchors & component alignment ---------- */
 .anchor-mark { fill: var(--k-bg-surface); stroke: var(--k-editor-anchor); stroke-width: 1.5; }

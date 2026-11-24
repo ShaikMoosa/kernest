@@ -128,6 +128,47 @@ pub fn component_creates_cycle(font: &Font, glyph: &str, base: &str) -> bool {
     false
 }
 
+/// A glyph that uses another as a component (Handbook 9.1.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlyphUse {
+    pub name: String,
+    /// It has the component itself; otherwise it gets it through another component.
+    pub direct: bool,
+}
+
+/// The glyphs that use `glyph` as a component in any layer, directly or through other
+/// components (`dieresiscomb` in `dieresis` in `edieresis`), in font order.
+pub fn glyphs_using(font: &Font, glyph: &str) -> Vec<GlyphUse> {
+    let uses = |g: &crate::model::Glyph, base: &str| {
+        g.layers.iter().any(|l| {
+            l.shapes
+                .iter()
+                .any(|s| matches!(s, Shape::Component { base: b, .. } if b == base))
+        })
+    };
+    let mut found: std::collections::HashMap<&str, bool> = std::collections::HashMap::new();
+    let mut queue = vec![glyph.to_string()];
+    while let Some(current) = queue.pop() {
+        for g in &font.glyphs {
+            if g.name == glyph || found.contains_key(g.name.as_str()) || !uses(g, &current) {
+                continue;
+            }
+            found.insert(&g.name, current == glyph);
+            queue.push(g.name.clone());
+        }
+    }
+    // A glyph reached through another may also use `glyph` itself.
+    font.glyphs
+        .iter()
+        .filter_map(|g| {
+            found.get(g.name.as_str()).map(|_| GlyphUse {
+                name: g.name.clone(),
+                direct: uses(g, glyph),
+            })
+        })
+        .collect()
+}
+
 /// Kerning groups of a glyph: (left group, right group).
 pub type Groups = (Option<String>, Option<String>);
 
@@ -897,6 +938,58 @@ mod tests {
         translate_x(&mut l, 10.0);
         assert!(matches!(&l.shapes[0], Shape::Component { transform, .. } if transform[4] == 10.0));
         assert_eq!(l.anchors[0].x, 260.0);
+    }
+}
+
+#[cfg(test)]
+mod glyphs_using_tests {
+    use super::*;
+    use crate::sample::sample_font;
+
+    fn comp(base: &str) -> Shape {
+        Shape::component(base, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+    }
+
+    /// Handbook 9.1.5 (Moving between Base Glyphs and Composites): the glyphs that use
+    /// a glyph, directly or through other components, in font order.
+    #[test]
+    fn lists_direct_and_nested_users_in_font_order() {
+        let mut f = sample_font();
+        // B uses I; L uses B (so I through B); O uses both I and B; H uses only H's
+        // own outline.
+        f.glyph_mut("B").unwrap().layers[0].shapes.push(comp("I"));
+        f.glyph_mut("L").unwrap().layers[0].shapes = vec![comp("B")];
+        f.glyph_mut("O").unwrap().layers[0]
+            .shapes
+            .extend([comp("B"), comp("I")]);
+        let got: Vec<(String, bool)> = glyphs_using(&f, "I")
+            .into_iter()
+            .map(|u| (u.name, u.direct))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("B".to_string(), true),
+                ("L".to_string(), false),
+                ("O".to_string(), true)
+            ]
+        );
+        assert_eq!(
+            glyphs_using(&f, "B")
+                .iter()
+                .map(|u| u.name.as_str())
+                .collect::<Vec<_>>(),
+            ["L", "O"]
+        );
+        assert!(glyphs_using(&f, "O").is_empty());
+        assert!(glyphs_using(&f, "nope").is_empty());
+        // A component in any layer counts.
+        let mut g = f.clone();
+        let mut extra = g.glyph("A").unwrap().layers[0].clone();
+        extra.master_id = "m01".into();
+        extra.shapes = vec![comp("O")];
+        g.glyph_mut("A").unwrap().layers[0] = extra;
+        assert_eq!(glyphs_using(&g, "O")[0].name, "A");
     }
 }
 

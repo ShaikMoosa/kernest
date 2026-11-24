@@ -1289,6 +1289,8 @@ export interface Backend {
   addPathPart(glyph: string, masterId: string, part: PathPart): Promise<LayerView>;
   setPathMask(glyph: string, masterId: string, path: number, mask: boolean): Promise<LayerView>;
   hoiView(glyph: string, masterId: string, axis: string): Promise<HoiView>;
+  /** The glyphs that use `glyph` as a component, directly or nested, in font order. */
+  glyphsUsing(glyph: string): Promise<GlyphUse[]>;
   setHoi(glyph: string, masterId: string, axis: string, path: number, node: number, kind: HoiKind | null): Promise<LayerView>;
   setAnnotations(glyph: string, masterId: string, annotations: Annotation[]): Promise<LayerView>;
   setLayerImage(glyph: string, masterId: string, image: LayerImage | null): Promise<LayerView>;
@@ -1779,6 +1781,7 @@ const tauriBackend: Backend = {
   addPathPart: (glyph, masterId, part) => invoke("add_path_part", { glyph, masterId, part }),
   setPathMask: (glyph, masterId, path, mask) => invoke("set_path_mask", { glyph, masterId, path, mask }),
   hoiView: (glyph, masterId, axis) => invoke("hoi_view", { glyph, masterId, axis }),
+  glyphsUsing: (glyph) => invoke("glyphs_using", { glyph }),
   setHoi: (glyph, masterId, axis, path, node, kind) => invoke("set_hoi", { glyph, masterId, axis, path, node, kind }),
   setAnnotations: (glyph, masterId, annotations) => invoke("set_annotations", { glyph, masterId, annotations }),
   setLayerImage: (glyph, masterId, image) => invoke("set_layer_image", { glyph, masterId, image }),
@@ -1876,6 +1879,13 @@ interface Snapshot {
   paths: EditPath[];
   components: ComponentEdit[];
   hints?: Hint[];
+}
+
+/** A glyph that uses another as a component (Handbook 9.1.5). */
+export interface GlyphUse {
+  name: string;
+  /** It has the component itself, not only through another component. */
+  direct: boolean;
 }
 
 interface MockGlyph extends Snapshot {
@@ -2636,6 +2646,21 @@ const mockBackend: Backend = {
   },
   async hoiView() {
     return { axes: [], axis: "", curves: [] };
+  },
+  async glyphsUsing(glyph) {
+    const d = need();
+    const uses = (g: MockGlyph, base: string) => g.components.some((c) => c.base === base);
+    const found = new Set<string>();
+    const queue = [glyph];
+    while (queue.length) {
+      const current = queue.pop()!;
+      for (const g of d.glyphs) {
+        if (g.name === glyph || found.has(g.name) || !uses(g, current)) continue;
+        found.add(g.name);
+        queue.push(g.name);
+      }
+    }
+    return d.glyphs.filter((g) => found.has(g.name)).map((g) => ({ name: g.name, direct: uses(g, glyph) }));
   },
   async setHoi() {
     throw "Interpolation curves need the desktop app (npm run tauri dev).";
