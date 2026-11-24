@@ -20,6 +20,7 @@ import { PixelPreviewPanel } from "./PixelPreviewPanel";
 import { PreviewDock } from "./PreviewPane";
 import { defaultPreviewText } from "../lib/previewPane";
 import { formatDistance, guideSegment } from "../lib/measureLine";
+import { allNodeKeys, clickNode, invertNodeSelection, nudgeStep, panTo, pathNodeKeys, penDown, penDrag, toggleSmooth, wheelPan } from "../lib/editTools";
 
 type Tool = "select" | "pen" | "rect" | "ellipse" | "knife" | "pixel" | "annotate" | "hoi" | "hand" | "measure";
 type AnnotSub = "select" | Annotation["kind"];
@@ -1106,8 +1107,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       e.preventDefault();
       const r = el.getBoundingClientRect();
       if (e.ctrlKey || e.altKey) zoomAt(Math.pow(1.0015, -e.deltaY), e.clientX - r.left, e.clientY - r.top);
-      else if (e.shiftKey) setView((v) => ({ ...v, ox: v.ox - e.deltaY }));
-      else setView((v) => ({ ...v, ox: v.ox - e.deltaX, oy: v.oy - e.deltaY }));
+      else setView((v) => wheelPan(v, e));
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -1335,12 +1335,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         setGuideSel(null);
         drag.current = { mode: "anchor", startScreen: sp, startWorld: wp, base, baseComps, baseAnchors, moved: false, anchor: ah };
       } else if (hit) {
-        let sel = selection;
-        if (e.shiftKey) {
-          sel = new Set(selection);
-          if (sel.has(hit)) sel.delete(hit); else sel.add(hit);
-        } else if (!selection.has(hit)) {
-          sel = new Set([hit]);
+        const { selection: sel, fresh } = clickNode(selection, hit, e.shiftKey);
+        if (fresh) {
           setCompSel(new Set());
           setAnchorSel(new Set());
         }
@@ -1397,33 +1393,19 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
 
     if (activeTool === "pen") {
       const p = round(wp);
-      const pn = pen.current;
-      const open = pn.path !== null && base[pn.path] && !base[pn.path].closed ? base[pn.path] : null;
-      if (open) {
-        const first = open.nodes[0];
+      // Click the first point to close the path.
+      const r = penDown(base, pen.current, p, (first) => {
         const fs = toScreen(first.x, first.y);
-        if (open.nodes.filter(isOn).length >= 2 && Math.hypot(fs.x - sp.x, fs.y - sp.y) <= HIT + 1) {
-          // Close the path on its first point.
-          if (pn.pendingOut) {
-            open.nodes.push(off(pn.pendingOut), off(first));
-            first.kind = "curve";
-          } else first.kind = "line";
-          open.closed = true;
-          pen.current = { path: null, pendingOut: null };
-          setPaths(base);
-          commit(base);
-          rerender((n) => n + 1);
-          return;
-        }
-        if (pn.pendingOut) open.nodes.push(off(pn.pendingOut), off(p), { ...p, kind: "curve", smooth: false });
-        else open.nodes.push({ ...p, kind: "line", smooth: false });
-        pn.pendingOut = null;
-        drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), baseComps, baseAnchors, moved: false, pi: pn.path!, ni: open.nodes.length - 1 };
-      } else {
-        base.push({ closed: false, nodes: [{ ...p, kind: "line", smooth: false }] });
-        pen.current = { path: base.length - 1, pendingOut: null };
-        drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), baseComps, baseAnchors, moved: false, pi: base.length - 1, ni: 0 };
+        return Math.hypot(fs.x - sp.x, fs.y - sp.y) <= HIT + 1;
+      });
+      pen.current = r.pen;
+      if (r.closed) {
+        setPaths(base);
+        commit(base);
+        rerender((n) => n + 1);
+        return;
       }
+      if (r.drag) drag.current = { mode: "pen", startScreen: sp, startWorld: p, base: clonePaths(base), baseComps, baseAnchors, moved: false, pi: r.drag.pi, ni: r.drag.ni };
       setPaths(base);
       setSelection(new Set());
       setCompSel(new Set());
@@ -1478,7 +1460,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     }
 
     if (d.mode === "pan" && d.startView) {
-      setView({ ...d.startView, ox: d.startView.ox + sp.x - d.startScreen.x, oy: d.startView.oy + sp.y - d.startScreen.y });
+      setView(panTo(d.startView, d.startScreen, sp));
     } else if (d.mode === "anchor") {
       let dx = snapV(wp.x - d.startWorld.x), dy = snapV(wp.y - d.startWorld.y);
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
@@ -1579,24 +1561,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     } else if (d.mode === "shape") {
       setPreview(shapeFor(d.startWorld, round(wp), e.shiftKey));
     } else if (d.mode === "pen" && d.pi !== undefined && d.ni !== undefined) {
-      const o = d.startWorld;
-      const v = { x: Math.round(wp.x - o.x), y: Math.round(wp.y - o.y) };
-      const next = clonePaths(d.base);
-      const p = next[d.pi];
-      let ni = d.ni;
-      const node = p.nodes[ni];
-      node.smooth = true;
-      const inHandle = { x: o.x - v.x, y: o.y - v.y };
-      if (ni > 0) {
-        if (node.kind === "curve") p.nodes[ni - 1] = off(inHandle);
-        else {
-          const prev = p.nodes[ni - 1];
-          p.nodes.splice(ni, 0, off(prev), off(inHandle));
-          ni += 2;
-          p.nodes[ni].kind = "curve";
-        }
-      }
-      pen.current.pendingOut = { x: o.x + v.x, y: o.y + v.y };
+      const { paths: next, pendingOut } = penDrag(d.base, d.pi, d.ni, d.startWorld, wp);
+      pen.current.pendingOut = pendingOut;
       d.lastPaths = next;
       setPaths(next);
     }
@@ -1765,13 +1731,12 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     if (name === "add-component") return setPicking(true);
     if (name === "select-all" || name === "invert-selection") {
       const { paths, comps, selection, compSel } = latest.current;
-      const all = new Set(paths.flatMap((p, pi) => p.nodes.map((_, ni) => nodeKey(pi, ni))));
       const allComps = new Set(comps.map((_, i) => i));
       if (name === "select-all") {
-        setSelection(all);
+        setSelection(allNodeKeys(paths));
         setCompSel(allComps);
       } else {
-        setSelection(new Set([...all].filter((k) => !selection.has(k))));
+        setSelection(invertNodeSelection(paths, selection));
         setCompSel(new Set([...allComps].filter((i) => !compSel.has(i))));
       }
       return;
@@ -1915,10 +1880,10 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       if (typing(e.target)) return;
       const { paths, comps, anchors, selection, compSel, anchorSel } = latest.current;
       if (e.key === " ") { setSpaceDown(true); e.preventDefault(); return; }
-      if (e.ctrlKey && !e.altKey) {
+      if (e.ctrlKey && !e.altKey && !e.key.startsWith("Arrow")) {
         const k = e.key.toLowerCase();
         if (k === "a") {
-          setSelection(new Set(paths.flatMap((p, pi) => (p.locked ? [] : p.nodes.map((_, ni) => nodeKey(pi, ni))))));
+          setSelection(allNodeKeys(paths));
           setCompSel(new Set(comps.map((_, i) => i)));
           if (showAnchors && !latest.current.editingBackground) setAnchorSel(new Set(anchors.map((a) => a.name)));
         } else if (k === "0") fit();
@@ -1942,17 +1907,15 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
         return;
       }
       if (e.altKey) return;
-      const nudge: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
-      if (nudge[e.key] && showAnchors && anchorSel.size) {
-        const m = e.shiftKey ? 10 : 1;
-        const [dx, dy] = [nudge[e.key][0] * m, nudge[e.key][1] * m];
+      const step = nudgeStep(e.key, { shift: e.shiftKey, ctrl: e.ctrlKey });
+      if (step && showAnchors && anchorSel.size) {
+        const [dx, dy] = step;
         moveAnchorsBy([...anchorSel].map((name) => ({ name, dx, dy })));
         e.preventDefault();
         return;
       }
-      if (nudge[e.key] && (selection.size || compSel.size)) {
-        const m = e.shiftKey ? 10 : 1;
-        const [dx, dy] = [nudge[e.key][0] * m, nudge[e.key][1] * m];
+      if (step && (selection.size || compSel.size)) {
+        const [dx, dy] = step;
         const next = moveSelection(paths, selection, dx, dy);
         const nextComps = comps.map((c, i) => (compSel.has(i) ? { ...c, dx: c.dx + dx, dy: c.dy + dy, align: false } : c));
         setPaths(next);
@@ -1985,14 +1948,8 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
       }
       if (e.key === "Enter" && selection.size) {
         // Toggle smooth / corner on selected curve points (a corner is never super-smooth).
-        const next = clonePaths(paths);
-        let changed = false;
-        for (const k of selection) {
-          const [pi, ni] = parseKey(k);
-          const n = next[pi]?.nodes[ni];
-          if (n && isOn(n)) { n.smooth = !n.smooth; if (!n.smooth) n.g2 = false; changed = true; }
-        }
-        if (changed) { setPaths(next); commit(next); }
+        const next = toggleSmooth(paths, selection);
+        if (next) { setPaths(next); commit(next); }
         e.preventDefault();
         return;
       }
@@ -2188,7 +2145,7 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
               runPathEdit("super-smooth", { nodes: [[pi, ni]] });
               return;
             }
-            setSelection(new Set(paths[pi].nodes.map((_, k) => nodeKey(pi, k))));
+            setSelection(pathNodeKeys(paths, pi));
           }}>
           {/* Metric lines */}
           {showMetrics && lines.map(([label, y]) => {
@@ -3385,8 +3342,6 @@ export function EditView({ glyph, masterId, version, active, glyphs, onCommitted
     </div>
   );
 }
-
-const off = (p: Pt): EditNode => ({ x: p.x, y: p.y, kind: "offcurve", smooth: false });
 
 /** The selected guide's name, editable in place; empty clears it. */
 function GuideNameField({ name, onRename }: { name: string; onRename: (n: string) => void }) {
