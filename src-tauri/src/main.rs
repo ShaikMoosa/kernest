@@ -142,6 +142,7 @@ fn main() {
             commands::set_pixels,
             commands::set_path_mask,
             commands::hoi_view,
+            commands::glyphs_using,
             commands::set_hoi,
             images::set_annotations,
             images::set_layer_image,

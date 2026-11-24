@@ -2808,4 +2808,9 @@ export const ar: Dict = {
   "Kerning Groups": "مجموعات التقنين",
   "Glyph Info": "معلومات الحرف",
   "Font Change": "تغيير في الخط",
+  // SMO-87 · Base glyphs and composites
+  "No glyph uses “{name}” as a component.": "لا يستخدم أي حرف “{name}” كمكوّن.",
+  "Glyphs Using “{name}”…": "الحروف التي تستخدم “{name}”…",
+  "Glyphs Using “{name}”": "الحروف التي تستخدم “{name}”",
+  "Open “{name}” (or double-click the component)": "فتح “{name}” (أو انقر نقرًا مزدوجًا على المكوّن)",
 };

@@ -1569,6 +1569,32 @@ fn hoi_view_in(
     })
 }
 
+/// A glyph that uses another as a component, for "Glyphs Using…" (Handbook 9.1.5).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlyphUse {
+    name: String,
+    /// It has the component itself, not only through another component.
+    direct: bool,
+}
+
+/// The glyphs that use `glyph` as a component, directly or nested, in font order.
+#[tauri::command]
+pub fn glyphs_using(state: State<AppState>, glyph: String) -> CmdResult<Vec<GlyphUse>> {
+    let mut guard = lock(&state)?;
+    let doc = doc_mut(&mut guard)?;
+    if doc.font.glyph(&glyph).is_none() {
+        return Err(format!("There is no glyph named \"{glyph}\"."));
+    }
+    Ok(kernest_core::edit::glyphs_using(&doc.font, &glyph)
+        .into_iter()
+        .map(|u| GlyphUse {
+            name: u.name,
+            direct: u.direct,
+        })
+        .collect())
+}
+
 /// Sets or (with no kind) removes a node's interpolation curve along an axis.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]

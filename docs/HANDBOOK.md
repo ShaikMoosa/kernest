@@ -158,6 +158,7 @@ Each glyph opens in its own tab. The toolbar has these tools, each with a one-le
 - **Adding and removing:** with either shape, Shift+drag adds to the selection and Ctrl+drag takes away from it. Alt+drag uses the other shape for that one drag.
 - **Zoom:** Ctrl+= and Ctrl+- zoom in and out, and Ctrl+0 fits the glyph to the window.
 - **Components** (Ctrl+Shift+C): add another glyph as a component. Kernest won't let a glyph contain itself.
+- **Base glyphs and composites:** double-click a component, or click its name in the panel at the bottom, to open the glyph it comes from in its own tab. Right-click the canvas and choose **Glyphs Using “name”…** to list every glyph that uses this one as a component, also through other components (a dieresis inside `edieresis`); pick one to open it.
 - **Component from Selection** (Glyph menu, or right-click with something selected) turns the selected paths and components into a new glyph:
   - A dialog suggests a name such as `_part.H`. Start the name with `_` to keep the new glyph out of exported fonts.
   - The new glyph goes right after the current one, with the shapes from every master and intermediate or alternate layer. A component of it takes their place at the same position.

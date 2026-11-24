@@ -2597,4 +2597,9 @@ export const es: Dict = {
   "Kerning Groups": "Grupos de kerning",
   "Glyph Info": "Información del glifo",
   "Font Change": "Cambio en la fuente",
+  // SMO-87 · Base glyphs and composites
+  "No glyph uses “{name}” as a component.": "Ningún glifo usa “{name}” como componente.",
+  "Glyphs Using “{name}”…": "Glifos que usan “{name}”…",
+  "Glyphs Using “{name}”": "Glifos que usan “{name}”",
+  "Open “{name}” (or double-click the component)": "Abrir “{name}” (o haz doble clic en el componente)",
 };
