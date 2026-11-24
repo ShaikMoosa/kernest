@@ -472,6 +472,55 @@ mod tests {
         Document::new(f, None)
     }
 
+    /// Handbook 8.2.7 (Manual Kerning Code): hand-written kern code with the
+    /// `@MMK_` group classes works next to the kerning from the Kerning window.
+    #[test]
+    fn manual_kerning_code_adds_to_the_kerning() {
+        use kernest_core::KernPair;
+        let mut f = sample_font();
+        let mid = f.masters[0].id.clone();
+        f.glyph_mut("T").unwrap().right_group = Some("T".into());
+        f.glyph_mut("o").unwrap().left_group = Some("o".into());
+        f.glyph_mut("e").unwrap().left_group = Some("o".into());
+        f.kerning.insert(
+            mid.clone(),
+            vec![KernPair {
+                left: "@T".into(),
+                right: "@o".into(),
+                value: -70.0,
+            }],
+        );
+        // No languagesystem lines, as Glyphs users write it.
+        f.features =
+            "feature kern {\n  pos @MMK_L_T' -30 @MMK_R_o;\n  pos H H -25;\n} kern;\n".into();
+        assert!(kernest_core::features::check(&f).is_empty());
+        let mut doc = Document::new(f.clone(), None);
+        // The kerning of the first glyph of each two-letter text.
+        let kern = |doc: &mut Document, text: &str| -> f64 {
+            let on = shape(doc, text, &mid, None, &[], None).unwrap().lines[0][0].advance;
+            let off = shape(doc, text, &mid, None, &["kern=0".into()], None)
+                .unwrap()
+                .lines[0][0]
+                .advance;
+            on - off
+        };
+        // T–o: the group pair (−70) and the hand-written rule (−30) both apply, also
+        // to e, in T's and o's groups.
+        assert_eq!(kern(&mut doc, "To"), -100.0);
+        assert_eq!(kern(&mut doc, "Te"), -100.0);
+        // A pair only the hand-written code kerns.
+        assert_eq!(kern(&mut doc, "HH"), -25.0);
+        // Neither: x is in no group.
+        assert_eq!(kern(&mut doc, "Tx"), 0.0);
+
+        // Glyphs' "# Automatic Code" marker changes nothing: the kerning still follows
+        // the hand-written code.
+        f.features = f.features.replace("} kern;", "# Automatic Code\n} kern;");
+        let mut doc = Document::new(f, None);
+        assert_eq!(kern(&mut doc, "To"), -100.0);
+        assert_eq!(kern(&mut doc, "HH"), -25.0);
+    }
+
     #[test]
     fn arabic_letters_join_with_generated_positional_features() {
         // beh and alef with positional forms drawn like H (SMO-20).

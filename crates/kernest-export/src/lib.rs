@@ -2690,6 +2690,407 @@ pub(crate) mod tests {
         assert_eq!(advance(&medium, 'H'), 730 + 20);
     }
 
+    /// The bounds (x min, y min, x max, y max) of the glyph for `ch` in a TrueType font.
+    fn glyph_bounds(bytes: &[u8], ch: char) -> (i16, i16, i16, i16) {
+        let font = FontRef::new(bytes).unwrap();
+        let gid = font.cmap().unwrap().map_codepoint(ch).expect("mapped");
+        let (glyf, loca) = (font.glyf().unwrap(), font.loca(None).unwrap());
+        let g = loca.get_glyf(gid, &glyf).unwrap().expect("an outline");
+        (g.x_min(), g.y_min(), g.x_max(), g.y_max())
+    }
+
+    /// H drawn as one triangle whose top node is at `top_x` in the Bold master.
+    fn triangle_h(f: &mut Font, top_x: f64) {
+        use kernest_core::{Node, Path};
+        let g = f.glyph_mut("H").unwrap();
+        for l in g.layers.iter_mut() {
+            let x = if l.master_id == "m01" { 100.0 } else { top_x };
+            l.shapes = vec![Shape::Path(Path {
+                closed: true,
+                nodes: vec![
+                    Node::new(0.0, 0.0, NodeKind::Line),
+                    Node::new(100.0, 0.0, NodeKind::Line),
+                    Node::new(x, 700.0, NodeKind::Line),
+                ],
+                locked: false,
+                stroke: None,
+                mask: false,
+            })];
+            l.hints.clear();
+        }
+    }
+
+    /// Handbook 10.3.2 (Minimal Multiple Masters Setup): two masters on one axis give
+    /// a variable font and any instance between them, with every point interpolated.
+    #[test]
+    fn two_masters_interpolate_outlines_and_metrics() {
+        let mut f = two_masters();
+        triangle_h(&mut f, 400.0);
+        f.instances = vec![
+            instance("Regular", 400.0, None),
+            instance("Medium", 550.0, None),
+            instance("Bold", 700.0, None),
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let style =
+            |s: &str| std::fs::read(&r.files.iter().find(|x| x.style == s).unwrap().path).unwrap();
+        // The top node goes from x 100 to 400, so Medium has it at 250; H is 50 wider.
+        assert_eq!(glyph_bounds(&style("Regular"), 'H'), (0, 0, 100, 700));
+        assert_eq!(glyph_bounds(&style("Medium"), 'H'), (0, 0, 250, 700));
+        assert_eq!(glyph_bounds(&style("Bold"), 'H'), (0, 0, 400, 700));
+        assert_eq!(advance(&style("Medium"), 'H'), 730);
+        // A glyph that's the same in both masters stays put.
+        assert_eq!(
+            glyph_bounds(&style("Medium"), 'O'),
+            glyph_bounds(&style("Regular"), 'O')
+        );
+        // The variable font spans the two masters, with deltas for H.
+        let vf =
+            std::fs::read(&r.files.iter().find(|x| x.kind == "variable").unwrap().path).unwrap();
+        let font = FontRef::new(&vf).unwrap();
+        let axis = font.fvar().unwrap().axes().unwrap()[0];
+        assert_eq!(
+            (
+                axis.min_value().to_f64(),
+                axis.default_value().to_f64(),
+                axis.max_value().to_f64()
+            ),
+            (400.0, 400.0, 700.0)
+        );
+        let gid = font.cmap().unwrap().map_codepoint('H').unwrap();
+        let gvar = font.gvar().unwrap();
+        assert!(gvar.glyph_variation_data(gid).unwrap().is_some());
+        let o = font.cmap().unwrap().map_codepoint('O').unwrap();
+        assert!(gvar.glyph_variation_data(o).unwrap().is_none());
+    }
+
+    /// Handbook 10.6.2 (Virtual Masters): an axis with no masters along it changes only
+    /// the glyphs with an intermediate layer at the virtual master's location.
+    #[test]
+    fn virtual_master_axis_changes_only_glyphs_with_layers_there() {
+        use kernest_core::{layers, VirtualMaster};
+        let mut f = two_masters();
+        let mut axes = f.axes.clone();
+        axes.push(Axis {
+            name: "Crossbar".into(),
+            tag: "CRSB".into(),
+            min: 0.0,
+            default: 0.0,
+            max: 100.0,
+            hidden: false,
+            map: Vec::new(),
+            labels: Vec::new(),
+        });
+        f = structure::set_axes(&f, axes).unwrap();
+        let high = BTreeMap::from([("wght".into(), 400.0), ("CRSB".into(), 100.0)]);
+        f = structure::set_virtual_masters(
+            &f,
+            vec![VirtualMaster {
+                name: "High bar".into(),
+                location: high.clone(),
+            }],
+        )
+        .unwrap();
+        let (mut f, brace) = layers::add_brace_layer(&f, "H", "m01", &high).unwrap();
+        f.glyph_mut("H").unwrap().layer_mut(&brace).unwrap().width += 60.0;
+        f.instances = vec![
+            instance("Regular", 400.0, None),
+            instance("High", 400.0, None),
+        ];
+        f.instances[1].location = high.clone();
+        f.instances.push(instance("Half", 400.0, None));
+        f.instances[2].location.insert("CRSB".into(), 50.0);
+
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let style =
+            |s: &str| std::fs::read(&r.files.iter().find(|x| x.style == s).unwrap().path).unwrap();
+        assert_eq!(advance(&style("Regular"), 'H'), 680);
+        assert_eq!(advance(&style("High"), 'H'), 740);
+        assert_eq!(advance(&style("Half"), 'H'), 710);
+        // Every other glyph stays as drawn along the new axis.
+        assert_eq!(
+            advance(&style("High"), 'O'),
+            advance(&style("Regular"), 'O')
+        );
+
+        let vf =
+            std::fs::read(&r.files.iter().find(|x| x.kind == "variable").unwrap().path).unwrap();
+        let font = FontRef::new(&vf).unwrap();
+        let tags: Vec<String> = font
+            .fvar()
+            .unwrap()
+            .axes()
+            .unwrap()
+            .iter()
+            .map(|a| a.axis_tag().to_string())
+            .collect();
+        assert_eq!(tags, ["wght", "CRSB"]);
+    }
+
+    /// Handbook 10.9.3 (Interpolation Timing): a node's curve decides where it is
+    /// along the way, in static instances as well as the variable font.
+    #[test]
+    fn interpolation_curves_set_the_timing_of_instances() {
+        use kernest_core::hoi::{set_curve, HoiKind};
+        let mut f = two_masters();
+        triangle_h(&mut f, 400.0);
+        // The top node eases out: both handles sit at its Regular position, so it
+        // lingers there and catches up at the end.
+        let kind = HoiKind::Handles {
+            a: [100.0, 700.0],
+            b: [100.0, 700.0],
+        };
+        let mut f = set_curve(&f, "H", "m01", "wght", 0, 2, Some(kind.clone())).unwrap();
+        f.instances = vec![
+            instance("Regular", 400.0, None),
+            instance("Quarter", 475.0, None),
+            instance("Medium", 550.0, None),
+            instance("Bold", 700.0, None),
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(true, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let x_max = |s: &str| {
+            let bytes =
+                std::fs::read(&r.files.iter().find(|x| x.style == s).unwrap().path).unwrap();
+            glyph_bounds(&bytes, 'H').2
+        };
+        let on_curve = |t: f64| kind.at([100.0, 700.0], [400.0, 700.0], t)[0].round() as i16;
+        assert_eq!(x_max("Quarter"), on_curve(0.25));
+        assert_eq!(x_max("Medium"), on_curve(0.5));
+        assert!(x_max("Medium") < 250, "behind the straight line");
+        // The ends stay where the masters have them.
+        assert_eq!(x_max("Regular"), 100);
+        assert_eq!(x_max("Bold"), 400);
+        // The variable font follows the curve through intermediate regions.
+        let vf =
+            std::fs::read(&r.files.iter().find(|x| x.kind == "variable").unwrap().path).unwrap();
+        let font = FontRef::new(&vf).unwrap();
+        let gid = font.cmap().unwrap().map_codepoint('H').unwrap();
+        let data = font
+            .gvar()
+            .unwrap()
+            .glyph_variation_data(gid)
+            .unwrap()
+            .unwrap();
+        assert!(
+            data.tuples().count() > 1,
+            "more than the master's own delta"
+        );
+    }
+
+    /// Handbook 13.3.3 (Hinting Multiple Masters): an instance between masters gets
+    /// the masters' alignment zones and stems interpolated.
+    #[test]
+    fn instances_interpolate_zones_and_stems() {
+        use kernest_core::{Stem, Zone};
+        use write_fonts::read::ps::cff::dict::{self, Entry};
+        use write_fonts::read::ps::cff::index::Index;
+        use write_fonts::read::ps::cff::CffFontRef;
+        use write_fonts::types::{Fixed, Tag};
+        let mut f = two_masters();
+        for (i, (x_height, overshoot, stem)) in [(500.0, 10.0, 80.0), (520.0, 16.0, 120.0)]
+            .into_iter()
+            .enumerate()
+        {
+            let m = &mut f.masters[i];
+            m.alignment_zones = vec![
+                Zone {
+                    position: 0.0,
+                    size: -overshoot,
+                },
+                Zone {
+                    position: x_height,
+                    size: overshoot,
+                },
+            ];
+            m.stems = vec![Stem {
+                name: "v0".into(),
+                horizontal: false,
+                value: stem,
+            }];
+        }
+        f.instances = vec![
+            instance("Regular", 400.0, None),
+            instance("Medium", 550.0, None),
+            instance("Bold", 700.0, None),
+        ];
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(false, true, out.path());
+        opts.otf = true;
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let private = |style: &str| {
+            let file = r
+                .files
+                .iter()
+                .find(|x| x.style == style && x.format == "otf")
+                .unwrap();
+            let bytes = std::fs::read(&file.path).unwrap();
+            let font = FontRef::new(&bytes).unwrap();
+            let table = font
+                .table_data(Tag::new(b"CFF "))
+                .unwrap()
+                .as_bytes()
+                .to_vec();
+            let cff = CffFontRef::new_cff(&table, 0, None).unwrap();
+            let (_, params) = cff.subfont_hinted(0, &[]).unwrap();
+            let blues: Vec<(f64, f64)> = params
+                .blues
+                .values()
+                .iter()
+                .map(|(a, b)| (a.to_f64(), b.to_f64()))
+                .collect();
+            let hdr = usize::from(table[2]);
+            let names = Index::new(&table[hdr..], false).unwrap();
+            let top_at = hdr + names.size_in_bytes().unwrap();
+            let top = Index::new(&table[top_at..], false).unwrap();
+            let range = dict::entries(top.get(0).unwrap(), None)
+                .filter_map(|e| e.ok())
+                .find_map(|e| match e {
+                    Entry::PrivateDictRange(r) => Some(r),
+                    _ => None,
+                })
+                .unwrap();
+            let std_vw = dict::entries(&table[range], None)
+                .filter_map(|e| e.ok())
+                .find_map(|e| match e {
+                    Entry::StdVw(v) => Some(v),
+                    _ => None,
+                });
+            (blues, std_vw)
+        };
+        assert_eq!(
+            private("Regular"),
+            (
+                vec![(-10.0, 0.0), (500.0, 510.0)],
+                Some(Fixed::from_i32(80))
+            )
+        );
+        assert_eq!(
+            private("Medium"),
+            (
+                vec![(-13.0, 0.0), (510.0, 523.0)],
+                Some(Fixed::from_i32(100))
+            )
+        );
+        assert_eq!(
+            private("Bold"),
+            (
+                vec![(-16.0, 0.0), (520.0, 536.0)],
+                Some(Fixed::from_i32(120))
+            )
+        );
+        // Masters whose zones don't match up leave instances the default master's.
+        f.masters[1].alignment_zones.pop();
+        let out = tempfile::tempdir().unwrap();
+        let mut opts = ExportOptions::ttf(false, true, out.path());
+        opts.otf = true;
+        let r2 = export(&f, &opts).unwrap();
+        let file = r2
+            .files
+            .iter()
+            .find(|x| x.style == "Medium" && x.format == "otf")
+            .unwrap();
+        let bytes = std::fs::read(&file.path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let table = font
+            .table_data(Tag::new(b"CFF "))
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let cff = CffFontRef::new_cff(&table, 0, None).unwrap();
+        let (_, params) = cff.subfont_hinted(0, &[]).unwrap();
+        assert_eq!(
+            params.blues.values(),
+            [
+                (Fixed::from_i32(-10), Fixed::ZERO),
+                (Fixed::from_i32(500), Fixed::from_i32(510))
+            ]
+        );
+    }
+
+    /// Handbook 10.11.1 (Grouping Fonts into Families): style links group up to four
+    /// styles under one family name; the rest keep the typographic family.
+    #[test]
+    fn style_links_group_styles_into_families() {
+        use kernest_core::StyleLink;
+        let mut f = two_masters();
+        let fam = f.info.family_name.clone();
+        let link = |bold: bool, italic: bool, base: &str| {
+            Some(StyleLink {
+                bold,
+                italic,
+                base: base.into(),
+            })
+        };
+        f.instances = vec![
+            instance("Regular", 400.0, None),
+            instance("Italic", 400.0, None),
+            instance("Bold", 700.0, None),
+            instance("Bold Italic", 700.0, None),
+            instance("Medium", 550.0, None),
+            instance("Medium Italic", 550.0, None),
+        ];
+        f.instances[1].style_link = link(false, true, "Regular");
+        f.instances[2].style_link = link(true, false, "Regular");
+        f.instances[3].style_link = link(true, true, "Regular");
+        f.instances[5].style_link = link(false, true, "Medium");
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let names = |style: &str| {
+            let bytes =
+                std::fs::read(&r.files.iter().find(|x| x.style == style).unwrap().path).unwrap();
+            let font = FontRef::new(&bytes).unwrap();
+            let os2 = font.os2().unwrap();
+            let sel = os2.fs_selection().bits();
+            (
+                name_in(&bytes, 0x0409, 1).unwrap(),
+                name_in(&bytes, 0x0409, 2).unwrap(),
+                sel & 1 != 0,  // italic
+                sel & 32 != 0, // bold
+            )
+        };
+        let medium = format!("{fam} Medium");
+        assert_eq!(
+            names("Regular"),
+            (fam.clone(), "Regular".into(), false, false)
+        );
+        assert_eq!(names("Italic"), (fam.clone(), "Italic".into(), true, false));
+        assert_eq!(names("Bold"), (fam.clone(), "Bold".into(), false, true));
+        assert_eq!(
+            names("Bold Italic"),
+            (fam.clone(), "Bold Italic".into(), true, true)
+        );
+        assert_eq!(
+            names("Medium"),
+            (medium.clone(), "Regular".into(), false, false)
+        );
+        assert_eq!(
+            names("Medium Italic"),
+            (medium, "Italic".into(), true, false)
+        );
+        // Outside the four linked styles, the typographic family keeps them together.
+        let bytes = std::fs::read(
+            &r.files
+                .iter()
+                .find(|x| x.style == "Medium Italic")
+                .unwrap()
+                .path,
+        )
+        .unwrap();
+        assert_eq!(name_in(&bytes, 0x0409, 16).as_deref(), Some(fam.as_str()));
+        assert_eq!(
+            name_in(&bytes, 0x0409, 17).as_deref(),
+            Some("Medium Italic")
+        );
+    }
+
     #[test]
     fn otf_and_woff2() {
         use write_fonts::read::ps::cff::CffFontRef;

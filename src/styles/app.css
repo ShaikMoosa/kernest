@@ -444,6 +444,8 @@ button.doc-tab { padding-inline-end: var(--k-space-12); }
 .filter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--k-space-8); }
 .filter-scope { display: flex; flex-direction: column; gap: var(--k-space-4); margin-block-start: var(--k-space-8); }
 .filter-dialog .origin-picker { margin-block: var(--k-space-8); }
+.filter-dialog .field > .text-input { flex: none; height: var(--k-control-lg); }
+.filter-dialog .filter-preview { flex: none; }
 .picker-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; }
 .picker-list .list-item { font-family: var(--k-font-code); font-size: 12px; }
 .svg-paste { flex: 1 1 auto; width: 100%; height: auto; min-height: 140px; padding: var(--k-space-8); font-family: var(--k-font-code); font-size: 12px; line-height: 1.5; resize: vertical; user-select: text; }
