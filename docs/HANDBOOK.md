@@ -69,7 +69,7 @@ The **Font** tab shows every glyph as a cell. Switch between **Grid** and **List
   - tick glyph sets to add whole ranges at once;
   - glyphs already in the font are skipped;
   - new glyphs get a layer in every master, and a suffixed glyph such as `a.sc` starts with the width of `a`.
-- **Export or not:** with glyphs selected, untick **Export this glyph** in the panel on the left to leave them out of compiled fonts, for example parts used only as components. Font View then shows "not exported".
+- **Export or not:** with glyphs selected, untick **Export this glyph** in the panel on the left to leave them out of compiled fonts, for example parts used only as components. Font View then shows "not exported". Glyphs you add whose names start with an underscore, such as `_part.shoulder` or `_corner.serif`, start out not exported.
 - **Remove glyphs** (Glyph › Remove Glyph, Ctrl+Delete): removes the selected glyphs, or the glyph whose tab is open.
   - Components that use a removed glyph are turned into outlines in the other glyphs, so nothing changes shape.
   - Kerning pairs that name a removed glyph are removed too.
@@ -271,7 +271,7 @@ Strokes are expanded to outlines when you export (TTF, OTF, WOFF2, variable font
 
 ### Brushes
 
-A **brush** is a glyph whose outline is drawn along a path instead of a pen, for example an arrow that follows a curve. Name the glyph `_brush.something`, untick **Export this glyph** so the brush itself stays out of your fonts, and give it a `start` and an `end` anchor: the part of the drawing between them stretches to the path's length and bends to follow it; anything beyond them extends past the path's ends. Without the anchors, the brush's left and right edges at y = 0 stand in.
+A **brush** is a glyph whose outline is drawn along a path instead of a pen, for example an arrow that follows a curve. Name the glyph `_brush.something` (glyphs whose names start with an underscore aren't exported, so the brush itself stays out of your fonts) and give it a `start` and an `end` anchor: the part of the drawing between them stretches to the path's length and bends to follow it; anything beyond them extends past the path's ends. Without the anchors, the brush's left and right edges at y = 0 stand in.
 
 In the Stroke panel, choose the brush from **Brush** (the list shows every glyph whose name starts with `_brush`). **Pen (no brush)** goes back to a pen. Change the brush glyph and every path drawn with it follows. Brush curves are split a fixed number of times before bending, so masters stay compatible.
 

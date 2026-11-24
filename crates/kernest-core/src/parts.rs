@@ -1394,6 +1394,154 @@ mod tests {
         );
     }
 
+    /// The drawn layer's paths as rounded points, for comparing placements.
+    fn drawn_paths(f: &Font) -> Vec<Vec<(f64, f64)>> {
+        let d = apply(f, f.glyph("H").unwrap().layer("m01").unwrap());
+        d.shapes
+            .iter()
+            .filter_map(|s| match s {
+                Shape::Path(p) => Some(
+                    p.nodes
+                        .iter()
+                        .map(|n| {
+                            (
+                                (n.x * 100.0).round() / 100.0 + 0.0,
+                                (n.y * 100.0).round() / 100.0 + 0.0,
+                            )
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn open_path(points: &[(f64, f64)]) -> Path {
+        Path {
+            closed: false,
+            nodes: points
+                .iter()
+                .map(|&(x, y)| Node::new(x, y, NodeKind::Line))
+                .collect(),
+            locked: false,
+            stroke: None,
+            mask: false,
+        }
+    }
+
+    /// H as a 100 × 300 rectangle with a corner glyph placed on its bottom-right
+    /// node, set up by `part`.
+    fn corner_on_h(
+        glyph: Path,
+        anchors: Vec<Anchor>,
+        extra: Vec<Path>,
+        part: impl Fn(&mut PathPart),
+    ) -> Font {
+        let mut f = sample_font();
+        host(&mut f);
+        add_glyph(&mut f, "_corner.test", glyph, anchors);
+        for l in f.glyph_mut("_corner.test").unwrap().layers.iter_mut() {
+            l.shapes.extend(extra.iter().cloned().map(Shape::Path));
+        }
+        let mut p = PathPart::new(PartKind::Corner, "_corner.test", 0, 1);
+        part(&mut p);
+        add_part(&f, "H", "m01", p).unwrap()
+    }
+
+    fn anchor(name: &str, x: f64, y: f64) -> Anchor {
+        Anchor {
+            name: name.into(),
+            x,
+            y,
+        }
+    }
+
+    /// Handbook 9.3.1 (Creating Corner Glyphs) and 9.3.6 (Closed Paths in Corners):
+    /// the corner glyph's first, open path replaces the corner; closed paths drawn with
+    /// it go along, placed the same way.
+    #[test]
+    fn corner_glyphs_bring_their_closed_paths_along() {
+        let cut = open_path(&[(0.0, 20.0), (-20.0, 0.0)]);
+        let mut dot = open_path(&[(-12.0, 8.0), (-8.0, 8.0), (-8.0, 12.0), (-12.0, 12.0)]);
+        dot.closed = true;
+        let f = corner_on_h(cut.clone(), vec![], vec![dot], |_| {});
+        let paths = drawn_paths(&f);
+        assert_eq!(paths.len(), 2, "{paths:?}");
+        assert_eq!(
+            paths[0],
+            [
+                (0.0, 0.0),
+                (80.0, 0.0),
+                (100.0, 20.0),
+                (100.0, 300.0),
+                (0.0, 300.0)
+            ]
+        );
+        // The dot sits inside the cut corner, 8 to 12 units in from both edges.
+        let mut dot = paths[1].clone();
+        dot.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(dot, [(88.0, 8.0), (88.0, 12.0), (92.0, 8.0), (92.0, 12.0)]);
+        // A corner glyph with nothing to place is refused when drawn.
+        let mut f2 = f.clone();
+        f2.glyph_mut("_corner.test").unwrap().layers[0]
+            .shapes
+            .clear();
+        assert_eq!(drawn_paths(&f2)[0].len(), 4, "the corner is left as drawn");
+    }
+
+    /// Handbook 9.3.3 and 9.3.4 (Adjusting the Entry and Exit Point of a Corner): a
+    /// `left` anchor marks where the corner leaves the incoming stroke and a `right`
+    /// anchor where it joins the outgoing one, as in Glyphs.
+    #[test]
+    fn left_and_right_anchors_set_where_a_corner_enters_and_exits() {
+        // A slanted corner whose ends lie off the axes.
+        let skew = || open_path(&[(8.0, 30.0), (-20.0, -6.0)]);
+        let place = |anchors: Vec<Anchor>| {
+            drawn_paths(&corner_on_h(skew(), anchors, vec![], |_| {}))[0].clone()
+        };
+        let plain = place(vec![]);
+        assert_eq!(plain[1..3], [(68.95, 0.0), (100.0, 20.88)]);
+        // With `left`, the corner turns so that anchor lines up with the stroke.
+        let left = place(vec![anchor("left", 0.0, 30.0)]);
+        assert_eq!(left[1..3], [(73.56, -7.66), (100.0, 29.5)]);
+        // With `right`, the exit point moves; the entry stays.
+        let right = place(vec![anchor("right", -20.0, 0.0)]);
+        assert_eq!(right[1..3], [(68.95, 0.0), (106.0, 20.0)]);
+        // With both, the corner is placed as drawn between them.
+        let both = place(vec![anchor("left", 0.0, 30.0), anchor("right", -20.0, 0.0)]);
+        assert_eq!(both[1..3], [(70.0, -8.0), (106.0, 20.0)]);
+        // The rest of the outline is untouched every time.
+        for p in [&plain, &left, &right, &both] {
+            assert_eq!(p[3..], [(100.0, 300.0), (0.0, 300.0)]);
+        }
+    }
+
+    /// Handbook 9.3.5 (Adjusting the Width and Height): the scale fields stretch the
+    /// corner, and a negative value flips it.
+    #[test]
+    fn corner_scale_stretches_and_flips() {
+        let cut = || open_path(&[(0.0, 20.0), (-20.0, 0.0)]);
+        let ends = |scale: [f64; 2]| {
+            drawn_paths(&corner_on_h(cut(), vec![], vec![], |p| p.scale = scale))[0][1..3].to_vec()
+        };
+        assert_eq!(ends([1.0, 1.0]), [(80.0, 0.0), (100.0, 20.0)]);
+        assert_eq!(ends([2.0, 1.0]), [(80.0, 0.0), (100.0, 40.0)]);
+        assert_eq!(ends([1.0, 2.0]), [(60.0, 0.0), (100.0, 20.0)]);
+        // A symmetric corner looks the same flipped; a slanted one doesn't.
+        assert_eq!(ends([-1.0, 1.0]), ends([1.0, 1.0]));
+        let skew = || open_path(&[(8.0, 30.0), (-20.0, -6.0)]);
+        let slanted = |scale: [f64; 2]| {
+            drawn_paths(&corner_on_h(skew(), vec![], vec![], |p| p.scale = scale))[0].clone()
+        };
+        assert_ne!(slanted([-1.0, 1.0]), slanted([1.0, 1.0]));
+        // The scale is kept with the part and survives a round trip through set_part.
+        let f = corner_on_h(cut(), vec![], vec![], |p| p.scale = [1.5, 0.5]);
+        assert_eq!(
+            f.glyph("H").unwrap().layer("m01").unwrap().parts[0].scale,
+            [1.5, 0.5]
+        );
+    }
+
     #[test]
     fn parts_are_checked_and_follow_the_masters() {
         let mut f = sample_font();
