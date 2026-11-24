@@ -244,7 +244,7 @@ export const ENGINE_MESSAGES = [
   "could not write {path}: {e}",
   "could not create {path}: {e}",
   "could not create a temporary folder: {e}",
-  "Choose at least one format: TTF, OTF or WOFF2.",
+  "Choose at least one format: TTF, OTF, WOFF2 or WOFF.",
   "Metrics keys: {problem}",
   "{label}: {e}; exported without hinting.",
   "Variable font",
@@ -625,4 +625,7 @@ export const ENGINE_MESSAGES = [
   "The autohinter has no script \"{tag}\"; its default was used.",
   "TTFAutohint options: {list} isn't supported and was left out.",
   "gasp Table: {e} It was left out.",
+  // SMO-31 · Table and format parameters
+  "{name} isn't supported; that table wasn't written.",
+  "{style}: the kern table holds at most 10920 pairs; {n} were left out.",
 ];

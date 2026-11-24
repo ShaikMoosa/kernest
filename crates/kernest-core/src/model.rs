@@ -117,6 +117,10 @@ pub struct FontInfo {
     /// sizes. Empty leaves the table to the autohinter (or out when unhinted).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gasp: Vec<GaspRange>,
+    /// Write a legacy `kern` table into static fonts ("Export kern Table"), for
+    /// apps that don't read kerning from GPOS.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub export_kern_table: bool,
     /// Snap grid for the edit view; `None` (or spacing 0) means no grid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grid: Option<Grid>,
@@ -1507,6 +1511,7 @@ impl Font {
             .collect();
         Font {
             info: FontInfo {
+                export_kern_table: false,
                 gasp: Vec::new(),
                 family_name: family_name.into(),
                 units_per_em: 1000,

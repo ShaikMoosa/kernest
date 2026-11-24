@@ -60,6 +60,7 @@ enum Format {
     Ttf,
     Otf,
     Woff2,
+    Woff,
     Variable,
 }
 #[derive(Clone, Copy, ValueEnum)]
@@ -194,6 +195,7 @@ fn run(args: &Args) -> Result<u8, String> {
                         ttf: just_variable || formats.contains(&Format::Ttf),
                         otf: formats.contains(&Format::Otf),
                         woff2: formats.contains(&Format::Woff2),
+                        woff: formats.contains(&Format::Woff),
                         remove_overlaps: true,
                         apply_metrics_keys: true,
                         autohint: true,

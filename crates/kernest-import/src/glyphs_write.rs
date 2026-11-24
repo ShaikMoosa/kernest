@@ -1092,6 +1092,9 @@ pub fn glyphs_source(font: &Font) -> String {
             }
         }
     }
+    if info.export_kern_table {
+        params.push("{\nname = \"Export kern Table\";\nvalue = 1;\n}".into());
+    }
     if !info.gasp.is_empty() {
         let v: Vec<String> = info
             .gasp

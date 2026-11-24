@@ -846,6 +846,8 @@ export interface FontInfo {
   psHinting: PsHinting;
   /** The gasp table for TrueType exports; empty leaves it to the autohinter. */
   gasp: GaspRange[];
+  /** Write a legacy kern table into static fonts ("Export kern Table"). */
+  exportKernTable: boolean;
   /** The edit view's snap grid, if set. */
   grid: Grid | null;
   /** Applications use the typo metrics for line spacing (OS/2 fsSelection bit 7). */
@@ -993,7 +995,7 @@ export interface ShapedView {
 export interface ExportedFile {
   path: string;
   kind: "variable" | "static";
-  format: "ttf" | "otf" | "woff2";
+  format: "ttf" | "otf" | "woff2" | "woff";
   style: string;
   bytes: number;
 }
@@ -1125,6 +1127,7 @@ export interface Backend {
   setMasterGuides(masterId: string, guides: Guide[]): Promise<FontInfo>;
   setVerticalMetrics(masterId: string, vertical: VerticalMetrics): Promise<FontInfo>;
   setUseTypoMetrics(on: boolean): Promise<FontInfo>;
+  setExportKernTable(on: boolean): Promise<FontInfo>;
   setCustomParameters(parameters: CustomParameter[]): Promise<FontInfo>;
   setVirtualMasters(virtualMasters: VirtualMaster[]): Promise<FontInfo>;
   /** Replaces the number values for feature tokens. */
@@ -1467,7 +1470,7 @@ export interface QualityReport {
 
 export interface ExportPreset {
   name: string;
-  formats: ("ttf" | "otf" | "woff2")[];
+  formats: ("ttf" | "otf" | "woff2" | "woff")[];
   instances: string[];
   options: { variable: boolean; statics: boolean; removeOverlaps: boolean; applyMetricsKeys: boolean; autohint: boolean; productionNames: boolean };
   folder: string;
@@ -1477,6 +1480,8 @@ export interface ExportFormats {
   ttf: boolean;
   otf: boolean;
   woff2: boolean;
+  /** WOFF 1.0 web fonts, for older browsers. */
+  woff?: boolean;
   /** Merge overlapping contours in static fonts. */
   removeOverlaps: boolean;
   /** Apply metrics keys before building. */
@@ -1672,6 +1677,7 @@ const tauriBackend: Backend = {
   setMasterGuides: (masterId, guides) => invoke("set_master_guides", { masterId, guides }),
   setVerticalMetrics: (masterId, vertical) => invoke("set_vertical_metrics", { masterId, vertical }),
   setUseTypoMetrics: (on) => invoke("set_use_typo_metrics", { on }),
+  setExportKernTable: (on) => invoke("set_export_kern_table", { on }),
   setCustomParameters: (parameters) => invoke("set_custom_parameters", { parameters }),
   setVirtualMasters: (virtualMasters) => invoke("set_virtual_masters", { virtualMasters }),
   setNumbers: (numbers) => invoke("set_numbers", { numbers }),
@@ -2081,7 +2087,7 @@ function mockInfo(d: MockDoc): FontInfo {
   if (d.masters.length > 1 && d.axes.length === 0) warnings.push("There are several masters but no axes. Add an axis in Font Info › Axes.");
   if (d.axes.length && !d.masters.some((m) => d.axes.every((a) => (m.location[a.tag] ?? a.default) === a.default)))
     warnings.push("No master sits at the default location of every axis; interpolation needs one.");
-  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, gasp: d.gasp ?? [], grid: d.grid ?? null, useTypoMetrics: false, customParameters: [], virtualMasters: [], numbers: {}, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
+  return { ...metaCopy(d), hinting: d.hinting ?? DEFAULT_HINTING, controlInstructions: d.controlInstructions ?? "", psHinting: d.psHinting ?? DEFAULT_PS_HINTING, gasp: d.gasp ?? [], exportKernTable: false, grid: d.grid ?? null, useTypoMetrics: false, customParameters: [], virtualMasters: [], numbers: {}, palettes: [], masterPalettes: {}, defaultMasterId: def.id, glyphOrder: d.glyphs.map((g) => g.name), warnings, incompatible: 0, status: status(d) };
 }
 
 /** Applies a font-level edit as one undoable step (mirrors History::apply_font). */
@@ -2281,6 +2287,9 @@ const mockBackend: Backend = {
   },
   async setVerticalMetrics() {
     throw "Line spacing needs the desktop app (npm run tauri dev).";
+  },
+  async setExportKernTable() {
+    throw "The kern table setting needs the desktop app (npm run tauri dev).";
   },
   async setUseTypoMetrics() {
     throw "Line spacing needs the desktop app (npm run tauri dev).";

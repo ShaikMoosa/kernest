@@ -13,10 +13,12 @@ mod charstring;
 mod colr;
 pub mod cvar;
 mod hint;
+mod kern;
 pub mod names;
 mod stat;
 pub mod ufo;
 mod vorg;
+pub mod woff;
 pub mod woff2;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -42,6 +44,8 @@ pub struct ExportOptions {
     pub otf: bool,
     /// Web fonts (`.woff2`, TrueType outlines inside).
     pub woff2: bool,
+    /// WOFF 1.0 web fonts (`.woff`, TrueType outlines inside), for older browsers.
+    pub woff: bool,
     /// Merge overlapping contours in static fonts (variable fonts keep them, as their
     /// masters must stay compatible).
     pub remove_overlaps: bool,
@@ -67,6 +71,7 @@ impl ExportOptions {
             ttf: true,
             otf: false,
             woff2: false,
+            woff: false,
             remove_overlaps: false,
             apply_metrics_keys: true,
             autohint: false,
@@ -83,7 +88,7 @@ pub struct ExportedFile {
     pub path: String,
     /// "variable" | "static"
     pub kind: &'static str,
-    /// "ttf" | "otf" | "woff2"
+    /// "ttf" | "otf" | "woff2" | "woff"
     pub format: &'static str,
     pub style: String,
     pub bytes: usize,
@@ -130,6 +135,7 @@ pub fn export_preset(
             ttf: preset.formats.contains(&ExportFormat::Ttf),
             otf: preset.formats.contains(&ExportFormat::Otf),
             woff2: preset.formats.contains(&ExportFormat::Woff2),
+            woff: preset.formats.contains(&ExportFormat::Woff),
             remove_overlaps: options.remove_overlaps,
             apply_metrics_keys: options.apply_metrics_keys,
             autohint: options.autohint,
@@ -536,6 +542,9 @@ fn check_file_clashes(font: &Font, opts: &ExportOptions) -> Result<(), String> {
     if opts.woff2 {
         exts.push("woff2");
     }
+    if opts.woff {
+        exts.push("woff");
+    }
     // (stem, who) for every font, variable and static.
     let mut planned: Vec<(String, String)> = Vec::new();
     if opts.variable {
@@ -593,8 +602,18 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     let family = file_stem(&font.info.family_name);
     let mut report = ExportReport::default();
 
-    if !opts.ttf && !opts.otf && !opts.woff2 {
-        return Err("Choose at least one format: TTF, OTF or WOFF2.".into());
+    if !opts.ttf && !opts.otf && !opts.woff2 && !opts.woff {
+        return Err("Choose at least one format: TTF, OTF, WOFF2 or WOFF.".into());
+    }
+    // Table switches kept as custom parameters that Kernest can't act on.
+    for p in &font.info.custom_parameters {
+        let on = !p.disabled && !matches!(p.value.trim(), "0" | "false" | "NO");
+        if on && p.name.starts_with("Export ") && p.name.ends_with(" Table") {
+            report.warnings.push(format!(
+                "{} isn't supported; that table wasn't written.",
+                p.name
+            ));
+        }
     }
     check_file_clashes(font, opts)?;
     // Smart components become outlines; the compiler only sees plain shapes.
@@ -694,7 +713,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
     let hinting = font.info.hinting.clone().unwrap_or_default();
     // The TrueType bytes for TTF and WOFF2: hinted if asked (a failure is reported and
     // the unhinted font is used).
-    if opts.autohint && (opts.ttf || opts.woff2) {
+    if opts.autohint && (opts.ttf || opts.woff2 || opts.woff) {
         report.warnings.extend(hint::option_warnings(&hinting));
     }
     let hinted = |report: &mut ExportReport,
@@ -704,7 +723,7 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                   location: Option<&Location>,
                   autohint: bool|
      -> Vec<u8> {
-        if !opts.autohint || !autohint || !(opts.ttf || opts.woff2) {
+        if !opts.autohint || !autohint || !(opts.ttf || opts.woff2 || opts.woff) {
             return bytes.to_vec();
         }
         match hint::autohint(bytes, &hinting, font, location, tmp.path(), name) {
@@ -837,6 +856,19 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                     Err(e) => report.problems.push(format!("{label} (WOFF2): {e}")),
                 }
             }
+            if opts.woff {
+                match woff::to_woff(&tt) {
+                    Ok(w) => emit(
+                        report,
+                        "variable",
+                        "woff",
+                        label,
+                        format!("{file_base}.woff"),
+                        &w,
+                    )?,
+                    Err(e) => report.problems.push(format!("{label} (WOFF): {e}")),
+                }
+            }
             if opts.otf {
                 match variable_otf(stat_font, &bytes)
                     .and_then(|o| vorg::add(&o, &bytes))
@@ -934,6 +966,12 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
         }
     }
 
+    // Compiled glyph names back to the source's, for the kern table.
+    let production_to_name: HashMap<String, String> = font
+        .glyphs
+        .iter()
+        .filter_map(|g| Some((g.production_name.clone()?, g.name.clone())))
+        .collect();
     if opts.statics {
         let targets = static_targets(font);
         for (i, (style, location, inst)) in targets.iter().enumerate() {
@@ -1072,6 +1110,32 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                         }
                         None => bytes,
                     };
+                    // "Export kern Table": a legacy kern table next to GPOS.
+                    let bytes = if font.info.export_kern_table {
+                        match kern::kern_table(&bytes, &ufo, &production_to_name) {
+                            Ok(Some((table, dropped))) => {
+                                if dropped > 0 {
+                                    report.warnings.push(format!(
+                                        "{style}: the kern table holds at most 10920 pairs; {dropped} were left out."
+                                    ));
+                                }
+                                match hint::put_table(&bytes, b"kern", &table) {
+                                    Ok(b) => b,
+                                    Err(e) => {
+                                        report.problems.push(format!("{style} (kern): {e}"));
+                                        bytes
+                                    }
+                                }
+                            }
+                            Ok(None) => bytes,
+                            Err(e) => {
+                                report.problems.push(format!("{style} (kern): {e}"));
+                                bytes
+                            }
+                        }
+                    } else {
+                        bytes
+                    };
                     let tt = truetype(
                         &mut report,
                         style,
@@ -1126,6 +1190,19 @@ pub fn export(font: &Font, opts: &ExportOptions) -> Result<ExportReport, String>
                                 &w,
                             )?,
                             Err(e) => report.problems.push(format!("{style} (WOFF2): {e}")),
+                        }
+                    }
+                    if opts.woff {
+                        match woff::to_woff(&tt) {
+                            Ok(w) => emit(
+                                &mut report,
+                                "static",
+                                "woff",
+                                style,
+                                format!("{stem}.woff"),
+                                &w,
+                            )?,
+                            Err(e) => report.problems.push(format!("{style} (WOFF): {e}")),
                         }
                     }
                 }
@@ -4614,6 +4691,116 @@ pub(crate) mod tests {
             })
             .unwrap();
         assert_eq!(snap, [Fixed::from_i32(55), Fixed::from_i32(90)]);
+    }
+
+    #[test]
+    fn woff_files_and_the_legacy_kern_table() {
+        // SMO-31: WOFF 1.0 files next to the others; "Export kern Table" adds a
+        // format 0 kern table (T o -60, L T -80) to every static file.
+        use write_fonts::types::Tag;
+        let mut f = kernest_core::sample::sample_font();
+        f.info.export_kern_table = true;
+        f.info
+            .custom_parameters
+            .push(kernest_core::CustomParameter {
+                name: "Export morx Table".into(),
+                value: "1".into(),
+                disabled: false,
+            });
+        let out = tempfile::tempdir().unwrap();
+        let opts = ExportOptions {
+            otf: true,
+            woff: true,
+            ..ExportOptions::ttf(false, true, out.path())
+        };
+        let r = export(&f, &opts).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.contains("Export morx Table isn't supported")),
+            "{:?}",
+            r.warnings
+        );
+        let formats: Vec<&str> = r.files.iter().map(|x| x.format).collect();
+        assert_eq!(formats, ["ttf", "otf", "woff"]);
+        let ttf = std::fs::read(&r.files[0].path).unwrap();
+        let woff = std::fs::read(&r.files[2].path).unwrap();
+        assert!(r.files[2].path.ends_with(".woff"));
+        // The WOFF holds exactly the TTF's tables.
+        let font = FontRef::new(&ttf).unwrap();
+        let tables = woff::tables_of_woff(&woff);
+        assert_eq!(tables.len(), font.table_directory.table_records().len());
+        for (tag, data) in &tables {
+            assert_eq!(
+                font.table_data(Tag::new(tag)).unwrap().as_bytes(),
+                &data[..]
+            );
+        }
+        // kern: version 0, one subtable, coverage 1 (horizontal, format 0).
+        let gid = |c: char| font.cmap().unwrap().map_codepoint(c).unwrap().to_u32() as u16;
+        let pairs = |bytes: &[u8]| -> Vec<(u16, u16, i16)> {
+            let k = FontRef::new(bytes)
+                .unwrap()
+                .table_data(Tag::new(b"kern"))
+                .expect("a kern table")
+                .as_bytes()
+                .to_vec();
+            let be = |i: usize| u16::from_be_bytes([k[i], k[i + 1]]);
+            assert_eq!((be(0), be(2), be(8)), (0, 1, 1));
+            (0..be(10) as usize)
+                .map(|i| {
+                    let at = 18 + 6 * i;
+                    (be(at), be(at + 2), be(at + 4) as i16)
+                })
+                .collect()
+        };
+        let mut want = vec![(gid('L'), gid('T'), -80), (gid('T'), gid('o'), -60)];
+        want.sort();
+        assert_eq!(pairs(&ttf), want);
+        let otf = std::fs::read(&r.files[1].path).unwrap();
+        assert_eq!(pairs(&otf), want);
+        // Off by default.
+        f.info.export_kern_table = false;
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        let b = std::fs::read(&r.files[0].path).unwrap();
+        assert!(FontRef::new(&b)
+            .unwrap()
+            .table_data(Tag::new(b"kern"))
+            .is_none());
+    }
+
+    #[test]
+    fn cpal_keeps_every_palette_in_order() {
+        // SMO-31: two palettes ("Color Palettes") become two CPAL palettes, in order.
+        use kernest_core::color::{self, Color};
+        let f = color::set_palettes(
+            &two_masters(),
+            vec![
+                vec![
+                    Color::parse("#e63946").unwrap(),
+                    Color::parse("#1d3557").unwrap(),
+                ],
+                vec![
+                    Color::parse("#2a9d8f").unwrap(),
+                    Color::parse("#f4a261").unwrap(),
+                ],
+            ],
+        )
+        .unwrap();
+        let (f, _) = color::add_color_layer(&f, "H", "m01").unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let r = export(&f, &ExportOptions::ttf(false, true, out.path())).unwrap();
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        let bytes = std::fs::read(&r.files[0].path).unwrap();
+        let font = FontRef::new(&bytes).unwrap();
+        let cpal = font.cpal().unwrap();
+        assert_eq!((cpal.num_palettes(), cpal.num_palette_entries()), (2, 2));
+        let first = cpal.color_record_indices();
+        let records = cpal.color_records_array().unwrap().unwrap();
+        let red = |p: usize| records[usize::from(first[p].get())].red();
+        assert_eq!((red(0), red(1)), (0xe6, 0x2a));
     }
 
     #[test]

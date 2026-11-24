@@ -458,6 +458,7 @@ fn build(
     let def = sources[default_idx].2;
     let fi = &def.font_info;
     let info = FontInfo {
+        export_kern_table: false,
         gasp: Vec::new(),
         family_name: fi.family_name.clone().unwrap_or_else(|| "Untitled".into()),
         units_per_em: fi

@@ -105,6 +105,7 @@ pub struct FontInfoView {
     /// PostScript blue zone controls (the defaults if the font has none).
     ps_hinting: PsHinting,
     gasp: Vec<kernest_core::GaspRange>,
+    export_kern_table: bool,
     /// The edit view's snap grid, if set.
     grid: Option<Grid>,
     /// OS/2 fsSelection bit 7: applications use the typo metrics for line spacing.
@@ -157,6 +158,7 @@ fn info_view(doc: &Document) -> FontInfoView {
         control_instructions: f.info.control_instructions.clone(),
         ps_hinting: f.info.ps_hinting.clone().unwrap_or_default(),
         gasp: f.info.gasp.clone(),
+        export_kern_table: f.info.export_kern_table,
         grid: f.info.grid,
         use_typo_metrics: f.info.use_typo_metrics,
         custom_parameters: f.info.custom_parameters.clone(),
@@ -347,6 +349,12 @@ pub fn describe_feature_token(state: State<AppState>, token: String) -> CmdResul
 }
 
 /// Turns "Use Typo Metrics" on or off.
+/// Turns the legacy kern table on or off ("Export kern Table").
+#[tauri::command]
+pub fn set_export_kern_table(state: State<AppState>, on: bool) -> CmdResult<FontInfoView> {
+    edit(&state, |f| structure::set_export_kern_table(f, on))
+}
+
 #[tauri::command]
 pub fn set_use_typo_metrics(state: State<AppState>, on: bool) -> CmdResult<FontInfoView> {
     edit(&state, |f| structure::set_use_typo_metrics(f, on))

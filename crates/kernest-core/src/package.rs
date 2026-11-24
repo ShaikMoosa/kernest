@@ -52,11 +52,12 @@ use crate::model::{
 /// on instances and variable fonts (Keep/Decompose Glyphs, filters); version 25
 /// adds variable font origins, the Export STAT switch and elidable STAT axes;
 /// version 26 adds the full ttfautohint options, family blues and stem snaps, the
-/// gasp table and per-instance Autohint.
+/// gasp table and per-instance Autohint; version 27 adds the legacy kern table
+/// switch.
 /// Fonts using none of these are still written as version 1, colour-only as 2,
 /// manual-component-only as 3 and naming/notes-only as 4, so older Kernest versions
 /// keep opening them.
-pub const FORMAT_VERSION: u32 = 26;
+pub const FORMAT_VERSION: u32 = 27;
 
 pub const EXTENSION: &str = "kernest";
 
@@ -338,6 +339,7 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
             .any(|v| !v.feature_parameters.is_empty());
     let has_v24 = font.instances.iter().any(|i| !i.processing.is_empty())
         || font.variable_fonts.iter().any(|v| !v.processing.is_empty());
+    let has_v27 = font.info.export_kern_table;
     let has_v26 = font.info.hinting.as_ref().is_some_and(|h| {
         let legacy = crate::model::Hinting {
             range_min: h.range_min,
@@ -365,8 +367,10 @@ pub fn save(font: &Font, dir: &Path) -> Result<()> {
     let has_vertical =
         font.info.use_typo_metrics || font.masters.iter().any(|m| !m.vertical.is_empty());
     let file = FontFile {
-        format_version: if has_v26 {
+        format_version: if has_v27 {
             FORMAT_VERSION
+        } else if has_v26 {
+            26
         } else if has_v25 {
             25
         } else if has_v24 {
@@ -932,6 +936,13 @@ mod tests {
         assert!(fj.contains("\"formatVersion\": 26"), "{fj}");
         assert!(fj.contains("\"gasp\""), "{fj}");
         assert!(fj.contains("\"autohint\": false"), "{fj}");
+        assert_eq!(open(&path).unwrap(), font);
+        // SMO-31: the legacy kern table switch raises it to 27.
+        font.info.export_kern_table = true;
+        save(&font, &path).unwrap();
+        let fj = fs::read_to_string(path.join("font.json")).unwrap();
+        assert!(fj.contains("\"formatVersion\": 27"), "{fj}");
+        assert!(fj.contains("\"exportKernTable\": true"), "{fj}");
         assert_eq!(open(&path).unwrap(), font);
     }
 

@@ -2701,6 +2701,7 @@ name = "kernest-export"
 version = "2.16.0"
 dependencies = [
  "brotli",
+ "flate2",
  "fontbe",
  "fontc",
  "kernest-core",

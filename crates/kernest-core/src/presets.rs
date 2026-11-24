@@ -8,6 +8,7 @@ pub enum ExportFormat {
     Ttf,
     Otf,
     Woff2,
+    Woff,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

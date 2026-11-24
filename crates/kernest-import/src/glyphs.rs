@@ -101,6 +101,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
         .collect();
 
     let info = FontInfo {
+        export_kern_table: false,
         gasp: Vec::new(),
         family_name: g
             .get_default_name("familyNames")
@@ -522,6 +523,7 @@ pub fn import(path: &Path) -> Result<Imported, String> {
                 font.info.control_instructions = text;
             }
             font.info.ps_hinting = h.ps.filter(|p| *p != kernest_core::PsHinting::default());
+            font.info.export_kern_table = h.export_kern_table;
             match kernest_core::hinting::check_gasp(&h.gasp) {
                 Ok(()) => font.info.gasp = h.gasp,
                 Err(e) => warnings.push(format!("gasp Table: {e} It was left out.")),
@@ -1541,6 +1543,7 @@ pub(crate) const HANDLED_PARAMETERS: &[&str] = &[
     "Stem Snap V",
     "gasp Table",
     "GASP Table",
+    "Export kern Table",
     "Axis Mappings",
     "Axis Location",
     "Use Typo Metrics",
@@ -2369,6 +2372,7 @@ struct SourceHinting {
     control_instructions: Option<String>,
     ps: Option<kernest_core::PsHinting>,
     gasp: Vec<kernest_core::GaspRange>,
+    export_kern_table: bool,
 }
 
 fn read_source_hinting(path: &Path) -> Result<SourceHinting, String> {
@@ -2391,6 +2395,7 @@ fn read_source_hinting(path: &Path) -> Result<SourceHinting, String> {
         control_instructions: None,
         ps: None,
         gasp: Vec::new(),
+        export_kern_table: false,
     };
     let empty = Vec::new();
     let masters = root
@@ -2514,6 +2519,8 @@ fn read_source_hinting(path: &Path) -> Result<SourceHinting, String> {
             })
     };
     out.control_instructions = param("TTFAutohint control instructions");
+    out.export_kern_table =
+        param("Export kern Table").is_some_and(|v| !matches!(v.trim(), "0" | "false" | "NO"));
     let mut ps = kernest_core::PsHinting::default();
     let mut any = false;
     for (name, slot) in [

@@ -24,8 +24,11 @@ function saveDir(dir: string) {
   }
 }
 
+/** The WOFF 1.0 format name, as shown next to its checkbox. */
+const WOFF_LABEL = "WOFF";
+
 const FORMATS_KEY = "kernest.exportFormats";
-const DEFAULT_FORMATS: ExportFormats = { ttf: true, otf: false, woff2: false, removeOverlaps: true, applyMetricsKeys: true, autohint: true, productionNames: false };
+const DEFAULT_FORMATS: ExportFormats = { ttf: true, otf: false, woff2: false, woff: false, removeOverlaps: true, applyMetricsKeys: true, autohint: true, productionNames: false };
 
 function loadFormats(): ExportFormats {
   try {
@@ -84,7 +87,7 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
     if (!preset) return;
     const { variable, statics, ...options } = preset.options;
     setVariable(variable); setStatics(statics);
-    setFormats({ ...options, ttf: preset.formats.includes("ttf"), otf: preset.formats.includes("otf"), woff2: preset.formats.includes("woff2") });
+    setFormats({ ...options, ttf: preset.formats.includes("ttf"), otf: preset.formats.includes("otf"), woff2: preset.formats.includes("woff2"), woff: preset.formats.includes("woff") });
     setSelectedInstances(preset.instances); setAllInstances(preset.instances.length === 0);
     const parent = fontPath?.replace(/[\\/][^\\/]+$/, "");
     const folder = preset.folder || "build";
@@ -101,7 +104,7 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
     setBusy(true); setError(null);
     try {
       const preset: ExportPreset = {
-        name, formats: (["ttf", "otf", "woff2"] as const).filter(f => formats[f]), instances: allInstances ? [] : selectedInstances,
+        name, formats: (["ttf", "otf", "woff2", "woff"] as const).filter(f => formats[f]), instances: allInstances ? [] : selectedInstances,
         options: { variable: wantVariable, statics, removeOverlaps: formats.removeOverlaps, applyMetricsKeys: formats.applyMetricsKeys, autohint: formats.autohint, productionNames: formats.productionNames },
         folder: !dirEdited ? info.exportPresets.find(p => p.name === selectedPreset)?.folder ?? dir.trim() : dir.trim(),
       };
@@ -125,10 +128,10 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
   const exportedInstances = info?.instances.filter((i) => i.export !== false) ?? [];
   const staticStyles = !allInstances ? selectedInstances : exportedInstances.length ? exportedInstances.map((i) => i.name) : (info?.masters.map((m) => m.name) ?? []);
   const wantVariable = variable && canVariable;
-  const noFormat = !formats.ttf && !formats.otf && !formats.woff2;
+  const noFormat = !formats.ttf && !formats.otf && !formats.woff2 && !formats.woff;
   const nothing = (!wantVariable && !statics) || noFormat || (statics && !allInstances && selectedInstances.length === 0);
   // Every style in every chosen format, for the button ("Export 4 fonts").
-  const fileCount = ((statics ? staticStyles.length : 0) + (wantVariable ? 1 : 0)) * (["ttf", "otf", "woff2"] as const).filter((f) => formats[f]).length;
+  const fileCount = ((statics ? staticStyles.length : 0) + (wantVariable ? 1 : 0)) * (["ttf", "otf", "woff2", "woff"] as const).filter((f) => formats[f]).length;
 
   async function browse() {
     const picked = await open({ directory: true, multiple: false, title: t("Export fonts to"), defaultPath: dir || undefined });
@@ -228,13 +231,14 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
               <label className="check-row"><input type="checkbox" checked={formats.ttf} onChange={(e) => setFormat("ttf", e.target.checked)} /> <span className="k-body">TTF</span> <span className="k-caption muted">{t("TrueType, for desktop apps")}</span></label>
               <label className="check-row"><input type="checkbox" checked={formats.otf} onChange={(e) => setFormat("otf", e.target.checked)} /> <span className="k-body">OTF</span> <span className="k-caption muted">{t("PostScript outlines (CFF, and CFF2 for variable)")}</span></label>
               <label className="check-row"><input type="checkbox" checked={formats.woff2} onChange={(e) => setFormat("woff2", e.target.checked)} /> <span className="k-body">WOFF2</span> <span className="k-caption muted">{t("compressed web fonts")}</span></label>
+              <label className="check-row"><input type="checkbox" checked={formats.woff === true} onChange={(e) => setFormat("woff", e.target.checked)} /> <span className="k-body">{WOFF_LABEL}</span> <span className="k-caption muted">{t("web fonts for older browsers (WOFF 1.0)")}</span></label>
             </div>
           </fieldset>
           <fieldset className="field" disabled={busy}>
             <legend className="k-overline muted">{t("Before building")}</legend>
             <label className="check-row"><input type="checkbox" checked={formats.removeOverlaps} onChange={(e) => setFormat("removeOverlaps", e.target.checked)} /> <span className="k-body">{t("Remove overlaps")}</span> <span className="k-caption muted">{t("in static fonts (variable fonts keep them)")}</span></label>
             <label className="check-row"><input type="checkbox" checked={formats.applyMetricsKeys} onChange={(e) => setFormat("applyMetricsKeys", e.target.checked)} /> <span className="k-body">{t("Apply metrics keys")}</span> <span className="k-caption muted">{t("such as =n on sidebearings")}</span></label>
-            <label className="check-row"><input type="checkbox" checked={formats.autohint} disabled={!formats.ttf && !formats.woff2} onChange={(e) => setFormat("autohint", e.target.checked)} /> <span className="k-body">{t("Autohint")}</span> <span className="k-caption muted">{t("sharper TTF and WOFF2 text on Windows (settings in Font Info)")}</span></label>
+            <label className="check-row"><input type="checkbox" checked={formats.autohint} disabled={!formats.ttf && !formats.woff2 && !formats.woff} onChange={(e) => setFormat("autohint", e.target.checked)} /> <span className="k-body">{t("Autohint")}</span> <span className="k-caption muted">{t("sharper TTF and WOFF2 text on Windows (settings in Font Info)")}</span></label>
             <label className="check-row"><input type="checkbox" checked={formats.productionNames} onChange={(e) => setFormat("productionNames", e.target.checked)} /> <span className="k-body">{t("Use production names")}</span> <span className="k-caption muted">{t("the glyph names written into the font file")}</span></label>
           </fieldset>
           <label className="field">
@@ -295,7 +299,7 @@ export function ExportDialog({ fontPath, version, onChanged, onClose, onExported
         </div>
         </div>
         <footer className="dialog-footer">
-          <span className="k-caption muted">{t("Compiled with fontc · CFF and WOFF2 written by Kernest")}</span>
+          <span className="k-caption muted">{t("Compiled with fontc · CFF, WOFF2 and WOFF written by Kernest")}</span>
           <span className="spacer" />
           <button type="button" className="btn btn-secondary" disabled={busy || !info || !isTauri} title={t("Builds static TTFs and loads them until Kernest quits")} onClick={() => trial("test")}>{t("Test Install")}</button>
           <button type="button" className="btn btn-secondary" disabled={busy || !info || !isTauri} title={t("Installs static TTFs for your Windows account")} onClick={() => trial("user")}>{t("Install for Me")}</button>
